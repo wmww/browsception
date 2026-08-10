@@ -11,7 +11,9 @@ export function readCString(module, ptr) {
   const heap = module.HEAPU8;
   let end = ptr;
   while (heap[end] !== 0) end++;
-  return dec.decode(heap.subarray(ptr, end));
+  // slice(): TextDecoder rejects SAB-backed views (real engine heap is a
+  // SAB); slice copies into a fresh non-shared buffer.
+  return dec.decode(heap.slice(ptr, end));
 }
 
 // Copy `len` bytes out of the heap (does not free).

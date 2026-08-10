@@ -89,9 +89,24 @@ Wikipedia/HN/MDN/TodoMVC) with zero crashes (experiments/log.md). Phase-2
 heads-ups from the gate run: guest history.back() doesn't traverse
 (BackForwardList wiring lands with 2.3's chrome), and the dev transport has
 no request timeout (dev-only; the extension bridge's idle-timeout guard is
-the production answer). Next: Phase 2 — 2.1 package viewer+engine into the
-extension (WebGL2 blit graduates from spikes/blit; engine module caching;
-cold/warm start measurement).
+the production answer). **Phase 2 in progress.** 2.1 done: extension viewer hosts the real engine —
+src/ext/viewer.mjs ports the dev-harness Module scaffolding (raster only, no
+wisp/media/guest-wasm; bootHTML boot page; OPFS persistence; crashed UI;
+`__bs` test hook with probe/eval/navigate/metrics/killEngine), networking is
+the real bridge (guard+DNR+webRequest). WebGL2 blit graduated from
+spikes/blit into src/ext/blit.mjs (SAB-direct texSubImage2D, row-band dirty,
+2d fallback; texture recreated on engine resize). Engine artifacts staged by
+tools/stage-engine.mjs into src/engine/ (gitignored; rerun per rebuild);
+manifest needs `'wasm-unsafe-eval'` CSP (gen-ext.mjs). Two portability
+fixes: TextDecoder rejects SAB views (heap.mjs copies now) and class
+`.prototype` assignment throws in ESM. Boot is FAST: ~620 ms cold / ~360 ms
+warm to interactive → module caching + eager boot dropped (open-questions
+#11 answered). test/tier2/scenarios.test.mjs (npm run test:tier2, needs
+staged engine): scenarios 7/8/9/12/13 all green against the real extension
+in ~6 s. Guest wasm shim (binaryen wasm2js) not ported yet — guest wasm sees
+CompileError; fast-follow. Next: 2.2 interception goes live in blacklist
+mode (original-URL plumbing, per-tab viewer instances, chrome.tabs title
+integration) — note the first-navigation ruleset race issue in issues/.
 
 Key decisions made so far:
 

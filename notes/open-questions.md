@@ -84,6 +84,10 @@ result appended here (keep the question, add `**Answer (date):**`).
 11. **Engine startup latency.** Cold compile of a 100–250 MB module + engine boot; how much does
     IndexedDB module caching + eager boot-at-browser-start help? Target: viewer interactive < 2s
     warm.
+    **ANSWERED (2026-08-10, 2.1):** non-issue on Chromium 150 — extension viewer boots the
+    102 MB module to interactive in ~620 ms cold / ~360 ms warm (headless, Liftoff tiering).
+    Target beaten 5×; IndexedDB module caching and eager boot both dropped from the MVP.
+    Tier-2 scenario 13 tripwires warm boot at 15 s. Revisit only for the Firefox port.
 
 ## Later / strategic
 

@@ -56,7 +56,13 @@ transplant: done — curl/wisp replaced by the host-fetch bridge in the engine f
 EmbedderStrategies transplant + dev-harness transport via dev-server /__bibproxy);
 milestone verified by tools/smoke-bridge.mjs (example.com, wikipedia redirect chain,
 cookie-on-302, no wisp server). curl still linked (deletion = scheduled cleanup;
-WebSocket bridging post-MVP). Next: 1.3 rendering transplant.
+WebSocket bridging post-MVP). 1.3 rendering, engine side: done (fork commit 8112bc5)
+— runtime-sized heap framebuffer, `bibFrame` zero-copy present, `bib_set_viewport`
+resize; smoke-verified incl. resize to 1024×768. Remaining for 1.3: viewer-side
+WebGL2 blit (graduates from spikes/blit at extension integration, 2.1); dpr≠1
+untested; frame-cost measurement (use __bs.metrics once the query channel lands).
+Next: 1.4 input path (engine has mouse/wheel/key exports already — see
+engine.md § seams; wire + verify against input.bstest), then 1.5 stability pass.
 
 Key decisions made so far:
 

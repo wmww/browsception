@@ -85,6 +85,43 @@ async function loadAndProbe(name, target, probeJs, expect, timeoutMs = 120000) {
 // 1. Plain page, no redirects.
 await loadAndProbe('example.com', 'https://example.com/', 'document.title', /Example Domain/);
 
+// 1b. Viewport resize (1.3): bib_set_viewport reflows the guest and the
+//     harness canvas follows the pushed framebuffer size.
+{
+  const page = await browser.newPage();
+  const lines = [];
+  page.on('console', (m) => lines.push(m.text()));
+  try {
+    await page.goto(`http://127.0.0.1:${PORT}/browser.html?url=${encodeURIComponent('https://example.com/')}`);
+    await page.waitForFunction(() => window.__bib && window.__bib.ready, { timeout: 120000 });
+    await new Promise((r) => setTimeout(r, 5000));
+    await page.evaluate(() => Module._bib_set_viewport(1024, 768, 1.0));
+    let guest = '(none)';
+    for (let i = 0; i < 30; i++) {
+      await page.evaluate(() => window.__bib.eval("console.log('RSZ:' + innerWidth + 'x' + innerHeight)"));
+      await new Promise((r) => setTimeout(r, 1000));
+      const hit = lines.findLast?.((l) => l.includes('RSZ:')) ?? lines.filter((l) => l.includes('RSZ:')).at(-1);
+      if (hit) guest = hit.slice(hit.indexOf('RSZ:') + 4).split(' ')[0];
+      if (guest.startsWith('1024x768')) break;
+    }
+    const canvas = await page.evaluate(() => {
+      const c = document.getElementById('screen');
+      return `${c.width}x${c.height}`;
+    });
+    if (canvas === '1024x768' && guest.startsWith('1024x768')) {
+      console.log(`PASS resize: canvas ${canvas}, guest ${guest}`);
+    } else {
+      console.log(`FAIL resize: canvas ${canvas}, guest ${guest}`);
+      failures++;
+    }
+  } catch (e) {
+    console.log(`FAIL resize: ${e.message}`);
+    failures++;
+  } finally {
+    await page.close();
+  }
+}
+
 // 2. Redirect chain (wikipedia.org -> www.wikipedia.org) + a real site.
 await loadAndProbe(
   'wikipedia-redirect',

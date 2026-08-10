@@ -100,6 +100,15 @@ function handle(req, res, scheme) {
     return send(res, 200, JSON.stringify({ cookie: req.headers.cookie ?? null }), 'json', {
       'access-control-allow-origin': '*',
     });
+  if (path === '/echo-body') {
+    const parts = [];
+    req.on('data', (c) => parts.push(c));
+    req.on('end', () => {
+      const body = Buffer.concat(parts);
+      send(res, 200, JSON.stringify({ len: body.length, text: body.toString('utf8') }), 'json');
+    });
+    return;
+  }
   if (path === '/echo-headers')
     return send(res, 200, JSON.stringify(req.headers), 'json', { 'access-control-allow-origin': '*' });
   if (path === '/download')

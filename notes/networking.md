@@ -97,7 +97,17 @@ Decided at 1.1 (ABI: src/abi/bib_abi.h), revising the earlier SAB-ring/Atomics-b
   the engine thread with ownership transfer. No extra SAB: the wasm heap *is* shared memory.
 - Backpressure: engine acks consumed chunks via `bibNetAck(id, bytes)`; the shim pauses its
   `response.body` reader when a request has ≥ `NET_WINDOW_BYTES` (4 MB) unacked in flight, so a
-  fast server can't OOM the engine.
+  fast server can't OOM the engine. Delivery is sliced to ≤64 KB per `bib_net_data` call (bounded
+  engine-side copies; window stays honest against coalesced fetch chunks).
+
+Implemented (1.2a) in `src/shim/bridge.mjs` (+ redirect-capture.mjs, bridge-rules.mjs,
+engine-stub.mjs); asserted by test/tier1/bridge.test.mjs against the real extension in `src/`.
+Implementation notes: `cache:'no-store'` on bridge fetches (a host-cache hit would skip webRequest
+and lose Set-Cookie capture; engine has its own HTTP cache anyway); `referrer:''` + base DNR rule
+strips Origin/Referer/sec-ch-ua* so the extension origin and host browser never leak when the
+engine didn't send those headers; per-request DNR session rule (priority 2, exact urlFilter)
+carries engine-sent Cookie/Referer/Origin and beats the base strips; webRequest capture matches on
+`initiator` only (extension-page fetches carry the tab's id, so never filter on tabId).
 
 ## What the nested site can and cannot reach (summary)
 

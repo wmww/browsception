@@ -1,0 +1,32 @@
+{
+ "manifest_version": 3,
+ "name": "browsception",
+ "version": "0.1.0",
+ "description": "Runs websites inside a nested wasm browser engine.",
+ "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA24VU/NsX7uu6nhVS5WZS1PrCvDl/P2ZNkZ/xs2XHsGIcSVnNA5GvN+edj7W7WttQZV6tispKHPS9urfL/OX6QE4oJHpvrit6Tha7JDxnyrT6MNS61K6OkIK+3jFoCpZ8k1lmdaywkl0UXwiQXg+cgXAFhrOJk9tAAH5a12ZP1QTlu/kAZ1evqwsE/qYYbD0VKZdpxrwFQbPs4yXpemECXYOrNrKC3va9NTK8XHFVN8THKsuIs5z0BzPMi+cvyCJHOiyjyWcJDhJtYg/NgImismUrQA5V2idloceAA/NT06Y/fKvCGqwPL8lQNlvqQXGVCt9qXXAoDjksB67tZ695fQIDAQAB",
+ "minimum_chrome_version": "124",
+ "permissions": [
+  "declarativeNetRequest",
+  "webRequest",
+  "storage",
+  "tabs"
+ ],
+ "host_permissions": [
+  "<all_urls>"
+ ],
+ "declarative_net_request": {
+  "rule_resources": [
+   {
+    "id": "catchall",
+    "enabled": false,
+    "path": "rules/catchall.json"
+   }
+  ]
+ },
+ "cross_origin_opener_policy": {
+  "value": "same-origin"
+ },
+ "cross_origin_embedder_policy": {
+  "value": "require-corp"
+ }
+}

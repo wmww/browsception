@@ -61,8 +61,15 @@ WebSocket bridging post-MVP). 1.3 rendering, engine side: done (fork commit 8112
 resize; smoke-verified incl. resize to 1024×768. Remaining for 1.3: viewer-side
 WebGL2 blit (graduates from spikes/blit at extension integration, 2.1); dpr≠1
 untested; frame-cost measurement (use __bs.metrics once the query channel lands).
-Next: 1.4 input path (engine has mouse/wheel/key exports already — see
-engine.md § seams; wire + verify against input.bstest), then 1.5 stability pass.
+1.4 input path: done — engine already had mouse/wheel/key exports through
+WebCore's EventHandler; added the missing `bib_set_focus` (fork commit on
+`browsception` branch) + harness canvas focus/blur wiring, gave input.bstest a
+link-nav zone (#nav → final.html, solid #663399 for one-probe assertion), and
+verified the milestone with tools/smoke-input.mjs (fixture-only, deterministic:
+click/dblclick/keydown/wheel-scroll/type-checksum/refocus/link-click all PASS;
+graduates into tier-2 scenario 9 at 2.1). smoke-bridge still green after the
+rebuild. Next: 1.5 stability pass (crash detection → teardown/reload UI, memory
+cap, leak check across 50 navigations).
 
 Key decisions made so far:
 

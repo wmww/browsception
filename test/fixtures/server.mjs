@@ -152,6 +152,8 @@ function handle(req, res, scheme) {
   try {
     if (path === '/' && fixture) return send(res, 200, page(fixture));
     if (path === '/final') return send(res, 200, '<title>final</title><h1 id="sentinel">REDIRECT-FINAL</h1>');
+    // input.bstest's #nav link target (any host).
+    if (path === '/final.html') return send(res, 200, page('final.html'));
     // Anything else on any *.bstest host: a generic identifiable page
     // (interception-matrix tests navigate to arbitrary hosts/paths).
     return send(

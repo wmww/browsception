@@ -6,6 +6,7 @@
        key    (200,0)-(400,200):  rgb(code, 255-code, 64) of last keydown keyCode
        scroll (400,0)-(600,200):  fixed; rgb(min(255,scrollY/10), 0, 255-min(255,scrollY/10))
        text checksum (0,300)-(200,400): rgb(c,c,c), c = sum of input charCodes % 256
+       nav link (220,300)-(420,400): #6600cc; clicking navigates to final.html
      The text field sits at (0,220)-(200,260). Page is 5000px tall for scroll. -->
 <html>
 <head>
@@ -18,6 +19,8 @@
     #key    { left: 200px; top: 0; background: #202020; }
     #scroll { left: 400px; top: 0; background: #0000ff; }
     #sum    { left: 0; top: 300px; width: 200px; height: 100px; position: fixed; background: #000000; }
+    #nav    { position: fixed; left: 220px; top: 300px; width: 200px; height: 100px;
+              background: #6600cc; display: block; }
     #field  { position: fixed; left: 0; top: 220px; width: 190px; height: 34px; font-size: 20px; }
   </style>
 </head>
@@ -27,6 +30,7 @@
   <div class="zone" id="scroll"></div>
   <input id="field" autofocus>
   <div id="sum"></div>
+  <a id="nav" href="final.html"></a>
   <p style="position:fixed;top:420px">BSTEST-INPUT-SENTINEL</p>
   <script>
     const $ = (id) => document.getElementById(id);

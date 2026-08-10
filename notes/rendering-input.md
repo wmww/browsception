@@ -1,0 +1,89 @@
+# Rendering, input, and browser-chrome plumbing
+
+## Rendering path
+
+Engine paints via **Skia CPU raster** into a BGRA/RGBA framebuffer in shared memory (pthread
+build) or in the wasm heap (single-thread build). The viewer blits to a canvas.
+
+Blit options, fastest first:
+1. **WebGL `texSubImage2D` upload + fixed textured quad** — the plan of record. One static shader
+   pair compiled once from trusted shim code; per frame, upload the (dirty region of the)
+   framebuffer and draw. GPU handles scaling/DPR. Reuse the texture; consider double-buffering to
+   hide upload latency.
+2. **OffscreenCanvas in a worker** — pairs with the pthread build (render worker uploads straight
+   from SAB without bouncing through the main thread). Resize of OffscreenCanvas is heavy →
+   debounce resizes.
+3. **2D canvas `putImageData`** — simplest correct fallback; CPU-bound, marginal at 1080p60. Keep
+   as a debug/compat path.
+
+Attack-surface note ("blit-only WebGL"): WebGL always uses shaders — blit-only means *we* author
+one trivial fixed shader; the nested site supplies only pixel *data*, never shader source or GL
+calls. Exercised native surface ≈ texture upload + one static program through ANGLE — narrow and
+well-tested. 2D canvas is GPU-accelerated (Skia) under the hood anyway, so the 2D path is not
+meaningfully "GPU-free"; choose by performance. What stays banned: exposing WebGL/WebGPU *to the
+nested engine* (attacker-controlled shaders/API sequences → driver).
+
+Frame scheduling: engine signals `frame_ready` (+ dirty rects if we get them out of WebKit);
+viewer rAF loop uploads latest complete frame; drop intermediate frames rather than queueing.
+Vsync/throttle inside the engine driven by a host rAF-derived tick so the engine doesn't paint
+faster than display.
+
+DPR & resize: canvas backing size = CSS size × devicePixelRatio; `ResizeObserver` → debounce →
+engine viewport resize. Engine renders at device pixels (no host-side scaling blur).
+
+## Input forwarding
+
+- **Pointer**: `pointerdown/move/up/cancel` + `wheel` (listener `passive:false`, preventDefault)
+  on the canvas; capture pointer on down. Translate CSS→device px. `contextmenu` prevented; right
+  click forwarded (nested page may show its own menu; a host-side nested-browser context menu is
+  viewer chrome, post-MVP).
+- **Scrolling lives inside the engine** — wheel/touch deltas are forwarded as input; the host page
+  never scrolls. Smooth scrolling, overscroll, scrollbars: all engine-drawn. This is the only way
+  it stays coherent (fixed elements, iframes, JS scroll handlers).
+- **Keyboard**: `keydown/keyup` with code/key/modifiers forwarded; prevent default for keys the
+  page consumes, but pass through browser-level combos (Cmd/Ctrl+L jumps to our fake URL bar;
+  Cmd/Ctrl+T/W etc. left to the real browser). Maintain a small routing table.
+- **IME/composition — the known-hard one.** A canvas can't host the platform IME. Standard trick
+  (Figma/VS Code lineage): keep a hidden 1px `<input>`/contenteditable positioned at the engine's
+  caret (engine reports caret rect), focused whenever the nested page has an editable focused;
+  consume `beforeinput` + `compositionstart/update/end` from it and feed text/composition state
+  into the engine; mirror the engine's composition string back. Dead keys and CJK candidate
+  windows follow the hidden input's position — hence the caret-rect plumbing. Budget real time;
+  ship US-ASCII typing first, IME correctness as a fast-follow.
+- **Touch**: forward as touch events post-MVP; MVP maps primary touch to pointer.
+- **Cursor**: engine reports CSS cursor → set `canvas.style.cursor`.
+- **Focus**: canvas is a focus sink (`tabindex=0`); engine-internal focus is engine business.
+  Viewer chrome (URL bar, find bar) participates in normal DOM focus.
+
+## Browser-chrome features (viewer-side UI, engine-side machinery)
+
+- **Fake URL bar**: shows engine's current URL + TLS-ish state (we know scheme; real cert info
+  unavailable — display honestly). Edit → navigate engine. This is our substitute for the omnibox
+  (which permanently shows the extension URL — see extension-platform.md).
+- **Find-in-page**: intercept Ctrl/Cmd+F → viewer find bar UI → engine's own find machinery
+  (WebCore `findString` / FindController: search, highlight, scroll-to-match all happen inside the
+  pixmap, like every WebKit embedder). We build UI only.
+- **Navigation**: back/forward/reload buttons → engine BackForwardList. History persistence
+  (profile OPFS) post-MVP.
+- **Downloads**: engine signals download (navigation policy decision) → bytes stream through the
+  bridge to a Blob → `chrome.downloads.download({url: blobUrl, filename})`.
+- **File upload**: engine requests file picker → viewer opens real `<input type=file>` (needs the
+  user gesture we already have from the click) → File bytes copied into engine, engine fakes the
+  FileList. MVP: single files, no directories.
+- **Clipboard**: viewer uses async Clipboard API (`clipboardRead`/`clipboardWrite` permissions;
+  gesture-gated reads). Engine copy → host clipboard write. Host paste → inject into engine on
+  Ctrl/Cmd+V. Rich-text/image clipboard post-MVP.
+- **Popups / window.open / target=_blank**: engine policy delegate → viewer opens a new
+  `viewer.html?url=…` tab via `chrome.tabs.create`. Popup blocking = engine's own logic + a
+  viewer-side allowlist. `window.opener` relationships across viewer tabs: unsupported initially
+  (document as limitation).
+- **Dialogs** (alert/confirm/prompt/beforeunload, HTTP auth): engine delegate → viewer-drawn modal
+  (never native `window.alert` — it would look like the extension talking).
+- **Audio**: engine PCM → SAB ring buffer → `AudioWorklet` in the viewer. Post-MVP. Video: further
+  out (decode via engine's software paths where feasible; no DRM/EME ever — Netflix-class sites are
+  permanently out of scope).
+- **Printing**: out of scope (project decision).
+- **Zoom**: Ctrl/Cmd+± → engine page-zoom (WebKit supports it natively). Host pinch-zoom left alone.
+- **Status/progress**: favicon (engine bytes → data URL → `<link rel=icon>` of viewer page — also
+  gives the real tab a per-site icon), title → `document.title` (tab strip shows nested page
+  titles), load progress bar, hover-link status text.

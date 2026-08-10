@@ -204,6 +204,11 @@ void bib_net_redirect(int reqId, int status, char* headersJson);
  */
 void bib_query(int queryId, const char* kind, const char* argJson);
 
+/* DEV BUILDS ONLY: hard-abort on the engine thread. Exercises the crash →
+ * abort → host teardown/reload path (tier-2 scenario 12) without waiting for
+ * a real crash. Compiled out of release with the rest of the dev surface. */
+void bib_crash(void);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

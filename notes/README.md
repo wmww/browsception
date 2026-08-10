@@ -65,11 +65,33 @@ untested; frame-cost measurement (use __bs.metrics once the query channel lands)
 WebCore's EventHandler; added the missing `bib_set_focus` (fork commit on
 `browsception` branch) + harness canvas focus/blur wiring, gave input.bstest a
 link-nav zone (#nav → final.html, solid #663399 for one-probe assertion), and
-verified the milestone with tools/smoke-input.mjs (fixture-only, deterministic:
-click/dblclick/keydown/wheel-scroll/type-checksum/refocus/link-click all PASS;
-graduates into tier-2 scenario 9 at 2.1). smoke-bridge still green after the
-rebuild. Next: 1.5 stability pass (crash detection → teardown/reload UI, memory
-cap, leak check across 50 navigations).
+verified the milestone with the fixture input smoke (fixture-only,
+deterministic: click/dblclick/keydown/wheel-scroll/type-checksum/refocus/
+link-click all PASS; now part of tools/smoke-fixtures.mjs). smoke-bridge still green after the
+rebuild. 1.5 stability pass: done — `bib_crash` dev export (ABI + engine) for
+on-demand crash testing; harness heartbeat (readback round-trip on frame
+stall, `?hbms=` tunable) detects silent worker death/wedges → Reload UI;
+`__bib.workers`/`killEngine()` test hooks; abort → dead-UI → reload-recovers
+verified. Memory cap = the wasm32 4 GB MAXIMUM_MEMORY ceiling for MVP; OOM
+lands on the verified abort path. Leak check (tools/smoke-leak.mjs): 50
+fixture navs, reserved heap flat at 256 MB (experiments/log.md). Guest-JS
+wedge (no JSC watchdog) → issues/. tools/smoke-fixtures.mjs is the
+pre-extension tier-2 7–9 suite (render/execute/input + crash/hang), riding
+the dev-server proxy's new *.bstest→fixture-server resolution
+(BIB_BSTEST_PORT). Engine-side ABI exports still unimplemented (Phase-2
+chrome scope): bib_abi_version, bib_stop, bib_reload, bib_go,
+bib_set_visible, bib_query.
+
+**Phase 1 complete** (2026-08-10): exit gate passed — tiers 0–1 green,
+scenarios 7–9 green against the engine artifact (tools/smoke-fixtures.mjs),
+and a 10.2-min real-site mouse+keyboard browse (tools/smoke-browse.mjs:
+Wikipedia/HN/MDN/TodoMVC) with zero crashes (experiments/log.md). Phase-2
+heads-ups from the gate run: guest history.back() doesn't traverse
+(BackForwardList wiring lands with 2.3's chrome), and the dev transport has
+no request timeout (dev-only; the extension bridge's idle-timeout guard is
+the production answer). Next: Phase 2 — 2.1 package viewer+engine into the
+extension (WebGL2 blit graduates from spikes/blit; engine module caching;
+cold/warm start measurement).
 
 Key decisions made so far:
 

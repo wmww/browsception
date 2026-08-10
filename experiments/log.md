@@ -117,3 +117,31 @@ ticks alive), then https://example.com rendered through the engine over Wisp
 build script: tools/build-engine.sh (5 fixes). Distilled → notes/engine-build.md;
 open-questions #3 answered. WebCore compile itself ≈45 min wall at BIB_JOBS=12 —
 much better than feared. Phase 0 exit gate: all five spikes done, tiers 0–1 green.
+
+## 2026-08-10 — 1.5 leak check: 50 fixture navigations, heap flat
+
+tools/smoke-leak.mjs: 50 engine navigations cycling grid/input/app.bstest
+through the bridge (fixture-only). Reserved wasm heap (HEAPU8.length) stayed
+at the initial 256 MB from boot through nav 50 — zero growth, so cumulative
+leakage over 50 navs is bounded by the boot headroom. Caveat: reserved-heap
+granularity can't see malloc churn inside the initial reservation; re-measure
+with real malloc stats once bib_query "metrics" lands. Verdict: no leak
+signal at MVP scale; bounds live in the script as tripwires (final <2.5 GB,
+second-half growth <256 MB).
+
+## 2026-08-10 — Phase-1 exit gate: 10-min real-site browse
+
+tools/smoke-browse.mjs (real sites, sparing): Wikipedia (search by typing →
+article → follow link), HN (front → comments), MDN (article → doc link),
+TodoMVC ES6 (add 2 todos by typing, toggle by click) + mixed filler to the
+10-minute mark, all input host-injected through the canvas.
+
+Run 1: 10.2 min, engine alive throughout, 1 failure — TodoMVC load stalled
+>180 s. Debug: loads fine standalone AND mid-MDN-load (4 s); transient
+upstream stall + the dev transport has no request timeout (dev-only gap; the
+extension bridge's idle-timeout guard covers this in production). Run 2
+(site legs only, fixed a polling assertion): ALL PASS. Verdict: gate passed.
+
+Findings for Phase 2: guest history.back() does not traverse (BackForwardList
+wiring is part of 2.3, together with bib_stop/reload/go); MDN telemetry CORS
+preflights fail loudly in-engine (harmless, blocklist candidates).

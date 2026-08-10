@@ -32,6 +32,7 @@ export const EXPORTS = [
   'bib_net_fail',
   'bib_net_redirect',
   'bib_query',
+  'bib_crash', // dev builds only
 ];
 
 // engine → JS hooks on Module, by scope. [page] = viewer main thread

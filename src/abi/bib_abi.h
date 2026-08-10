@@ -155,6 +155,9 @@ void bib_set_focus(int focused);
  * Response headers JSON (JS → engine, ownership → engine):
  *   { "status": int, "statusText": str, "url": str,
  *     "headers": [[name, value], ...] }      // includes captured Set-Cookie
+ * Bodies are delivered DECODED (the host fetch stack decompresses); the shim
+ * strips content-encoding/content-length/transfer-encoding so the engine
+ * never tries to re-decode or trust a stale length.
  *
  * Redirects are ENGINE-DRIVEN (bridge-probe decision 1): the shim fetches
  * with redirect:'error', recovers the 3xx (status/Location/Set-Cookie) from

@@ -63,6 +63,15 @@ accessibility/editing/crypto touches. The real port logic (embedder, Wisp bridge
 page) lives in WebkitWasm's own `src/`, outside the WebKit tree. Tracks a WebKit
 **release branch** (webkitglib/2.52), consistent with our rebase-on-tags policy.
 
+## Our fork state
+
+Engine changes live on branch **`browsception`** in the local engine/WebkitWasm clone
+(local git only; upstream remains `main`). 1.2b (a221986): host-fetch bridge replaces
+curl/wisp for resource loads; dev harness = web/browser.html + web/bib-net.js +
+dev-server `/__bibproxy`. Rebuilds: `tools/build-engine.sh` (embedder-only changes are
+a ~2 min compile+relink). Milestone smoke: `node tools/smoke-bridge.mjs` (real sites —
+not CI).
+
 ## Relevant to Phase 1 (what we'll change)
 
 - Networking to delete: curl 8.17 + OpenSSL 3.5 + nghttp2 + SOCKFS + wisp-js (bridge

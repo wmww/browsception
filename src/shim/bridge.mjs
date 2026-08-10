@@ -191,8 +191,10 @@ export class Bridge {
     if (!this.#inflight.has(id)) return;
 
     // Merge captured Set-Cookie (invisible to fetch) into the header list.
+    // Bodies arrive decoded — strip encoding/length headers per the ABI.
+    const stripped = new Set(['set-cookie', 'content-encoding', 'content-length', 'transfer-encoding']);
     const entry = await this.capture.take(req.url);
-    const headers = [...res.headers.entries()].filter(([k]) => k !== 'set-cookie');
+    const headers = [...res.headers.entries()].filter(([k]) => !stripped.has(k));
     if (entry) for (const v of setCookiesOf(entry)) headers.push(['set-cookie', v]);
     m._bib_net_response(
       id,

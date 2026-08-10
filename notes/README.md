@@ -104,9 +104,21 @@ warm to interactive → module caching + eager boot dropped (open-questions
 #11 answered). test/tier2/scenarios.test.mjs (npm run test:tier2, needs
 staged engine): scenarios 7/8/9/12/13 all green against the real extension
 in ~6 s. Guest wasm shim (binaryen wasm2js) not ported yet — guest wasm sees
-CompileError; fast-follow. Next: 2.2 interception goes live in blacklist
-mode (original-URL plumbing, per-tab viewer instances, chrome.tabs title
-integration) — note the first-navigation ruleset race issue in issues/.
+CompileError; fast-follow. 2.2 done: live blacklist interception —
+src/ext/sw.mjs (module SW) reconciles storage.sync state
+({active,mode,whitelist,blacklist}, default active+blacklist until 2.6) into
+DNR via desiredRuleState() (dynamic rules replaced wholesale; session rules
+untouched — bridge/escape namespaces live there), and sweeps open tabs whose
+URL should be sandboxed (install/startup/state-change; mitigates the
+first-nav race issue — residual: pre-sweep JS executes briefly). Viewer
+parses ?url= RAW (DNR \0 is un-encoded; own params must precede url= — a
+target's &stub= must not read as ours). shouldSandbox() in dnr-rules.mjs is
+the shared disposition predicate (sweep now, badge in 2.4). Tier-2 now also
+covers interception-to-nested-render and the sweep (7 scenarios, ~7 s).
+Nested-title→tab-title carried into 2.3 (needs engine bibChrome signals,
+which are greenfield). Next: 2.3 browser chrome v1 (fake URL bar, engine
+history wiring incl. BackForwardList traversal + bib_stop/reload/go
+exports, progress, crashed page, open-natively escape hatch).
 
 Key decisions made so far:
 

@@ -9,7 +9,7 @@
 // Interception is main_frame-only by design: bridge fetches and native
 // subresources must never hit these rules.
 
-import { isIpLiteral } from './list-match.mjs';
+import { isIpLiteral, listMatches } from './list-match.mjs';
 
 export const CATCHALL_RULESET_ID = 'catchall';
 
@@ -60,6 +60,23 @@ export function catchallRules(viewerBase) {
       },
     },
   ];
+}
+
+// Would this URL be sandboxed under `state`? Mirrors what the DNR rules from
+// desiredRuleState() do at request time — used for the tab sweep and the
+// per-tab disposition badge (2.4). Escape hatches are not consulted here.
+export function shouldSandbox(state, url) {
+  if (!state.active) return false;
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+  return state.mode === 'whitelist'
+    ? !listMatches(state.whitelist ?? [], u.hostname)
+    : listMatches(state.blacklist ?? [], u.hostname);
 }
 
 /**

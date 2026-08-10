@@ -4,6 +4,7 @@ import {
   desiredRuleState,
   catchallRules,
   entryRegex,
+  shouldSandbox,
   PRIORITY,
   CATCHALL_RULESET_ID,
 } from '../../src/ext/dnr-rules.mjs';
@@ -111,4 +112,23 @@ test('catchall ruleset shape', () => {
   assert.match('https://anything.example/', new RegExp(r.condition.regexFilter));
   // regexSubstitution rules must stay under DNR's 2KB compiled-rule limit; keep source small
   assert.ok(JSON.stringify(r).length < 1000);
+});
+
+test('shouldSandbox mirrors rule semantics (sweep + badge disposition)', () => {
+  const base = { active: true, whitelist: ['trusted.com'], blacklist: ['bad.com'] };
+  const wl = { ...base, mode: 'whitelist' };
+  const bl = { ...base, mode: 'blacklist' };
+  // whitelist mode: sandbox-by-default
+  assert.equal(shouldSandbox(wl, 'https://random.example/'), true);
+  assert.equal(shouldSandbox(wl, 'https://trusted.com/x'), false);
+  assert.equal(shouldSandbox(wl, 'https://sub.trusted.com/'), false);
+  // blacklist mode: native-by-default
+  assert.equal(shouldSandbox(bl, 'https://random.example/'), false);
+  assert.equal(shouldSandbox(bl, 'http://bad.com/'), true);
+  assert.equal(shouldSandbox(bl, 'https://deep.sub.bad.com/'), true);
+  // never sandbox non-http(s), unparsable, or when inactive
+  assert.equal(shouldSandbox(wl, 'chrome-extension://abc/x.html'), false);
+  assert.equal(shouldSandbox(wl, 'about:blank'), false);
+  assert.equal(shouldSandbox(wl, 'not a url'), false);
+  assert.equal(shouldSandbox({ ...wl, active: false }, 'https://random.example/'), false);
 });

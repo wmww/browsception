@@ -36,6 +36,9 @@ const manifest = {
   minimum_chrome_version: '124',
   permissions: ['declarativeNetRequest', 'webRequest', 'storage', 'tabs'],
   host_permissions: ['<all_urls>'],
+  background: { service_worker: 'ext/sw.mjs', type: 'module' },
+  // DNR redirects can only target listed resources (spike 0.3).
+  web_accessible_resources: [{ resources: ['ext/viewer.html'], matches: ['<all_urls>'] }],
   declarative_net_request: {
     rule_resources: [
       {

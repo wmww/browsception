@@ -1,21 +1,15 @@
 # First navigation can race DNR ruleset registration (fresh profile / install)
 
-Observed 2026-08-09 during the guibox recipe check (spike 0.5): launching Chromium with a
-fresh profile, `--load-extension`, and a startup URL on a blacklisted domain loaded the
-site **natively**; a reload was then intercepted normally. The very first navigation beat
-static ruleset registration, violating the no-target-bytes invariant once.
+Observed 2026-08-09 (spike 0.5): a startup URL on a blacklisted domain loaded natively once;
+the first navigation beat static ruleset registration.
 
-Impact:
-- Real users: the tab(s) open at install time, and possibly the first navigation right
-  after install, run native even when they should be sandboxed. Whitelist mode's
-  "sandbox by default from install" promise has a one-shot hole.
-- Dev/test flows: any harness that passes the target URL on the command line tests the
-  native path by accident (tier-1 tests dodge this because they navigate after startup).
+**Mitigated 2026-08-10 (2.2):** the SW sweeps open tabs on install/startup/state-change and
+redirects any that should be sandboxed (`sw.mjs sweep()`; tier-2 "sweep" scenario covers the
+mechanism). The residual window is inherent: target-page JS runs for the moment before the
+sweep lands — the sweep closes the exposure, it cannot un-execute. Document as a known limit
+in security.md when 2.5's invariant audit lands.
 
-Ideas (untested):
-- `chrome.runtime.onInstalled`/startup: sweep existing tabs (`tabs.query`) and redirect
-  any whose URL should be sandboxed to the viewer (`tabs.update`). Doesn't un-execute the
-  page but closes the window quickly. (Target page JS has already run by then — document.)
-- Check whether packed/store installs (vs `--load-extension`) have the same window.
-- Tier-1 regression test: launch with a startup URL and assert post-sweep state once a
-  sweep exists.
+Remaining to check:
+- Does a packed/store install (vs `--load-extension`) have the same window at all?
+- Install-time specifically: onInstalled fires before or after pre-existing tabs finish
+  loading? (Sweep handles either, but worth knowing the real ordering once.)

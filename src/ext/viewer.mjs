@@ -14,7 +14,12 @@ import { RedirectCapture } from '../shim/redirect-capture.mjs';
 import { createStubModule } from '../shim/engine-stub.mjs';
 import { createPresenter } from './blit.mjs';
 
-const params = new URLSearchParams(location.search);
+// Viewer params must precede url= — the raw target URL after it may contain
+// its own query (&stub=, &blit=, …) that must NOT be read as ours.
+const _urlIdx = location.search.indexOf('url=');
+const params = new URLSearchParams(
+  _urlIdx >= 0 ? location.search.slice(0, _urlIdx) : location.search,
+);
 const bootEl = document.getElementById('boot');
 const statusEl = document.getElementById('status');
 const canvas = document.getElementById('screen');
@@ -44,6 +49,23 @@ globalThis.__bsBoot = async (opts = {}) => {
   return true;
 };
 
+// The DNR redirect's \0 carries the matched URL RAW (un-encoded), so the
+// target's own query would be truncated by URLSearchParams — slice at the
+// first "url=" instead. Manual/test paths pass it percent-encoded; decode
+// only that form.
+function rawUrlParam() {
+  const q = location.search;
+  const i = q.indexOf('url=');
+  if (i < 0) return null;
+  let raw = q.slice(i + 4);
+  if (/^https?%3A/i.test(raw)) {
+    try {
+      raw = decodeURIComponent(raw);
+    } catch {}
+  }
+  return raw;
+}
+
 // http(s) only: anything else must never reach bib_load_url (?url= arrives
 // from arbitrary intercepted navigations).
 function normalizeEngineURL(raw) {
@@ -62,8 +84,9 @@ function normalizeEngineURL(raw) {
 // ---------------------------------------------------------------- real engine
 async function bootEngine() {
   const t0 = performance.now();
-  const navigateURL = normalizeEngineURL(params.get('url'));
-  if (params.get('url') && !navigateURL) {
+  const rawURL = rawUrlParam();
+  const navigateURL = normalizeEngineURL(rawURL);
+  if (rawURL && !navigateURL) {
     bootEl.textContent = 'blocked: only http(s) URLs';
     return;
   }

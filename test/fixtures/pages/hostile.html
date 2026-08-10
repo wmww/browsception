@@ -1,0 +1,61 @@
+<!doctype html>
+<!-- hostile.bstest — tries everything it shouldn't (notes/testing.md). The
+     real assertions are oracle- and survival-side: after a full pass, the
+     fixture oracle must show no private/blocked request on the wire, and the
+     page must still be responsive. The page itself reports each attempt's
+     outcome in #results as "<name>: blocked|reached" plus DONE-SENTINEL when
+     the pass completes. "blocked" = fetch rejected/errored. -->
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>BSTEST-HOSTILE</title>
+</head>
+<body>
+  <h1>BSTEST-HOSTILE-SENTINEL</h1>
+  <ul id="results"></ul>
+  <a id="filelink" href="file:///etc/passwd">file link</a>
+  <script>
+    const out = (name, verdict) => {
+      const li = document.createElement('li');
+      li.textContent = `${name}: ${verdict}`;
+      document.getElementById('results').append(li);
+    };
+
+    const attempts = [
+      ['loopback-port1', 'http://127.0.0.1:1/'],
+      ['localhost', 'http://localhost:8081/'],
+      ['rfc1918', 'http://10.0.0.1/'],
+      ['metadata', 'http://169.254.169.254/latest/meta-data/'],
+      ['v6-loopback', 'http://[::1]/'],
+      ['bad-port-25', 'https://hostile.bstest:25/'],
+      ['ftp', 'ftp://hostile.bstest/'],
+      ['file', 'file:///etc/passwd'],
+    ];
+
+    async function run() {
+      for (const [name, url] of attempts) {
+        try {
+          await fetch(url, { signal: AbortSignal.timeout(3000) });
+          out(name, 'reached');
+        } catch {
+          out(name, 'blocked');
+        }
+      }
+      // window.open spam (popup handling / no host tabs may appear)
+      let opened = 0;
+      for (let i = 0; i < 5; i++) if (window.open('/','_blank')) opened++;
+      out('window-open', `spam:${opened}`);
+      // oversized response (size-cap enforcement)
+      try {
+        const r = await fetch('/big', { signal: AbortSignal.timeout(15000) });
+        const buf = await r.arrayBuffer();
+        out('oversize', `reached:${buf.byteLength}`);
+      } catch {
+        out('oversize', 'blocked');
+      }
+      out('DONE-SENTINEL', 'pass-complete');
+    }
+    run();
+  </script>
+</body>
+</html>

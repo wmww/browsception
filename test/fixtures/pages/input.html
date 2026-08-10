@@ -1,0 +1,50 @@
+<!doctype html>
+<!-- input.bstest — input fixture: every received event repaints a fixed
+     region with a deterministic color, so input tests assert via pixels alone.
+     Regions (probe the center):
+       click  (0,0)-(200,200):    #808080 → #00ff00 on click; #ff8800 on dblclick
+       key    (200,0)-(400,200):  rgb(code, 255-code, 64) of last keydown keyCode
+       scroll (400,0)-(600,200):  fixed; rgb(min(255,scrollY/10), 0, 255-min(255,scrollY/10))
+       text checksum (0,300)-(200,400): rgb(c,c,c), c = sum of input charCodes % 256
+     The text field sits at (0,220)-(200,260). Page is 5000px tall for scroll. -->
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>BSTEST-INPUT</title>
+  <style>
+    html, body { margin: 0; background: #ffffff; height: 5000px; }
+    .zone { position: fixed; width: 200px; height: 200px; }
+    #click  { left: 0;     top: 0; background: #808080; }
+    #key    { left: 200px; top: 0; background: #202020; }
+    #scroll { left: 400px; top: 0; background: #0000ff; }
+    #sum    { left: 0; top: 300px; width: 200px; height: 100px; position: fixed; background: #000000; }
+    #field  { position: fixed; left: 0; top: 220px; width: 190px; height: 34px; font-size: 20px; }
+  </style>
+</head>
+<body>
+  <div class="zone" id="click"></div>
+  <div class="zone" id="key"></div>
+  <div class="zone" id="scroll"></div>
+  <input id="field" autofocus>
+  <div id="sum"></div>
+  <p style="position:fixed;top:420px">BSTEST-INPUT-SENTINEL</p>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    $('click').addEventListener('click', () => ($('click').style.background = '#00ff00'));
+    $('click').addEventListener('dblclick', () => ($('click').style.background = '#ff8800'));
+    addEventListener('keydown', (e) => {
+      const c = e.keyCode & 255;
+      $('key').style.background = `rgb(${c}, ${255 - c}, 64)`;
+    });
+    addEventListener('scroll', () => {
+      const v = Math.min(255, Math.round(scrollY / 10));
+      $('scroll').style.background = `rgb(${v}, 0, ${255 - v})`;
+    });
+    $('field').addEventListener('input', () => {
+      let c = 0;
+      for (const ch of $('field').value) c = (c + ch.charCodeAt(0)) % 256;
+      $('sum').style.background = `rgb(${c}, ${c}, ${c})`;
+    });
+  </script>
+</body>
+</html>

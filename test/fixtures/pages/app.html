@@ -1,0 +1,66 @@
+<!doctype html>
+<!-- app.bstest — small JS SPA fixture. Each capability check reports twice:
+     a text sentinel "<NAME>-OK"/"<NAME>-FAIL" in #status, and a 50x50 swatch
+     that flips red → green (pixel probes). Swatch row at y=400, checks in
+     order: JS, TIMER, FETCH, XFETCH, COOKIE, PUSHSTATE at x = 0,50,...,250.
+     Also: a redirect-chain link (#redirlink) landing on /final. -->
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>BSTEST-APP</title>
+  <style>
+    html, body { margin: 0; background: #ffffff; }
+    .sw { position: fixed; top: 400px; width: 50px; height: 50px; background: #ff0000; }
+  </style>
+</head>
+<body>
+  <h1 id="title">BSTEST-APP-SENTINEL</h1>
+  <ul id="status"></ul>
+  <a id="redirlink" href="/redirect?to=%2Fredirect%3Fto%3D%2Ffinal">redirect chain</a>
+  <div id="swatches"></div>
+  <script>
+    const CHECKS = ['JS', 'TIMER', 'FETCH', 'XFETCH', 'COOKIE', 'PUSHSTATE'];
+    const sw = {};
+    for (let i = 0; i < CHECKS.length; i++) {
+      const d = document.createElement('div');
+      d.className = 'sw';
+      d.style.left = `${i * 50}px`;
+      document.getElementById('swatches').append(d);
+      sw[CHECKS[i]] = d;
+    }
+    function report(name, ok) {
+      const li = document.createElement('li');
+      li.textContent = `${name}-${ok ? 'OK' : 'FAIL'}`;
+      document.getElementById('status').append(li);
+      if (ok) sw[name].style.background = '#00ff00';
+    }
+
+    report('JS', true); // executing at all
+
+    setTimeout(() => report('TIMER', true), 50);
+
+    fetch('/api/data')
+      .then((r) => r.json())
+      .then((j) => report('FETCH', j.data === 'FETCH-PAYLOAD'))
+      .catch(() => report('FETCH', false));
+
+    fetch('https://other.bstest/api/cors')
+      .then((r) => r.json())
+      .then((j) => report('XFETCH', j.data === 'XFETCH-PAYLOAD'))
+      .catch(() => report('XFETCH', false));
+
+    fetch('/set-cookie?n=bsapp&v=roundtrip')
+      .then(() => fetch('/cookie-echo'))
+      .then((r) => r.json())
+      .then((j) => report('COOKIE', (j.cookie ?? '').includes('bsapp=roundtrip')))
+      .catch(() => report('COOKIE', false));
+
+    try {
+      history.pushState({}, '', '/pushed');
+      report('PUSHSTATE', location.pathname === '/pushed');
+    } catch {
+      report('PUSHSTATE', false);
+    }
+  </script>
+</body>
+</html>

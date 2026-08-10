@@ -25,6 +25,8 @@ surface for speed (no WebGPU for the nested engine, no nested-wasm-runs-natively
 | [extension-platform.md](extension-platform.md) | What extension APIs allow: interception, CORS, SAB/threads, limits; Chrome vs Firefox |
 | [ui.md](ui.md) | Activation states, whitelist/blacklist modes, list semantics, toolbar UI, DNR mapping |
 | [networking.md](networking.md) | The fetch bridge design, cookie model, shim guard list |
+| [bridge-probe.md](bridge-probe.md) | Spike 0.2 results: verified platform behaviors the bridge rests on + redirect/cookie design decisions |
+| [engine-build.md](engine-build.md) | Spike 0.1 results: reproducible WebkitWasm build (pins, fixes, sizes, divergences, demo verification) |
 | [rendering-input.md](rendering-input.md) | Blit paths, input forwarding, IME, find-in-page, clipboard, audio, popups |
 | [security.md](security.md) | Threat model, trust boundaries, what we must enforce ourselves |
 | [testing.md](testing.md) | Automated test tiers (unit/bridge/full-integration), fixture+oracle design, agent iteration loop |
@@ -34,7 +36,15 @@ The MVP plan lives in [../plans/mvp.md](../plans/mvp.md).
 
 ## Status
 
-Research/planning phase. Key decisions made so far:
+**Phase 0 complete** (2026-08-10, exit gate passed): all five spikes done. Engine
+builds and runs (engine-build.md; `tools/build-engine.sh`); bridge design verified
+with engine-driven redirects + webRequest Set-Cookie capture (bridge-probe.md);
+interception matrix green incl. whitelist shape; blit path picked
+(spikes/blit/RESULTS.md); `npm test` = tiers 0–1 green, pure headless. Open issue to
+carry into Phase 2: first-navigation ruleset race (issues/). Next: Phase 1 — shim ABI
+(1.1), then networking transplant (1.2).
+
+Key decisions made so far:
 
 - **Engine: WebKit**, via the WebkitWasm lineage (WebCore embedded WebKit1-style, JSC CLoop
   interpreter, Skia). See [engine.md](engine.md).

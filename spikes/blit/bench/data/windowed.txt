@@ -1,0 +1,473 @@
+# windowed: Chrome/150.0.7871.186 / Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36
+blit spike server on http://127.0.0.1:8940/
+1080p webgl2 full       | blit   0.68   1.45 (p95) | copy   0.00 | fps  56.1 | lat  12.40  30.01 (p95) | sabDirect=true
+1080p webgl2 dirty      | blit   0.11   0.25 (p95) | copy   0.00 | fps  57.4 | lat  13.12  31.07 (p95) | sabDirect=true
+1080p 2d     full       | blit   1.40   2.78 (p95) | copy   0.72 | fps  55.9 | lat  11.13  22.94 (p95) | sabDirect=false
+1080p 2d     dirty      | blit   0.17   0.35 (p95) | copy   0.07 | fps  58.1 | lat   9.97  19.69 (p95) | sabDirect=false
+1440p webgl2 full       | blit   1.02   1.33 (p95) | copy   0.00 | fps  56.2 | lat  13.68  26.63 (p95) | sabDirect=true
+1440p webgl2 dirty      | blit   0.11   0.32 (p95) | copy   0.00 | fps  57.1 | lat  10.05  21.26 (p95) | sabDirect=true
+1440p 2d     full       | blit   3.21   3.95 (p95) | copy   1.96 | fps  57.6 | lat  12.63  27.70 (p95) | sabDirect=false
+1440p 2d     dirty      | blit   0.22   0.47 (p95) | copy   0.10 | fps  57.1 | lat  10.85  25.90 (p95) | sabDirect=false
+1080p webgl2 full  sync | blit   0.70   1.25 (p95) | copy   0.00 | fps  55.8 | lat  11.08  24.97 (p95) | sabDirect=true
+1440p webgl2 full  sync | blit   1.03   1.27 (p95) | copy   0.00 | fps  60.6 | lat  12.33  23.87 (p95) | sabDirect=true
+
+renderer: ANGLE (AMD, AMD Radeon 890M Graphics (radeonsi strix1 ACO), OpenGL ES 3.2)
+
+JSON:
+{
+ "label": "windowed",
+ "browser": "Chrome/150.0.7871.186",
+ "date": "2026-08-10T02:30:58.677Z",
+ "results": [
+  {
+   "config": {
+    "res": "1080",
+    "path": "webgl2",
+    "mode": "full",
+    "sync": false
+   },
+   "snap": {
+    "resolution": "1920x1080",
+    "path": "webgl2",
+    "mode": "full",
+    "sync": false,
+    "sabDirect": true,
+    "renderer": "ANGLE (AMD, AMD Radeon 890M Graphics (radeonsi strix1 ACO), OpenGL ES 3.2)",
+    "crossOriginIsolated": true,
+    "dpr": 1,
+    "fps": 56.11009391057825,
+    "blit": {
+     "n": 240,
+     "avg": 0.6846458336959282,
+     "p95": 1.4499999955296516,
+     "max": 5.559999994933605
+    },
+    "copy": {
+     "n": 240,
+     "avg": 0,
+     "p95": 0,
+     "max": 0
+    },
+    "latency": {
+     "n": 64,
+     "avg": 12.396093749674037,
+     "p95": 30.010000005364418,
+     "max": 33.685000002384186
+    },
+    "engineFrameMs": 1.18,
+    "events": {
+     "pointer": 148,
+     "wheel": 0,
+     "key": 0,
+     "acked": 148,
+     "dropped": 0
+    }
+   }
+  },
+  {
+   "config": {
+    "res": "1080",
+    "path": "webgl2",
+    "mode": "dirty",
+    "sync": false
+   },
+   "snap": {
+    "resolution": "1920x1080",
+    "path": "webgl2",
+    "mode": "dirty",
+    "sync": false,
+    "sabDirect": true,
+    "renderer": "ANGLE (AMD, AMD Radeon 890M Graphics (radeonsi strix1 ACO), OpenGL ES 3.2)",
+    "crossOriginIsolated": true,
+    "dpr": 1,
+    "fps": 57.444511573088256,
+    "blit": {
+     "n": 240,
+     "avg": 0.10604166621342301,
+     "p95": 0.2549999952316284,
+     "max": 0.625
+    },
+    "copy": {
+     "n": 240,
+     "avg": 0,
+     "p95": 0,
+     "max": 0
+    },
+    "latency": {
+     "n": 65,
+     "avg": 13.123076922389178,
+     "p95": 31.065000005066395,
+     "max": 32.60999999940395
+    },
+    "engineFrameMs": 0.075,
+    "events": {
+     "pointer": 150,
+     "wheel": 0,
+     "key": 0,
+     "acked": 150,
+     "dropped": 0
+    }
+   }
+  },
+  {
+   "config": {
+    "res": "1080",
+    "path": "2d",
+    "mode": "full",
+    "sync": false
+   },
+   "snap": {
+    "resolution": "1920x1080",
+    "path": "2d",
+    "mode": "full",
+    "sync": false,
+    "sabDirect": false,
+    "renderer": "canvas2d (Chrome/150.0.0.0)",
+    "crossOriginIsolated": true,
+    "dpr": 1,
+    "fps": 55.92429616329894,
+    "blit": {
+     "n": 240,
+     "avg": 1.3992291666877767,
+     "p95": 2.780000001192093,
+     "max": 3.5799999982118607
+    },
+    "copy": {
+     "n": 240,
+     "avg": 0.7234375000931322,
+     "p95": 1.494999997317791,
+     "max": 2.1099999994039536
+    },
+    "latency": {
+     "n": 54,
+     "avg": 11.13037037062976,
+     "p95": 22.935000002384186,
+     "max": 28.09000000357628
+    },
+    "engineFrameMs": 1.065,
+    "events": {
+     "pointer": 150,
+     "wheel": 0,
+     "key": 0,
+     "acked": 150,
+     "dropped": 0
+    }
+   }
+  },
+  {
+   "config": {
+    "res": "1080",
+    "path": "2d",
+    "mode": "dirty",
+    "sync": false
+   },
+   "snap": {
+    "resolution": "1920x1080",
+    "path": "2d",
+    "mode": "dirty",
+    "sync": false,
+    "sabDirect": false,
+    "renderer": "canvas2d (Chrome/150.0.0.0)",
+    "crossOriginIsolated": true,
+    "dpr": 1,
+    "fps": 58.143259077493155,
+    "blit": {
+     "n": 240,
+     "avg": 0.1674583334165315,
+     "p95": 0.3500000014901161,
+     "max": 0.8900000005960464
+    },
+    "copy": {
+     "n": 240,
+     "avg": 0.06731249978765845,
+     "p95": 0.14499999582767487,
+     "max": 0.23000000417232513
+    },
+    "latency": {
+     "n": 57,
+     "avg": 9.965087719392358,
+     "p95": 19.685000002384186,
+     "max": 21.649999998509884
+    },
+    "engineFrameMs": 0.155,
+    "events": {
+     "pointer": 150,
+     "wheel": 0,
+     "key": 0,
+     "acked": 150,
+     "dropped": 0
+    }
+   }
+  },
+  {
+   "config": {
+    "res": "1440",
+    "path": "webgl2",
+    "mode": "full",
+    "sync": false
+   },
+   "snap": {
+    "resolution": "2560x1440",
+    "path": "webgl2",
+    "mode": "full",
+    "sync": false,
+    "sabDirect": true,
+    "renderer": "ANGLE (AMD, AMD Radeon 890M Graphics (radeonsi strix1 ACO), OpenGL ES 3.2)",
+    "crossOriginIsolated": true,
+    "dpr": 1,
+    "fps": 56.177283680499094,
+    "blit": {
+     "n": 240,
+     "avg": 1.0160625000484287,
+     "p95": 1.3250000029802322,
+     "max": 1.9350000023841858
+    },
+    "copy": {
+     "n": 240,
+     "avg": 0,
+     "p95": 0,
+     "max": 0
+    },
+    "latency": {
+     "n": 64,
+     "avg": 13.679453125572763,
+     "p95": 26.63000000268221,
+     "max": 31.195000000298023
+    },
+    "engineFrameMs": 1.695,
+    "events": {
+     "pointer": 148,
+     "wheel": 0,
+     "key": 0,
+     "acked": 148,
+     "dropped": 0
+    }
+   }
+  },
+  {
+   "config": {
+    "res": "1440",
+    "path": "webgl2",
+    "mode": "dirty",
+    "sync": false
+   },
+   "snap": {
+    "resolution": "2560x1440",
+    "path": "webgl2",
+    "mode": "dirty",
+    "sync": false,
+    "sabDirect": true,
+    "renderer": "ANGLE (AMD, AMD Radeon 890M Graphics (radeonsi strix1 ACO), OpenGL ES 3.2)",
+    "crossOriginIsolated": true,
+    "dpr": 1,
+    "fps": 57.12822331225503,
+    "blit": {
+     "n": 240,
+     "avg": 0.11370833308125536,
+     "p95": 0.3150000050663948,
+     "max": 0.5949999988079071
+    },
+    "copy": {
+     "n": 240,
+     "avg": 0,
+     "p95": 0,
+     "max": 0
+    },
+    "latency": {
+     "n": 54,
+     "avg": 10.053981481464925,
+     "p95": 21.259999997913837,
+     "max": 24.219999998807907
+    },
+    "engineFrameMs": 0.25,
+    "events": {
+     "pointer": 148,
+     "wheel": 0,
+     "key": 0,
+     "acked": 148,
+     "dropped": 0
+    }
+   }
+  },
+  {
+   "config": {
+    "res": "1440",
+    "path": "2d",
+    "mode": "full",
+    "sync": false
+   },
+   "snap": {
+    "resolution": "2560x1440",
+    "path": "2d",
+    "mode": "full",
+    "sync": false,
+    "sabDirect": false,
+    "renderer": "canvas2d (Chrome/150.0.0.0)",
+    "crossOriginIsolated": true,
+    "dpr": 1,
+    "fps": 57.635455742429144,
+    "blit": {
+     "n": 240,
+     "avg": 3.206645833576719,
+     "p95": 3.9450000002980232,
+     "max": 4.435000002384186
+    },
+    "copy": {
+     "n": 240,
+     "avg": 1.957770833155761,
+     "p95": 2.3650000020861626,
+     "max": 3.144999995827675
+    },
+    "latency": {
+     "n": 56,
+     "avg": 12.633839286464665,
+     "p95": 27.695000000298023,
+     "max": 28.394999995827675
+    },
+    "engineFrameMs": 1.985,
+    "events": {
+     "pointer": 150,
+     "wheel": 0,
+     "key": 0,
+     "acked": 150,
+     "dropped": 0
+    }
+   }
+  },
+  {
+   "config": {
+    "res": "1440",
+    "path": "2d",
+    "mode": "dirty",
+    "sync": false
+   },
+   "snap": {
+    "resolution": "2560x1440",
+    "path": "2d",
+    "mode": "dirty",
+    "sync": false,
+    "sabDirect": false,
+    "renderer": "canvas2d (Chrome/150.0.0.0)",
+    "crossOriginIsolated": true,
+    "dpr": 1,
+    "fps": 57.107973454638554,
+    "blit": {
+     "n": 240,
+     "avg": 0.2237499998882413,
+     "p95": 0.4699999988079071,
+     "max": 1.130000002682209
+    },
+    "copy": {
+     "n": 240,
+     "avg": 0.10187499998137355,
+     "p95": 0.22500000149011612,
+     "max": 0.5749999955296516
+    },
+    "latency": {
+     "n": 59,
+     "avg": 10.85491525444944,
+     "p95": 25.895000003278255,
+     "max": 27.469999998807907
+    },
+    "engineFrameMs": 0.145,
+    "events": {
+     "pointer": 148,
+     "wheel": 0,
+     "key": 0,
+     "acked": 148,
+     "dropped": 0
+    }
+   }
+  },
+  {
+   "config": {
+    "res": "1080",
+    "path": "webgl2",
+    "mode": "full",
+    "sync": true
+   },
+   "snap": {
+    "resolution": "1920x1080",
+    "path": "webgl2",
+    "mode": "full",
+    "sync": true,
+    "sabDirect": true,
+    "renderer": "ANGLE (AMD, AMD Radeon 890M Graphics (radeonsi strix1 ACO), OpenGL ES 3.2)",
+    "crossOriginIsolated": true,
+    "dpr": 1,
+    "fps": 55.760231006671304,
+    "blit": {
+     "n": 240,
+     "avg": 0.7017500000384946,
+     "p95": 1.2549999952316284,
+     "max": 5.820000000298023
+    },
+    "copy": {
+     "n": 240,
+     "avg": 0,
+     "p95": 0,
+     "max": 0
+    },
+    "latency": {
+     "n": 60,
+     "avg": 11.082083333407839,
+     "p95": 24.974999994039536,
+     "max": 26.58500000089407
+    },
+    "engineFrameMs": 1.51,
+    "events": {
+     "pointer": 150,
+     "wheel": 0,
+     "key": 0,
+     "acked": 150,
+     "dropped": 0
+    }
+   }
+  },
+  {
+   "config": {
+    "res": "1440",
+    "path": "webgl2",
+    "mode": "full",
+    "sync": true
+   },
+   "snap": {
+    "resolution": "2560x1440",
+    "path": "webgl2",
+    "mode": "full",
+    "sync": true,
+    "sabDirect": true,
+    "renderer": "ANGLE (AMD, AMD Radeon 890M Graphics (radeonsi strix1 ACO), OpenGL ES 3.2)",
+    "crossOriginIsolated": true,
+    "dpr": 1,
+    "fps": 60.64401960491913,
+    "blit": {
+     "n": 240,
+     "avg": 1.0342291669920087,
+     "p95": 1.2749999985098839,
+     "max": 2.7049999982118607
+    },
+    "copy": {
+     "n": 240,
+     "avg": 0,
+     "p95": 0,
+     "max": 0
+    },
+    "latency": {
+     "n": 63,
+     "avg": 12.334682538868888,
+     "p95": 23.86999999731779,
+     "max": 27.780000001192093
+    },
+    "engineFrameMs": 2.125,
+    "events": {
+     "pointer": 150,
+     "wheel": 0,
+     "key": 0,
+     "acked": 150,
+     "dropped": 0
+    }
+   }
+  }
+ ]
+}

@@ -1,0 +1,49 @@
+{
+ "manifest_version": 3,
+ "name": "browsception probe",
+ "version": "0.0.1",
+ "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA24VU/NsX7uu6nhVS5WZS1PrCvDl/P2ZNkZ/xs2XHsGIcSVnNA5GvN+edj7W7WttQZV6tispKHPS9urfL/OX6QE4oJHpvrit6Tha7JDxnyrT6MNS61K6OkIK+3jFoCpZ8k1lmdaywkl0UXwiQXg+cgXAFhrOJk9tAAH5a12ZP1QTlu/kAZ1evqwsE/qYYbD0VKZdpxrwFQbPs4yXpemECXYOrNrKC3va9NTK8XHFVN8THKsuIs5z0BzPMi+cvyCJHOiyjyWcJDhJtYg/NgImismUrQA5V2idloceAA/NT06Y/fKvCGqwPL8lQNlvqQXGVCt9qXXAoDjksB67tZ695fQIDAQAB",
+ "permissions": [
+  "declarativeNetRequest",
+  "declarativeNetRequestFeedback",
+  "storage",
+  "tabs",
+  "webRequest"
+ ],
+ "host_permissions": [
+  "<all_urls>"
+ ],
+ "background": {
+  "service_worker": "sw.js"
+ },
+ "cross_origin_embedder_policy": {
+  "value": "require-corp"
+ },
+ "cross_origin_opener_policy": {
+  "value": "same-origin"
+ },
+ "web_accessible_resources": [
+  {
+   "resources": [
+    "viewer.html"
+   ],
+   "matches": [
+    "<all_urls>"
+   ]
+  }
+ ],
+ "declarative_net_request": {
+  "rule_resources": [
+   {
+    "id": "blacklist",
+    "enabled": true,
+    "path": "rules/blacklist.json"
+   },
+   {
+    "id": "catchall",
+    "enabled": false,
+    "path": "rules/catchall.json"
+   }
+  ]
+ }
+}

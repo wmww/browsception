@@ -1,0 +1,473 @@
+blit spike server on http://127.0.0.1:8940/
+# headless: Chrome/150.0.7871.186 / Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/150.0.0.0 Safari/537.36
+1080p webgl2 full       | blit   0.65   0.75 (p95) | copy   0.00 | fps  59.0 | lat   6.14  19.57 (p95) | sabDirect=true
+1080p webgl2 dirty      | blit   0.10   0.13 (p95) | copy   0.00 | fps  60.0 | lat   7.35  18.81 (p95) | sabDirect=true
+1080p 2d     full       | blit   1.30   1.50 (p95) | copy   0.67 | fps  60.0 | lat  13.12  13.40 (p95) | sabDirect=false
+1080p 2d     dirty      | blit   0.16   0.32 (p95) | copy   0.09 | fps  60.0 | lat   9.09  21.46 (p95) | sabDirect=false
+1440p webgl2 full       | blit   1.31   1.95 (p95) | copy   0.00 | fps  59.0 | lat   5.48  18.53 (p95) | sabDirect=true
+1440p webgl2 dirty      | blit   0.16   0.19 (p95) | copy   0.00 | fps  60.0 | lat   7.23  18.78 (p95) | sabDirect=true
+1440p 2d     full       | blit   2.64   3.41 (p95) | copy   1.35 | fps  45.2 | lat   5.49   6.29 (p95) | sabDirect=false
+1440p 2d     dirty      | blit   0.19   0.30 (p95) | copy   0.11 | fps  60.0 | lat  14.13  14.63 (p95) | sabDirect=false
+1080p webgl2 full  sync | blit   0.67   0.76 (p95) | copy   0.00 | fps  60.0 | lat   4.32  17.53 (p95) | sabDirect=true
+1440p webgl2 full  sync | blit   1.34   1.95 (p95) | copy   0.00 | fps  60.0 | lat   7.07  19.71 (p95) | sabDirect=true
+
+renderer: ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)
+
+JSON:
+{
+ "label": "headless",
+ "browser": "Chrome/150.0.7871.186",
+ "date": "2026-08-10T02:29:38.956Z",
+ "results": [
+  {
+   "config": {
+    "res": "1080",
+    "path": "webgl2",
+    "mode": "full",
+    "sync": false
+   },
+   "snap": {
+    "resolution": "1920x1080",
+    "path": "webgl2",
+    "mode": "full",
+    "sync": false,
+    "sabDirect": true,
+    "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+    "crossOriginIsolated": true,
+    "dpr": 1,
+    "fps": 59.01881224640354,
+    "blit": {
+     "n": 240,
+     "avg": 0.6537500001179676,
+     "p95": 0.75,
+     "max": 1.5500000044703484
+    },
+    "copy": {
+     "n": 240,
+     "avg": 0,
+     "p95": 0,
+     "max": 0
+    },
+    "latency": {
+     "n": 68,
+     "avg": 6.1427205885377,
+     "p95": 19.570000000298023,
+     "max": 23.114999994635582
+    },
+    "engineFrameMs": 0.895,
+    "events": {
+     "pointer": 149,
+     "wheel": 0,
+     "key": 0,
+     "acked": 149,
+     "dropped": 0
+    }
+   }
+  },
+  {
+   "config": {
+    "res": "1080",
+    "path": "webgl2",
+    "mode": "dirty",
+    "sync": false
+   },
+   "snap": {
+    "resolution": "1920x1080",
+    "path": "webgl2",
+    "mode": "dirty",
+    "sync": false,
+    "sabDirect": true,
+    "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+    "crossOriginIsolated": true,
+    "dpr": 1,
+    "fps": 60.002164012472576,
+    "blit": {
+     "n": 240,
+     "avg": 0.10231250002980233,
+     "p95": 0.125,
+     "max": 0.29500000178813934
+    },
+    "copy": {
+     "n": 240,
+     "avg": 0,
+     "p95": 0,
+     "max": 0
+    },
+    "latency": {
+     "n": 73,
+     "avg": 7.345890410652716,
+     "p95": 18.810000002384186,
+     "max": 20.04500000178814
+    },
+    "engineFrameMs": 0.235,
+    "events": {
+     "pointer": 150,
+     "wheel": 0,
+     "key": 0,
+     "acked": 150,
+     "dropped": 0
+    }
+   }
+  },
+  {
+   "config": {
+    "res": "1080",
+    "path": "2d",
+    "mode": "full",
+    "sync": false
+   },
+   "snap": {
+    "resolution": "1920x1080",
+    "path": "2d",
+    "mode": "full",
+    "sync": false,
+    "sabDirect": false,
+    "renderer": "canvas2d (Chrome/150.0.0.0)",
+    "crossOriginIsolated": true,
+    "dpr": 1,
+    "fps": 60.00245911717693,
+    "blit": {
+     "n": 240,
+     "avg": 1.302916666585952,
+     "p95": 1.5,
+     "max": 2.2999999970197678
+    },
+    "copy": {
+     "n": 240,
+     "avg": 0.6669583335518837,
+     "p95": 0.7599999979138374,
+     "max": 1.489999994635582
+    },
+    "latency": {
+     "n": 49,
+     "avg": 13.123265305495991,
+     "p95": 13.399999998509884,
+     "max": 14.100000001490116
+    },
+    "engineFrameMs": 0.79,
+    "events": {
+     "pointer": 149,
+     "wheel": 0,
+     "key": 0,
+     "acked": 149,
+     "dropped": 0
+    }
+   }
+  },
+  {
+   "config": {
+    "res": "1080",
+    "path": "2d",
+    "mode": "dirty",
+    "sync": false
+   },
+   "snap": {
+    "resolution": "1920x1080",
+    "path": "2d",
+    "mode": "dirty",
+    "sync": false,
+    "sabDirect": false,
+    "renderer": "canvas2d (Chrome/150.0.0.0)",
+    "crossOriginIsolated": true,
+    "dpr": 1,
+    "fps": 60.00245911717693,
+    "blit": {
+     "n": 240,
+     "avg": 0.16372916651889682,
+     "p95": 0.3200000002980232,
+     "max": 0.5499999970197678
+    },
+    "copy": {
+     "n": 240,
+     "avg": 0.08733333346123497,
+     "p95": 0.1899999976158142,
+     "max": 0.3149999976158142
+    },
+    "latency": {
+     "n": 67,
+     "avg": 9.09328358164474,
+     "p95": 21.45999999344349,
+     "max": 21.725000001490116
+    },
+    "engineFrameMs": 0.095,
+    "events": {
+     "pointer": 150,
+     "wheel": 0,
+     "key": 0,
+     "acked": 150,
+     "dropped": 0
+    }
+   }
+  },
+  {
+   "config": {
+    "res": "1440",
+    "path": "webgl2",
+    "mode": "full",
+    "sync": false
+   },
+   "snap": {
+    "resolution": "2560x1440",
+    "path": "webgl2",
+    "mode": "full",
+    "sync": false,
+    "sabDirect": true,
+    "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+    "crossOriginIsolated": true,
+    "dpr": 1,
+    "fps": 59.01852197948122,
+    "blit": {
+     "n": 240,
+     "avg": 1.3148541666256885,
+     "p95": 1.9500000029802322,
+     "max": 2.1749999970197678
+    },
+    "copy": {
+     "n": 240,
+     "avg": 0,
+     "p95": 0,
+     "max": 0
+    },
+    "latency": {
+     "n": 61,
+     "avg": 5.4794262297085075,
+     "p95": 18.530000001192093,
+     "max": 20.390000000596046
+    },
+    "engineFrameMs": 2.045,
+    "events": {
+     "pointer": 150,
+     "wheel": 0,
+     "key": 0,
+     "acked": 150,
+     "dropped": 0
+    }
+   }
+  },
+  {
+   "config": {
+    "res": "1440",
+    "path": "webgl2",
+    "mode": "dirty",
+    "sync": false
+   },
+   "snap": {
+    "resolution": "2560x1440",
+    "path": "webgl2",
+    "mode": "dirty",
+    "sync": false,
+    "sabDirect": true,
+    "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+    "crossOriginIsolated": true,
+    "dpr": 1,
+    "fps": 60.00245911717693,
+    "blit": {
+     "n": 240,
+     "avg": 0.15668749989320835,
+     "p95": 0.1850000023841858,
+     "max": 0.4299999997019768
+    },
+    "copy": {
+     "n": 240,
+     "avg": 0,
+     "p95": 0,
+     "max": 0
+    },
+    "latency": {
+     "n": 72,
+     "avg": 7.23138888914966,
+     "p95": 18.78499999642372,
+     "max": 19.854999996721745
+    },
+    "engineFrameMs": 0.18,
+    "events": {
+     "pointer": 149,
+     "wheel": 0,
+     "key": 0,
+     "acked": 149,
+     "dropped": 0
+    }
+   }
+  },
+  {
+   "config": {
+    "res": "1440",
+    "path": "2d",
+    "mode": "full",
+    "sync": false
+   },
+   "snap": {
+    "resolution": "2560x1440",
+    "path": "2d",
+    "mode": "full",
+    "sync": false,
+    "sabDirect": false,
+    "renderer": "canvas2d (Chrome/150.0.0.0)",
+    "crossOriginIsolated": true,
+    "dpr": 1,
+    "fps": 45.24775605557605,
+    "blit": {
+     "n": 239,
+     "avg": 2.638849372737827,
+     "p95": 3.410000003874302,
+     "max": 4.970000006258488
+    },
+    "copy": {
+     "n": 239,
+     "avg": 1.3476778239510547,
+     "p95": 1.7700000032782555,
+     "max": 3.405000001192093
+    },
+    "latency": {
+     "n": 49,
+     "avg": 5.492959183849851,
+     "p95": 6.285000003874302,
+     "max": 6.814999997615814
+    },
+    "engineFrameMs": 1.79,
+    "events": {
+     "pointer": 149,
+     "wheel": 0,
+     "key": 0,
+     "acked": 149,
+     "dropped": 0
+    }
+   }
+  },
+  {
+   "config": {
+    "res": "1440",
+    "path": "2d",
+    "mode": "dirty",
+    "sync": false
+   },
+   "snap": {
+    "resolution": "2560x1440",
+    "path": "2d",
+    "mode": "dirty",
+    "sync": false,
+    "sabDirect": false,
+    "renderer": "canvas2d (Chrome/150.0.0.0)",
+    "crossOriginIsolated": true,
+    "dpr": 1,
+    "fps": 60.00245911717693,
+    "blit": {
+     "n": 240,
+     "avg": 0.19233333328738808,
+     "p95": 0.3049999997019768,
+     "max": 1.214999996125698
+    },
+    "copy": {
+     "n": 240,
+     "avg": 0.10650000032037496,
+     "p95": 0.1850000023841858,
+     "max": 0.7899999991059303
+    },
+    "latency": {
+     "n": 49,
+     "avg": 14.126326530411536,
+     "p95": 14.629999995231628,
+     "max": 14.729999996721745
+    },
+    "engineFrameMs": 0.165,
+    "events": {
+     "pointer": 150,
+     "wheel": 0,
+     "key": 0,
+     "acked": 150,
+     "dropped": 0
+    }
+   }
+  },
+  {
+   "config": {
+    "res": "1080",
+    "path": "webgl2",
+    "mode": "full",
+    "sync": true
+   },
+   "snap": {
+    "resolution": "1920x1080",
+    "path": "webgl2",
+    "mode": "full",
+    "sync": true,
+    "sabDirect": true,
+    "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+    "crossOriginIsolated": true,
+    "dpr": 1,
+    "fps": 60.0027542247841,
+    "blit": {
+     "n": 240,
+     "avg": 0.6662291668976347,
+     "p95": 0.7599999979138374,
+     "max": 1.6649999991059303
+    },
+    "copy": {
+     "n": 240,
+     "avg": 0,
+     "p95": 0,
+     "max": 0
+    },
+    "latency": {
+     "n": 61,
+     "avg": 4.31631147543915,
+     "p95": 17.53499999642372,
+     "max": 21.900000005960464
+    },
+    "engineFrameMs": 1.795,
+    "events": {
+     "pointer": 150,
+     "wheel": 0,
+     "key": 0,
+     "acked": 150,
+     "dropped": 0
+    }
+   }
+  },
+  {
+   "config": {
+    "res": "1440",
+    "path": "webgl2",
+    "mode": "full",
+    "sync": true
+   },
+   "snap": {
+    "resolution": "2560x1440",
+    "path": "webgl2",
+    "mode": "full",
+    "sync": true,
+    "sabDirect": true,
+    "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+    "crossOriginIsolated": true,
+    "dpr": 1,
+    "fps": 60.00245911717693,
+    "blit": {
+     "n": 240,
+     "avg": 1.3397708332786957,
+     "p95": 1.9500000029802322,
+     "max": 2.435000002384186
+    },
+    "copy": {
+     "n": 240,
+     "avg": 0,
+     "p95": 0,
+     "max": 0
+    },
+    "latency": {
+     "n": 72,
+     "avg": 7.069027777968182,
+     "p95": 19.714999996125698,
+     "max": 20.214999996125698
+    },
+    "engineFrameMs": 1.375,
+    "events": {
+     "pointer": 149,
+     "wheel": 0,
+     "key": 0,
+     "acked": 149,
+     "dropped": 0
+    }
+   }
+  }
+ ]
+}

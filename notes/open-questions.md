@@ -10,16 +10,38 @@ result appended here (keep the question, add `**Answer (date):**`).
    capture via `webRequest.onHeadersReceived` (non-blocking is enough to *read*?), or DNR
    responseHeaders tricks, or tag requests and sniff via the cookies API. The isolated-jar design
    requires *some* reliable Set-Cookie path. → first networking spike.
+   **Answer (2026-08-09):** `fetch()` never sees it, but observational
+   `webRequest.onHeadersReceived` with `['responseHeaders','extraHeaders']` sees it fully
+   (incl. HttpOnly, per redirect hop). Capture keyed by response URL — no request
+   correlation needed for the jar. See notes/bridge-probe.md; asserted in
+   test/tier1/bridge-probe.test.mjs.
 2. **Redirects under `redirect:'manual'` from extension pages.** Does manual mode give us status +
    Location for cross-origin redirects on a CORS-exempt extension fetch, or do we get an opaque
    filtered response? Determines whether the engine can drive redirects (preferred) or the host
    follows them (fallback, documented delta). → same spike as #1.
+   **Answer (2026-08-09):** `manual` is opaque (`opaqueredirect`, status 0) even for
+   extensions — but engine-driven redirects still work via `redirect:'error'`: webRequest
+   captures the 3xx (status/Location/Set-Cookie) before the abort and the redirect target
+   never hits the wire; the engine then issues the next hop itself. Host-followed
+   redirects are rejected (DNR-set Cookie would ride cross-origin hops — observed leak).
+   See notes/bridge-probe.md decisions 1–3.
 3. **WebkitWasm build reproduction.** Does the pthread branch build and run for us, today, on our
    hardware? (~11 GB tree; expect toolchain pinning pain.) Everything sequences after this.
+   **Answer (2026-08-10): YES.** Fresh-clone build reproduced (five fixes needed, all
+   encoded in tools/build-engine.sh); demo gate PASS headless; example.com renders
+   through the engine. 103 MB embedder.wasm, ~45 min WebCore build at 12 jobs. Full
+   notes: notes/engine-build.md. The pthread branch is now upstream `main` (mvp.md's
+   `wb1-pthread` reference was stale).
 4. **DNR `modifyHeaders` on forbidden request headers, scoped to our own fetches.** Verify we can
    set UA/Cookie/Referer/Origin on bridge requests and reliably scope rules (initiator = extension
    origin? marker header?) so real browsing is never touched. Also verify DNR applies to
    extension-page-initiated fetches at all versions we target.
+   **Answer (2026-08-09):** Yes to all: UA/Cookie/Referer/Origin set + marker header
+   removed on the wire, scoped by `initiatorDomains: [<ext id>]` +
+   `resourceTypes: ['xmlhttprequest']`; simultaneous native traffic untouched in both
+   directions (oracle-verified). Note: DNR strips happen before webRequest observes, so
+   marker-based correlation is impossible; and `sec-ch-ua*` hints must also be removed.
+   See notes/bridge-probe.md.
 
 ## Important, not blocking
 
@@ -30,15 +52,35 @@ result appended here (keep the question, add `**Answer (date):**`).
 7. **Chrome PNA (Private Network Access) and extension fetches.** Does Chrome apply any
    local-network protections to extension-origin fetch in current versions? Affects how much guard
    #3 in networking.md must carry alone (DNS rebinding remains ours regardless).
+   **Answer (2026-08-09):** None. Extension-page fetch to loopback succeeds (Chromium
+   150). Guard #3 carries private-network blocking alone; asserted permanently in
+   test/tier1/bridge-probe.test.mjs.
 8. **Interception coverage edges.** Subframe navigations? (No — target iframes only exist inside
    the engine; but what about `view-source:`, `blob:`, `about:blank#...`, PDFs, `Content-Disposition:
    attachment` downloads hitting the DNR rule?) Enumerate main_frame cases and decide
    pass-through vs capture for each. Also: scoping the MVP rule to an allowlist of test domains vs
    all http(s).
+   **Answer (2026-08-09, partial — see test/tier1/interception.test.mjs):** http + https
+   both intercept; redirect fires at request time so attachment/download responses on
+   intercepted domains never reach the download manager (viewer must handle them);
+   `view-source:` of an intercepted domain redirects its inner request (invariant holds,
+   renders viewer source — harmless); back/forward hold viewer URLs and work; static
+   rules fire with the SW force-killed; whitelist shape (catch-all + allow@10 + session
+   escape hatch@100 with tabIds) behaves exactly as designed. `blob:`/`about:`/PDF-served-
+   inline cases still to enumerate. NEW ISSUE: first navigation on a fresh profile races
+   ruleset registration (issues/first-navigation-races-ruleset-registration.md).
 9. **Per-instance memory budget.** Real WebKit-in-wasm RSS for typical sites; do we fit ~1–2 GB?
    Influences pthread pool size and whether tab-discard/restore is needed early.
 10. **Frame transport pick.** texSubImage2D-from-SAB-in-render-worker vs main-thread upload:
     measure on 1080p/1440p; decide default; measure dirty-rect wins.
+    **Answer (2026-08-09, spike 0.4 — details in spikes/blit/RESULTS.md):** default =
+    main-thread WebGL2 texSubImage2D straight from the SAB (Chromium 150 accepts
+    SAB-backed views directly). Full-frame: <1 ms at 1080p, ~1.3 ms worst at 1440p, even
+    on SwiftShader; putImageData is compat/debug only (drops to 45 fps at 1440p
+    headless). Dirty rows ~10% → 0.1–0.2 ms (6–15×): plumb row-band dirty info from the
+    engine day one, but full-frame-every-frame is affordable. Input ring round-trip avg
+    5–14 ms (rAF-quantized), zero drops. Viewer skeleton in spikes/blit/ is the base for
+    the real viewer.
 11. **Engine startup latency.** Cold compile of a 100–250 MB module + engine boot; how much does
     IndexedDB module caching + eager boot-at-browser-start help? Target: viewer interactive < 2s
     warm.
@@ -65,7 +107,17 @@ result appended here (keep the question, add `**Answer (date):**`).
     headless=new identically to headed — CI (testing.md tiers 1–2) depends on it. If any piece
     diverges, fallback is running CI's Chromium inside guibox/Xvfb-style sessions (slower, still
     automated).
+    **Answer (2026-08-09):** Full parity confirmed (Chromium 150, plain `--headless` is
+    new headless): unpacked extension + SW, crossOriginIsolated + SAB + shared wasm
+    memory + worker Atomics on extension pages, DNR regexSubstitution redirect, resolver
+    rules incl. port override. test/tier1/parity.test.mjs guards this per-commit.
+    (Real threaded-wasm pthread module still to smoke once emsdk is available.)
 20. **Fixture HTTPS trust in test profiles.** Confirm the mkcert-style local CA import into the
     disposable `--user-data-dir` works for both headless CI and guibox sessions (or whether
     `--ignore-certificate-errors` is acceptable for tier 1 while keeping one real-TLS test in
     tier 2).
+    **Answer (2026-08-09, decision):** went with `--ignore-certificate-errors` +
+    self-signed cert (auto-generated into test/fixtures/ca/) for tiers 0–1 and guibox —
+    works in both. Chromium's Linux NSS cert DB is per-$HOME, not per-profile, so real CA
+    import would leak outside disposable profiles anyway. Keep the planned one
+    real-TLS-trust test for tier 2.

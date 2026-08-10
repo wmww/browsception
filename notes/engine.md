@@ -74,16 +74,24 @@ break us. Budget for periodic rebase pain; pin to WebKit release tags, not main.
 | NetSurf / litehtml / lexbor / Blitz | only if goals shrink to "render documents" | No or minimal JS/DOM. Blitz+Stylo is the interesting one (Kitesurf uses it server-side) but has no script runtime. |
 | **Kitesurf** (Cloudflare) | watch | Announced 2026-08-06, wasm-native, Blitz+Stylo+Boa, 215k WPT passes, open-sourcing promised. If it becomes embeddable client-side it's a dramatically smaller nested engine. Re-evaluate when source drops. |
 
-## Integration seams the engine must expose to the shim
+## Integration seams: the ABI (1.1, done)
 
-(Defined here because they constrain the port; details in networking.md / rendering-input.md.)
+The versioned contract is **src/abi/bib_abi.h** (+ JS mirror src/abi/abi.mjs; tier-0 test keeps
+them in sync). Shape follows the embedder's existing conventions: `extern "C"` exports in
+(self-proxying to the engine pthread, fire-and-forget), `Module.*` hooks out (page-scope via
+MAIN_THREAD_ASYNC_EM_ASM, worker-scope via plain EM_ASM), pointers cross via the shared wasm heap
+with explicit ownership rules. Covers lifecycle/boot-config, viewport resize + DPR, input,
+the fetch bridge (async, credit-window flow control — see networking.md), chrome signals
+(multiplexed `bibChrome(kind, json)`), and the async `bib_query` channel backing the `__bs`
+dev/test hook. Find/audio/IME/touch are reserved names, post-MVP.
 
-- `net_request(id, method, url, headers, body)` / `net_response(id, status, headers)` /
-  `net_data(id, bytes)` / `net_done|fail(id)` — replaces the platform network backend.
-- Framebuffer descriptor (ptr, w, h, stride, format, dirty rects) + `frame_ready` signal.
-- Input event injection (mouse/wheel/key/composition/touch), viewport resize + DPR.
-- Chrome-signal callbacks: title/URL/favicon/cursor/progress changed; window.open; file-picker
-  request; download request; alert/confirm/prompt.
-- Find API passthrough (WebCore `findString` / find controller).
-- Audio: PCM ring buffer out (→ AudioWorklet host-side). Deferred post-MVP.
-- Clock/RNG: engine gets monotonic + wall clock from Emscripten as usual (no restriction for MVP).
+Engine-side gaps the ABI deliberately papers over until 1.2/1.3 land (per the embedder survey):
+resize does not exist yet (800×600 hard-coded), chrome signals are greenfield
+(`BibFrameLoaderClient`/`ChromeClient` overrides needed), boot config today is ~14 separate
+blocking `Module.bib*` reads to collapse into one `Module.bibConfig` JSON read, and presentation
+must move from bibBlit/putImageData + GPU-bitmap paths to the single `bibFrame` heap-framebuffer
+push. The stable seam for the network transplant is `BibResourceLoad`'s WebCore-facing callbacks
+(`didReceiveResponse/Buffer/FinishLoading/Fail` in EmbedderStrategies.cpp) — everything below it
+(CurlRequest/CurlStream/scheduler patches/SOCKFS/wisp) is deletable in one cut; cookie assembly
+(`appendEmbedderCookieHeader`/`storeResponseCookies`) and hand-rolled redirect logic stay
+engine-side, exactly matching the bridge design.

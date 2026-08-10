@@ -83,12 +83,21 @@ engine's job (see above). Keep the guard list boring.
 
 ## Streaming & threading shape
 
-- Engine network threads block on Atomics waiting for bridge completions (pthread build); the shim
-  streams `response.body` reader chunks into a SAB ring buffer → engine copies into its own heap.
-  No Asyncify. Single-threaded fallback build uses callback-style async loads (WebKit's loader is
-  async anyway; only sync XHR needs special handling — rare, can be emulated with a spin +
-  event-pump or just unsupported in fallback mode).
-- Backpressure: reader pull only when the ring has room, so a fast server can't OOM the engine.
+Decided at 1.1 (ABI: src/abi/bib_abi.h), revising the earlier SAB-ring/Atomics-blocking sketch:
+**fully async proxied-call delivery, no sync blocking anywhere.**
+
+- Rationale: the port has no separate network thread to block — WebkitWasm deleted curl's thread
+  and pumps the scheduler on the engine run loop; the WebCore-facing loader interface
+  (`didReceiveResponse/Buffer/FinishLoading/Fail`) is already fully async, and sync XHR is already
+  unsupported in this embedder (`loadResourceSynchronously` errors). Blocking on Atomics would add
+  deadlock risk (the embedder treats blocking cross-thread calls as forbidden) for zero benefit.
+- Request out: engine → `bibNetBegin(reqJson)` hook on the page. Response in: shim allocates in
+  the (shared) wasm heap via `bib_wasm_alloc`, writes headers JSON / body chunks, and calls
+  `bib_net_response` / `bib_net_data` / `bib_net_done|fail|redirect` — exports that self-proxy to
+  the engine thread with ownership transfer. No extra SAB: the wasm heap *is* shared memory.
+- Backpressure: engine acks consumed chunks via `bibNetAck(id, bytes)`; the shim pauses its
+  `response.body` reader when a request has ≥ `NET_WINDOW_BYTES` (4 MB) unacked in flight, so a
+  fast server can't OOM the engine.
 
 ## What the nested site can and cannot reach (summary)
 

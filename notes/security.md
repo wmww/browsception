@@ -28,6 +28,27 @@ gets is a capability an owned engine holds. Keep imports minimal, typed, and dum
 network-with-guards, pixels-out, input-in, storage-namespaced, clock. No eval, no DOM handles, no
 dynamic wasm instantiation rights, no blob-URL minting beyond the download path.
 
+## Capability accounting (ABI v1 — src/abi/bib_abi.h)
+
+Every hook the engine can call is a capability an owned engine holds. Additions to the ABI must
+add a row here (working agreement).
+
+| Hook | Capability granted to an owned engine |
+|---|---|
+| `bibNetBegin` / `bibNetCancel` | Issue/abort anonymous http(s) fetches, subject to the guard list (scheme/private-network/ports/caps; `credentials:'omit'` structural) |
+| `bibNetAck` | Flow-control signal only (ints) |
+| `bibFrame` | Paint arbitrary pixels inside its canvas (UI spoofing within the frame — accepted, see below) |
+| `bibChrome` | Set viewer-displayed title/URL/progress/cursor/hover/favicon strings — spoofing surface: viewer must render these as text/DOM only, never interpret; favicon bytes get sniffed/re-encoded before use |
+| `bibQueryResult` | Answer queries the shim itself asked; dev builds only for `eval` |
+| `bibPersist` | Write to its own namespaced storage snapshot (quota-capped) |
+| `bibReady` | Boot signal (no args) |
+| `bibWakeUp` / `bibArmTimer` | Schedule its own execution (worker-scope; CPU consumption only) |
+
+`bib_wasm_alloc/free` are host→engine-heap only and callable by the shim, not capabilities of the
+engine. The engine also implicitly holds: Emscripten runtime imports (clock, math, pthread
+machinery), Atomics/SAB on its own heap, and proxied-call queues — platform surface shared by any
+pthread wasm module.
+
 ## What an owned engine can do (residual risk)
 
 - Fetch arbitrary **public** http(s) URLs as an anonymous client from the user's IP (guarded:

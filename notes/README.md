@@ -36,13 +36,18 @@ The MVP plan lives in [../plans/mvp.md](../plans/mvp.md).
 
 ## Status
 
-**Phase 0 complete** (2026-08-10, exit gate passed): all five spikes done. Engine
-builds and runs (engine-build.md; `tools/build-engine.sh`); bridge design verified
-with engine-driven redirects + webRequest Set-Cookie capture (bridge-probe.md);
-interception matrix green incl. whitelist shape; blit path picked
+**Phase 0 complete** (2026-08-10, exit gate passed, committed e6d7f84): all five
+spikes done. Engine builds and runs (engine-build.md; `tools/build-engine.sh`);
+bridge design verified with engine-driven redirects + webRequest Set-Cookie capture
+(bridge-probe.md); interception matrix green incl. whitelist shape; blit path picked
 (spikes/blit/RESULTS.md); `npm test` = tiers 0–1 green, pure headless. Open issue to
-carry into Phase 2: first-navigation ruleset race (issues/). Next: Phase 1 — shim ABI
-(1.1), then networking transplant (1.2).
+carry into Phase 2: first-navigation ruleset race (issues/).
+
+**Phase 1 in progress.** 1.1 shim ABI: done — `src/abi/bib_abi.h` (+ abi.mjs mirror,
+tier-0 sync test), designed against a full survey of the WebkitWasm embedder's
+existing JS boundary (survey conclusions folded into engine.md § integration seams;
+delivery-model revision in networking.md § streaming). Next: 1.2a shim-side bridge +
+stub engine, then 1.2b engine networking transplant.
 
 Key decisions made so far:
 

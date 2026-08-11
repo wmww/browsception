@@ -76,7 +76,9 @@ Load-bearing implementation facts:
 - Test-posture rule: suites that need native fixture traffic must pin a posture (tier-1 bridge:
   blacklist+empty; tier-2: fixture-domain blacklist) now that the default sandboxes everything.
 
-Open issues in issues/ (first-nav race residual, guest-JS wedge). Next work: [roadmap.md](roadmap.md).
+Open issues in issues/ (first-nav race residual, guest-JS wedge). Next work: [roadmap.md](roadmap.md);
+planned: native back/forward/reload via tab-history mirroring (plans/native-history-controls.md —
+step 1 also fixes the popup stale-URL escape-hatch bug, former issue absorbed there).
 
 ## Key decisions
 

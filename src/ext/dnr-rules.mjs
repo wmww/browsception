@@ -124,8 +124,17 @@ export function desiredRuleState(state, viewerBase) {
     throw new Error(`unknown mode: ${mode}`);
   }
 
-  const sessionRules = escapeHatches.map(({ tabId, entry }) => ({
-    id: ID_BASE.escape + tabId,
+  const sessionRules = escapeHatches.map(({ tabId, entry }) => escapeSessionRule(tabId, entry));
+
+  return { enabledStaticRulesets, dynamicRules, sessionRules };
+}
+
+// One tab-scoped "open natively" allow rule (2.3 escape hatch). Id is
+// deterministic per tab so re-grants replace and tab close can clean up.
+export const escapeRuleId = (tabId) => ID_BASE.escape + tabId;
+export function escapeSessionRule(tabId, entry) {
+  return {
+    id: escapeRuleId(tabId),
     priority: PRIORITY.ESCAPE,
     action: { type: 'allow' },
     condition: {
@@ -133,7 +142,5 @@ export function desiredRuleState(state, viewerBase) {
       resourceTypes: MAIN_FRAME,
       tabIds: [tabId],
     },
-  }));
-
-  return { enabledStaticRulesets, dynamicRules, sessionRules };
+  };
 }

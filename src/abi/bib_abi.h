@@ -227,7 +227,9 @@ void bib_crash(void);
  *          (RGBA8888, row 0 = top) valid until the next bib_set_viewport;
  *          the viewer uploads the dirty box at rAF straight from the heap
  *          view (the heap is a SAB in pthread builds). Do NOT free fbPtr.
- * bibChrome(kindPtr, jsonPtr)                   [page]  chrome signal; kinds:
+ * bibChrome(kind, json)                         [page]  chrome signal. Unlike
+ *          the other hooks, both args arrive as JS STRINGS (decoded + freed
+ *          engine-side, bibPersist-style delivery). kinds:
  *          "title" {"title"}         "url" {"url","canGoBack","canGoForward"}
  *          "progress" {"p": 0..1}    "cursor" {"cursor": css-name}
  *          "hover" {"url"|null}      "favicon" {"ptr","len","mime"} (bytes

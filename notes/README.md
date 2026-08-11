@@ -115,10 +115,26 @@ parses ?url= RAW (DNR \0 is un-encoded; own params must precede url= — a
 target's &stub= must not read as ours). shouldSandbox() in dnr-rules.mjs is
 the shared disposition predicate (sweep now, badge in 2.4). Tier-2 now also
 covers interception-to-nested-render and the sweep (7 scenarios, ~7 s).
-Nested-title→tab-title carried into 2.3 (needs engine bibChrome signals,
-which are greenfield). Next: 2.3 browser chrome v1 (fake URL bar, engine
-history wiring incl. BackForwardList traversal + bib_stop/reload/go
-exports, progress, crashed page, open-natively escape hatch).
+2.3 done: browser chrome v1. Engine side (fork): bibChrome signals — "url"
+{url,canGoBack,canGoForward} on commit/within-page/finish (finish re-emit
+matters: commit precedes the history update), "title", "progress" (new
+BibProgressTrackerClient); real history via BibBackForward.h (WebKitLegacy
+BackForwardList port) — which required TWO more empty-client fixes:
+createHistoryItemTree returned nullptr (no items ever created) and
+shouldGoToHistoryItem returned No (every traversal vetoed); both now
+delegate/allow like WebKit2 (EmptyFrameLoaderClient.h finals relaxed, patch
+ledger regenerated). bib_go/bib_reload/bib_stop/bib_abi_version exports
+landed. Viewer: chrome strip visually distinct from canvas (security.md),
+URL bar always shows the true engine URL (blank for non-http(s)),
+back/forward/reload buttons, progress bar, nested title → tab title,
+crashed-page reload button, "native" escape-hatch button → SW adds a
+session+tab-scoped allow rule (reaped on tab close) and renavigates. Tier-2
+now 9 scenarios, all green (~12 s), incl. scenario 10 chrome and the escape
+hatch. bibChrome delivers kind/json as JS strings (bibPersist-style; ABI
+docs updated). Build note: engine iteration is now genuinely incremental
+(engine-build.md fix 6, ~90 s for embedder-only changes). Next: 2.4
+activation & modes UI (toolbar popup, per-site actions, badge, options
+list editors, sandboxed→native boundary via engine policy delegate).
 
 Key decisions made so far:
 

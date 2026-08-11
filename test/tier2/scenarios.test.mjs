@@ -204,6 +204,83 @@ test('sweep: an open native tab on a newly-blacklisted domain is redirected to t
   await cfg.close();
 });
 
+// --- Scenario 10: navigation chrome (2.3) ----------------------------------
+async function pollUntil(fn, what, timeoutMs = 30000) {
+  const t0 = Date.now();
+  let last;
+  while (Date.now() - t0 < timeoutMs) {
+    last = await fn();
+    if (last) return last;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  throw new Error(`${what} (last: ${JSON.stringify(last)})`);
+}
+
+test('chrome: URL bar tracks nested navigation; back/forward/reload; nested title', { timeout: 300000 }, async () => {
+  const page = await bootViewer('https://input.bstest/');
+  const box = await (await page.$('#screen')).boundingBox();
+  const at = (x, y) => [box.x + x, box.y + y];
+  const urlbar = () => page.evaluate(() => document.getElementById('urlbar').value);
+
+  await until(page, 500, 100, is([0, 0, 255]), 120000, 'fixture load');
+  await pollUntil(async () => (await urlbar()) === 'https://input.bstest/', 'urlbar shows fixture URL');
+
+  // Nested link click -> URL bar follows, back becomes possible.
+  await page.mouse.click(...at(320, 350));
+  await until(page, 400, 300, is([102, 51, 153]), 120000, 'link nav');
+  await pollUntil(async () => (await urlbar()) === 'https://input.bstest/final.html', 'urlbar follows link');
+  await pollUntil(() => page.evaluate(() => !document.getElementById('back').disabled), 'back enabled');
+  await pollUntil(async () => (await page.title()) === 'NAV-TARGET', 'nested title -> tab title');
+
+  await page.click('#back');
+  await until(page, 500, 100, is([0, 0, 255]), 120000, 'back re-renders fixture');
+  await pollUntil(async () => (await urlbar()) === 'https://input.bstest/', 'urlbar after back');
+  await pollUntil(() => page.evaluate(() => !document.getElementById('fwd').disabled), 'forward enabled');
+
+  await page.click('#fwd');
+  await until(page, 400, 300, is([102, 51, 153]), 120000, 'forward re-renders target');
+
+  await page.click('#reloadbtn');
+  await until(page, 400, 300, is([102, 51, 153]), 120000, 'reload renders target');
+  await pollUntil(async () => (await urlbar()) === 'https://input.bstest/final.html', 'urlbar after reload');
+  await page.close();
+});
+
+// --- 2.3 escape hatch: open natively, this tab only ------------------------
+test('escape hatch: native button reopens the tab natively; other tabs stay sandboxed', { timeout: 300000 }, async () => {
+  const cfg = await session.context.newPage();
+  await cfg.goto(`chrome-extension://${EXT_ID}/ext/viewer.html?stub=1`);
+  await cfg.evaluate(() => chrome.storage.sync.set({ mode: 'blacklist', blacklist: ['grid.bstest'] }));
+  await pollUntil(
+    () => cfg.evaluate(() => chrome.declarativeNetRequest.getDynamicRules().then((r) => r.length > 0)),
+    'blacklist rules applied',
+  );
+
+  const page = await session.context.newPage();
+  await page.goto('https://grid.bstest/');
+  assert.ok(page.url().startsWith(`chrome-extension://${EXT_ID}/`), 'sandboxed first');
+  await page.waitForFunction(() => globalThis.__bs?.ready, undefined, { timeout: BOOT_TIMEOUT });
+  await pollUntil(
+    () => page.evaluate(() => __bs.state.url === 'https://grid.bstest/'),
+    'engine committed the target',
+  );
+  await page.click('#native');
+  await pollUntil(() => page.url() === 'https://grid.bstest/', 'tab went native', 30000);
+
+  const other = await session.context.newPage();
+  await other.goto('https://grid.bstest/');
+  assert.ok(other.url().startsWith(`chrome-extension://${EXT_ID}/`), 'other tabs still sandboxed');
+  await other.close();
+  await page.close(); // tab close reaps the session escape rule
+
+  await cfg.evaluate(() => chrome.storage.sync.set({ blacklist: [] }));
+  await pollUntil(
+    () => cfg.evaluate(() => chrome.declarativeNetRequest.getDynamicRules().then((r) => r.length === 0)),
+    'blacklist drained',
+  );
+  await cfg.close();
+});
+
 // --- Scenario 13: startup budget (regression tripwire, generous) -----------
 test('startup: warm boot to interactive under 15 s', { timeout: 300000 }, async () => {
   // Second+ boot in this profile = warm (compiled-wasm cache, if any).

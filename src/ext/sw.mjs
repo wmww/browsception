@@ -8,7 +8,14 @@
 // to open tabs. The page's JS has already run by sweep time — the redirect
 // closes the exposure window, it cannot un-execute anything.
 
-import { desiredRuleState, shouldSandbox, CATCHALL_RULESET_ID } from './dnr-rules.mjs';
+import {
+  desiredRuleState,
+  shouldSandbox,
+  escapeSessionRule,
+  escapeRuleId,
+  CATCHALL_RULESET_ID,
+} from './dnr-rules.mjs';
+import { normalizeEntry } from './list-match.mjs';
 
 const VIEWER = chrome.runtime.getURL('ext/viewer.html');
 
@@ -64,6 +71,39 @@ async function sweep(state) {
     }
   }
 }
+
+// 2.3 escape hatch: the viewer asks to reopen its current URL natively in
+// this tab. Session+tab-scoped allow rule (dies with the browser session,
+// removed on tab close), then the tab navigates for real.
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type !== 'open-natively') return false;
+  (async () => {
+    const tabId = sender.tab?.id;
+    let entry = null;
+    let url = null;
+    try {
+      const u = new URL(msg.url);
+      if (u.protocol === 'http:' || u.protocol === 'https:') {
+        url = u.href;
+        entry = normalizeEntry(u.hostname);
+      }
+    } catch {}
+    if (tabId == null || !entry) return sendResponse({ ok: false });
+    await chrome.declarativeNetRequest.updateSessionRules({
+      removeRuleIds: [escapeRuleId(tabId)],
+      addRules: [escapeSessionRule(tabId, entry)],
+    });
+    await chrome.tabs.update(tabId, { url });
+    sendResponse({ ok: true });
+  })();
+  return true; // keep the message channel open for the async response
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  chrome.declarativeNetRequest
+    .updateSessionRules({ removeRuleIds: [escapeRuleId(tabId)] })
+    .catch(() => {});
+});
 
 chrome.runtime.onInstalled.addListener(() => applyState());
 chrome.runtime.onStartup.addListener(() => applyState());

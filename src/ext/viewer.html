@@ -4,17 +4,41 @@
 <meta charset="utf-8">
 <title>browsception</title>
 <style>
+  /* The chrome strip must stay visually distinct from the (site-controlled)
+     canvas below it — dark UI chrome vs. white page area (security.md). */
   html, body { margin: 0; height: 100%; background: #14161a; color: #ddd;
                font: 13px system-ui; }
+  #chrome { display: flex; gap: 4px; align-items: center; padding: 5px 6px;
+            background: #1f232b; border-bottom: 1px solid #343a46; }
+  #chrome button { background: #2a303b; color: #cdd3de; border: 1px solid #3a4150;
+                   border-radius: 4px; padding: 3px 9px; cursor: pointer;
+                   font: 13px system-ui; }
+  #chrome button:hover:not(:disabled) { background: #363d4b; }
+  #chrome button:disabled { opacity: 0.35; cursor: default; }
+  #urlbar { flex: 1; font: 12px ui-monospace, monospace; padding: 4px 8px;
+            background: #14161a; color: #d6dae2; border: 1px solid #3a4150;
+            border-radius: 4px; min-width: 0; }
+  #urlbar:focus { outline: 1px solid #4c8; }
+  #progresswrap { height: 2px; background: #1f232b; }
+  #progress { height: 100%; width: 0; background: #4c8; opacity: 0;
+              transition: width 0.15s linear, opacity 0.3s; }
   #boot { padding: 1em; }
-  #status { padding: 2px 8px; color: #8891a0; font: 11px system-ui; }
+  #boot button { margin-left: 8px; }
   #screen { display: block; background: #fff; outline: none; }
-  #screen:focus { outline: 1px solid #4c8; }
 </style>
 </head>
 <body>
+<div id="chrome">
+  <button id="back" title="Back" disabled>&#8592;</button>
+  <button id="fwd" title="Forward" disabled>&#8594;</button>
+  <button id="reloadbtn" title="Reload">&#10227;</button>
+  <input id="urlbar" spellcheck="false" autocomplete="off"
+         placeholder="sandboxed — engine URL">
+  <button id="native" title="Open this page natively (this tab only)">native</button>
+</div>
+<div id="progresswrap"><div id="progress"></div></div>
 <div id="boot">browsception viewer</div>
-<div id="status"></div>
+<div id="status" style="display:none"></div>
 <canvas id="screen" width="800" height="600" tabindex="0"></canvas>
 <script type="module" src="viewer.mjs"></script>
 </body>

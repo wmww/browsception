@@ -93,6 +93,12 @@ async function bootEngine() {
 
   const presenter = createPresenter(canvas, params.get('blit'));
   const setStatus = (s) => (statusEl.textContent = s);
+  const urlbarEl = document.getElementById('urlbar');
+  const backBtn = document.getElementById('back');
+  const fwdBtn = document.getElementById('fwd');
+  const reloadBtn = document.getElementById('reloadbtn');
+  const nativeBtn = document.getElementById('native');
+  const progressEl = document.getElementById('progress');
 
   // --- engine-state persistence (OPFS; one profile per extension origin) ---
   const PERSIST_FILE = 'bib-state-v1.json';
@@ -154,6 +160,8 @@ async function bootEngine() {
     dead: false,
     frames: 0,
     ticks: 0,
+    // Filled by bibChrome signals (true engine URL, not the ?url= param).
+    state: { url: null, title: null, canGoBack: false, canGoForward: false, progress: 0 },
     metrics: { bootMs: null, engineFetchMs: null },
     workers: [],
     killEngine() {
@@ -331,6 +339,31 @@ async function bootEngine() {
       if (frame) bs.lastFrame = frame;
       for (const resolve of waiters) resolve(frame);
     },
+    // 2.3 chrome signals — kind/json arrive as JS strings (ABI).
+    bibChrome(kind, json) {
+      let data = {};
+      try {
+        data = JSON.parse(json);
+      } catch {}
+      if (kind === 'url') {
+        // Always the TRUE engine URL (security.md). Boot/about pages show
+        // as an empty bar, never as a spoofable-looking address.
+        const shown = /^https?:/.test(data.url ?? '') ? data.url : '';
+        bs.state.url = data.url ?? null;
+        bs.state.canGoBack = !!data.canGoBack;
+        bs.state.canGoForward = !!data.canGoForward;
+        if (document.activeElement !== urlbarEl) urlbarEl.value = shown;
+        backBtn.disabled = !data.canGoBack;
+        fwdBtn.disabled = !data.canGoForward;
+      } else if (kind === 'title') {
+        bs.state.title = data.title ?? '';
+        document.title = data.title || bs.state.url || 'browsception';
+      } else if (kind === 'progress') {
+        bs.state.progress = data.p ?? 0;
+        progressEl.style.width = `${Math.round((data.p ?? 0) * 100)}%`;
+        progressEl.style.opacity = (data.p ?? 0) >= 1 ? '0' : '1';
+      }
+    },
     bibPersist,
     bibSeedState: null, // filled before the engine script loads
     preRun: [
@@ -344,6 +377,24 @@ async function bootEngine() {
       bootEl.style.display = 'none';
       setStatus(`engine live (${bs.metrics.bootMs} ms boot)`);
       wireInput();
+      // Chrome controls (2.3).
+      backBtn.addEventListener('click', () => {
+        if (!bs.dead) Module._bib_go(-1);
+      });
+      fwdBtn.addEventListener('click', () => {
+        if (!bs.dead) Module._bib_go(1);
+      });
+      reloadBtn.addEventListener('click', () => {
+        if (!bs.dead && Module._bib_reload) Module._bib_reload();
+      });
+      urlbarEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && bs.navigate(urlbarEl.value)) canvas.focus();
+      });
+      nativeBtn.addEventListener('click', () => {
+        const url = bs.state.url;
+        if (/^https?:/.test(url ?? ''))
+          chrome.runtime.sendMessage({ type: 'open-natively', url });
+      });
       canvas.focus();
       requestAnimationFrame(tickLoop);
       if (navigateURL) {
@@ -359,7 +410,11 @@ async function bootEngine() {
       // stop every entry point (the tick loop checks bs.dead).
       bs.dead = true;
       bootEl.style.display = 'block';
-      bootEl.textContent = 'engine crashed — reload the tab';
+      bootEl.textContent = 'engine crashed — ';
+      const b = document.createElement('button');
+      b.textContent = 'reload';
+      b.addEventListener('click', () => location.reload());
+      bootEl.append(b);
       setStatus('CRASHED: ' + reason);
     },
   };

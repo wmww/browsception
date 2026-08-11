@@ -83,3 +83,15 @@ not CI).
   `site-diagnose.mjs`, `memwatch.mjs`) are a ready-made engine-side debug toolkit.
 - RAM warning from BUILD.md is real but mild on this box: 12 jobs peaked well under
   limits; unified TUs ~1.2 GB clang RSS each.
+
+## Incremental builds (fix 6, 2026-08-10)
+
+Upstream bootstrap's dep stages `make install` unconditionally, freshening
+wasm-sysroot header mtimes (ICU et al.) that every WebCore object depfile
+references — so re-running build-engine.sh invalidated the whole ninja graph
+(~7.4k objects, 15–20 min) after any one-line embedder change. build-engine.sh
+now probes third_party readiness (WebKit checkout, emcc, five sysroot libs)
+and skips bootstrap entirely when ready; a one-file embedder change is then
+compile+relink (~2–3 min). `rm -rf third_party/wasm-sysroot` forces the full
+path. Caveat: headers under Source/WebCore (e.g. EmptyFrameLoaderClient.h)
+are legitimately wide — touching one still costs a broad rebuild.

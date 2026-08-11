@@ -31,24 +31,42 @@ export PATH="$CMAKE_DIR/bin:$PATH"
 # WebCore's generators need ruby erb; Arch's ruby no longer bundles it.
 ruby -e "require 'erb'" 2>/dev/null || gem install --user-install erb
 
-# --- 2. dep-order workaround: brotli lives in curl-tier but freetype
-#        (webcore-deps, which bootstrap runs FIRST) requires it. Run
-#        curl-tier once up front; it builds openssl->nghttp2->brotli->libpsl
-#        ->curl and dies at fontconfig (missing freetype) — expected. --------
-if [ ! -f "$W/third_party/wasm-sysroot/lib/libbrotlidec.a" ]; then
-  bash "$W/tools/bootstrap.sh" || true # gets WebKit+emsdk cloned first if needed
-  bash "$W/tools/build-deps/curl-tier.sh" || true
+# --- 2. readiness probe: skip ALL bootstrap work once third_party is built.
+#        Upstream's dep stages re-run `make install` on every invocation,
+#        which freshens the mtimes of sysroot headers (ICU et al.) that every
+#        WebCore object depends on — so a "no-op" bootstrap invalidates the
+#        entire ninja graph (~7.4k objects, ~20 min) after a one-line
+#        embedder change. Delete third_party/wasm-sysroot to force a re-run.
+READY=1
+[ -d "$W/third_party/WebKit/.git" ] || READY=0
+[ -x "$W/third_party/emsdk/upstream/emscripten/emcc" ] || READY=0
+for lib in libicuuc.a libbrotlidec.a libcurl.a libfontconfig.a libwebp.a; do
+  [ -f "$W/third_party/wasm-sysroot/lib/$lib" ] || READY=0
+done
+
+if [ "$READY" != 1 ]; then
+  # --- 2a. dep-order workaround: brotli lives in curl-tier but freetype
+  #        (webcore-deps, which bootstrap runs FIRST) requires it. Run
+  #        curl-tier once up front; it builds openssl->nghttp2->brotli->libpsl
+  #        ->curl and dies at fontconfig (missing freetype) — expected. ------
+  if [ ! -f "$W/third_party/wasm-sysroot/lib/libbrotlidec.a" ]; then
+    bash "$W/tools/bootstrap.sh" || true # gets WebKit+emsdk cloned first if needed
+    bash "$W/tools/build-deps/curl-tier.sh" || true
+  fi
+
+  # brotli's libbrotlidec.pc hides libbrotlicommon in Requires.private, which
+  # non-static pkg-config resolution drops -> fontconfig fc-cache link fails in
+  # a static-only sysroot. Promote it.
+  PC="$W/third_party/wasm-sysroot/lib/pkgconfig/libbrotlidec.pc"
+  [ -f "$PC" ] && sed -i 's/^Requires.private: libbrotlicommon/Requires: libbrotlicommon/' "$PC"
+
+  # --- 3. full bootstrap (idempotent; now completes) --------------------
+  bash "$W/tools/bootstrap.sh"
+else
+  echo "==> third_party ready — skipping bootstrap/dep stages (incremental build)"
 fi
 
-# brotli's libbrotlidec.pc hides libbrotlicommon in Requires.private, which
-# non-static pkg-config resolution drops -> fontconfig fc-cache link fails in
-# a static-only sysroot. Promote it.
-PC="$W/third_party/wasm-sysroot/lib/pkgconfig/libbrotlidec.pc"
-[ -f "$PC" ] && sed -i 's/^Requires.private: libbrotlicommon/Requires: libbrotlicommon/' "$PC"
-
-# --- 3. full bootstrap (idempotent; now completes) ----------------------
-bash "$W/tools/bootstrap.sh"
-npm --prefix "$W" install
+[ -d "$W/node_modules" ] || npm --prefix "$W" install
 
 # --- 4. font staging for non-Debian hosts: build-webcore.sh hardcodes
 #        /usr/share/fonts/truetype/dejavu/. Pre-stage from wherever the

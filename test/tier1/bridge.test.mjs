@@ -128,6 +128,40 @@ test('redirects are engine-driven: 3xx reported with Location + hop Set-Cookie, 
   assert.ok(hop.bodyText.includes('REDIRECT-FINAL'));
 });
 
+test('stack-synthesized redirects (no response headers) reach the engine too', async () => {
+  // HSTS upgrades and DNR redirects skip onHeadersReceived entirely — only
+  // onBeforeRedirect fires. Capturing just the former turned every
+  // http://<hsts-preloaded-host>/ load into a bare network failure.
+  await page.evaluate(() =>
+    chrome.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds: [900],
+      addRules: [
+        {
+          id: 900,
+          priority: 100,
+          action: { type: 'redirect', redirect: { url: 'https://site-b.bstest/final' } },
+          condition: {
+            urlFilter: '|https://app.bstest/synth-redirect|',
+            resourceTypes: ['xmlhttprequest'],
+          },
+        },
+      ],
+    }),
+  );
+  try {
+    const t = await request({ url: 'https://app.bstest/synth-redirect' });
+    assert.deepEqual(t.events, ['redirect']);
+    assert.ok(t.redirect.status >= 300 && t.redirect.status < 400, `status ${t.redirect.status}`);
+    assert.equal(Object.fromEntries(t.redirect.headers).location, 'https://site-b.bstest/final');
+    const reqs = await oracleRequests();
+    assert.deepEqual(reqs.filter((r) => r.host.startsWith('site-b')), [], 'engine drives the hop');
+  } finally {
+    await page.evaluate(() =>
+      chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: [900] }),
+    );
+  }
+});
+
 test('host jar never rides the bridge (credentials:omit, structurally)', async () => {
   const native = await context.newPage();
   await native.goto('https://app.bstest/set-cookie?n=hostjar&v=secret');
@@ -179,6 +213,45 @@ test('credit window: slow acks throttle the stream but it completes intact; no h
   assert.equal(t.liveAllocs, 0, 'every heap allocation was freed');
   await boot({});
 }, { timeout: 60000 });
+
+test('a failed TOP-LEVEL load is reported to the viewer; cancels and hops are not', async () => {
+  // Nothing commits on a failed main-frame load — without this signal the
+  // viewer sits on the boot page forever (issues/, the HSTS wedge symptom).
+  const failures = () => page.evaluate(() => __bs.mainFailures.slice());
+  const before = (await failures()).length;
+
+  const dead = await request({ url: 'https://nxdomain.invalid/', main: 1 });
+  assert.equal(dead.error.kind, NET_ERR.NETWORK);
+  const guarded = await request({ url: `http://127.0.0.1:${HTTP_PORT}/api/data`, main: 1 });
+  assert.equal(guarded.error.kind, NET_ERR.GUARD);
+  // Subresource failures and cancelled loads must stay silent.
+  await request({ url: 'https://nxdomain.invalid/sub.js' });
+  const cancelled = await page.evaluate(async () => {
+    const p = __bs.request({ url: 'https://app.bstest/slow', main: 1 });
+    await new Promise((r) => setTimeout(r, 100));
+    __bs.cancel(p.id);
+    return p;
+  });
+  assert.equal(cancelled.error.kind, NET_ERR.CANCELLED);
+
+  const got = (await failures()).slice(before);
+  assert.deepEqual(
+    got.map((f) => [f.url, f.kind]),
+    [
+      ['https://nxdomain.invalid/', NET_ERR.NETWORK],
+      [`http://127.0.0.1:${HTTP_PORT}/api/data`, NET_ERR.GUARD],
+    ],
+  );
+});
+
+test('every finished request leaves the capture queue empty', async () => {
+  // Unclaimed entries would be handed to the next fetch of the same URL.
+  await request({ url: 'https://app.bstest/set-cookie?n=a&v=1' });
+  await request({ url: 'https://app.bstest/redirect?to=%2Ffinal' });
+  await request({ url: 'https://nxdomain.invalid/' });
+  await new Promise((r) => setTimeout(r, 900)); // let discard()'s waiter expire
+  assert.equal(await page.evaluate(() => __bs.capturePending()), 0);
+});
 
 test('DNR bridge rules do not touch native traffic', async () => {
   const native = await context.newPage();

@@ -86,6 +86,10 @@ back/forward list (src/ext/viewer.mjs).
   from mid-stack prunes forward entries in both lists. Both fall out for free.
 - The canvas must not swallow the host's controls: Alt+←/→, F5 and mouse buttons 3/4 are never
   forwarded and never `preventDefault`ed (Ctrl/Cmd combos already weren't).
+- A top-level load the bridge fails (DNS/TLS, guard denial, size cap, timeout) shows an error
+  strip above the canvas — `couldn't load <url> — <reason>` + retry — cleared by the next
+  committed load. Deliberately no "open natively" button: that escape hatch is the popup's.
+  Failures the bridge never sees are still silent (issues/).
 - The tab URL being live is load-bearing beyond the chrome: popup escape hatch, SW sweep and
   badge all read `tab.url`. Before this they saw the entry point, so escaping natively from a
   nested page went to the *original* URL and keyed the session allow rule on the wrong host.

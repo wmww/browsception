@@ -118,10 +118,11 @@ export function createStubModule({ ackDelayMs = 0, autoAck = true } = {}) {
 
     stub: {
       /** Issue one engine request; resolves with the full transcript. */
-      request({ url, method = 'GET', headers = [], body = null }) {
+      request({ url, method = 'GET', headers = [], body = null, main = 0 }) {
         const id = nextId++;
         const t = { id, events: [], headers: null, body: [], bodyBytes: 0, keptBytes: 0, chunks: 0 };
-        return new Promise((resolve) => {
+        // .id on the promise so a test can cancel a request mid-flight.
+        const transcript = new Promise((resolve) => {
           pending.set(id, { resolve, t });
           let bodyPtr = 0;
           let bodyLen = 0;
@@ -131,12 +132,16 @@ export function createStubModule({ ackDelayMs = 0, autoAck = true } = {}) {
             HEAPU8.set(bytes, bodyPtr);
             bodyLen = bytes.length;
           }
-          const reqJson = enc.encode(JSON.stringify({ id, method, url, headers, bodyPtr, bodyLen }));
+          const reqJson = enc.encode(
+            JSON.stringify({ id, method, url, headers, bodyPtr, bodyLen, main }),
+          );
           const ptr = _bib_wasm_alloc(reqJson.length + 1);
           HEAPU8.set(reqJson, ptr);
           HEAPU8[ptr + reqJson.length] = 0;
           module.bibNetBegin(ptr);
         });
+        transcript.id = id;
+        return transcript;
       },
       cancel(id) {
         module.bibNetCancel?.(id);

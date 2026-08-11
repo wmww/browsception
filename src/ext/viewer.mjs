@@ -8,7 +8,7 @@
 // real bridge (src/shim/bridge.mjs): guard list, DNR header rules, webRequest
 // Set-Cookie/redirect capture.
 
-import { ABI_VERSION } from '../abi/abi.mjs';
+import { ABI_VERSION, NET_ERR } from '../abi/abi.mjs';
 import { Bridge } from '../shim/bridge.mjs';
 import { RedirectCapture } from '../shim/redirect-capture.mjs';
 import { createStubModule } from '../shim/engine-stub.mjs';
@@ -32,8 +32,10 @@ let current = null;
 globalThis.__bsBoot = async (opts = {}) => {
   if (current) await current.bridge.dispose();
   const module = createStubModule(opts.stub ?? {});
+  const mainFailures = [];
   const bridge = new Bridge(module, {
     capture: new RedirectCapture(),
+    onMainLoadFailed: (url, kind, message) => mainFailures.push({ url, kind, message }),
     userAgent: opts.userAgent ?? 'BrowsceptionBridge/0.1',
     guardOpts: opts.guardOpts,
     maxResponseBytes: opts.maxResponseBytes,
@@ -46,6 +48,8 @@ globalThis.__bsBoot = async (opts = {}) => {
     abiVersion: ABI_VERSION,
     request: (req) => module.stub.request(req),
     cancel: (id) => module.stub.cancel(id),
+    mainFailures,
+    capturePending: () => bridge.capture.pending(),
     liveAllocs: () => module.stub.liveAllocs(),
   };
   return true;
@@ -532,7 +536,10 @@ async function bootEngine() {
         bs.state.length = typeof data.length === 'number' ? data.length : 0;
         if (document.activeElement !== urlbarEl) urlbarEl.value = shown;
         // Boot/about pages are never mirrored into tab history.
-        if (shown) syncTabHistory(data.url, data.kind, bs.state.index);
+        if (shown) {
+          syncTabHistory(data.url, data.kind, bs.state.index);
+          clearLoadError(); // a load committed — whatever failed before is stale
+        }
         drive();
       } else if (kind === 'title') {
         bs.state.title = data.title ?? '';
@@ -590,6 +597,35 @@ async function bootEngine() {
     },
   };
 
+  // A failed top-level load leaves WHATEVER is committed on screen — the boot
+  // page on a first navigation, the previous page otherwise. Say so, with a
+  // retry; the next successful commit clears it. (No "open natively" button
+  // here on purpose: that escape hatch lives in the popup, ui.md.)
+  const NET_ERR_TEXT = {
+    [NET_ERR.GUARD]: 'blocked by the sandbox guard',
+    [NET_ERR.NETWORK]: 'network error',
+    [NET_ERR.TIMEOUT]: 'timed out',
+    [NET_ERR.TOO_LARGE]: 'response too large',
+    [NET_ERR.PROTOCOL]: 'protocol error',
+  };
+  function showLoadError(url, kind, message) {
+    bootEl.textContent = `couldn't load ${url} — ${NET_ERR_TEXT[kind] ?? `error ${kind}`}`;
+    if (message) bootEl.textContent += ` (${message})`;
+    const retry = document.createElement('button');
+    retry.textContent = 'retry';
+    retry.addEventListener('click', () => bs.navigate(url));
+    bootEl.append(retry);
+    bootEl.style.display = 'block';
+    setStatus(`load failed: ${url}`);
+    noteCanvasSize(null); // the strip changed the layout
+  }
+  function clearLoadError() {
+    if (bootEl.style.display === 'none') return;
+    bootEl.style.display = 'none';
+    bootEl.textContent = '';
+    noteCanvasSize(null);
+  }
+
   // 2.4 boundary policy: live activation/mode/list state decides whether a
   // top-level navigation stays nested or hands the REAL tab the URL.
   let listState = await getState();
@@ -613,6 +649,7 @@ async function bootEngine() {
       return shouldSandbox(listState, url) ? 'sandbox' : 'native';
     },
     onNativeNavigation: (url) => location.replace(url),
+    onMainLoadFailed: (url, kind, message) => !bs.dead && showLoadError(url, kind, message),
   });
   await bridge.init();
 

@@ -28,7 +28,9 @@ rerun that suite to revalidate on new Chrome versions.
    listener (viewer-registered) records `(url → status, Location, Set-Cookie[])` for bridge
    requests; when the fetch rejects on a redirect, the shim looks up the captured 3xx by URL
    and reports it to the engine's loader, which applies its own redirect security logic and
-   issues the next hop as a fresh bridge request with hop-correct headers.
+   issues the next hop as a fresh bridge request with hop-correct headers. The 3xx is taken from
+   `onBeforeRedirect` — stack-synthesized redirects (HSTS upgrades, DNR redirects) fire no
+   `onHeadersReceived` at all; see networking.md.
    Rationale: host-followed redirects would apply the DNR-set `Cookie` (computed for the
    original origin) to cross-origin hops — a cookie leak across origins. Observed directly.
 2. **Set-Cookie capture = webRequest observational**, keyed by response URL. No request-id

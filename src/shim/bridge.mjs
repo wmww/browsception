@@ -14,7 +14,7 @@
 import { NET_ERR, NET_WINDOW_BYTES } from '../abi/abi.mjs';
 import { evaluateRequest, CAPS } from './guard.mjs';
 import { readCString, readBytes, allocCString, allocBytes } from './heap.mjs';
-import { setCookiesOf, locationOf } from './redirect-capture.mjs';
+import { setCookiesOf } from './redirect-capture.mjs';
 import { BRIDGE_RULE, baseSessionRules, perRequestHeaderRule } from '../ext/bridge-rules.mjs';
 
 // Fetch-forbidden request headers the engine may legitimately send; these
@@ -63,6 +63,10 @@ export class Bridge {
     // navigates the real tab).
     this.navigationPolicy = opts.navigationPolicy ?? null;
     this.onNativeNavigation = opts.onNativeNavigation ?? null;
+    // Called when a TOP-LEVEL document request fails for a reason other than
+    // cancellation: the engine keeps whatever document is committed (the boot
+    // page, on a first navigation), so the viewer has to say so.
+    this.onMainLoadFailed = opts.onMainLoadFailed ?? null;
     this.chrome = opts.chromeApi ?? globalThis.chrome;
     this.guardOpts = opts.guardOpts ?? {};
     this.maxResponseBytes = opts.maxResponseBytes ?? CAPS.MAX_RESPONSE_BYTES;
@@ -101,12 +105,18 @@ export class Bridge {
     if (!st) return;
     this.module._bib_net_fail(id, kind, message ? allocCString(this.module, message) : 0);
     this.#finish(id);
+    if (st.main && kind !== NET_ERR.CANCELLED) this.onMainLoadFailed?.(st.url, kind, message);
   }
 
   #finish(id) {
     const st = this.#inflight.get(id);
     if (!st) return;
     this.#inflight.delete(id);
+    // The webRequest listener may have queued an entry for a request that
+    // ended before it could claim one (cancelled mid-flight, guard denial
+    // racing the response). Unclaimed entries would poison the next fetch of
+    // the same URL.
+    if (!st.took && st.fetched) this.capture.discard(st.url);
     clearTimeout(st.idleTimer);
     st.ackWaiter?.();
     if (st.ruleId != null) {
@@ -138,7 +148,16 @@ export class Bridge {
     if (req.bodyPtr) m._bib_wasm_free(req.bodyPtr);
 
     const id = req.id;
-    const st = { ctrl: new AbortController(), ruleId: null, unacked: 0, ackWaiter: null };
+    const st = {
+      ctrl: new AbortController(),
+      ruleId: null,
+      unacked: 0,
+      ackWaiter: null,
+      url: req.url,
+      main: !!req.main,
+      fetched: false, // a webRequest entry may exist for this request
+      took: false, // ...and we claimed it
+    };
     this.#inflight.set(id, st);
 
     if (req.main && this.navigationPolicy && this.navigationPolicy(req.url) === 'native') {
@@ -171,6 +190,7 @@ export class Bridge {
     }
 
     let res;
+    st.fetched = true;
     try {
       // credentials:'omit' is the load-bearing line (security.md): the host
       // jar/auth/client-certs never ride, structurally. cache:'no-store'
@@ -192,6 +212,7 @@ export class Bridge {
       // TypeError is either a network failure or the redirect:'error' abort —
       // the capture disambiguates (a 3xx was observed iff it was a redirect).
       const entry = await this.capture.take(req.url);
+      st.took = true;
       if (entry && entry.status >= 300 && entry.status < 400) {
         const headers = { status: entry.status, url: req.url, headers: entry.headers };
         m._bib_net_redirect(id, entry.status, allocCString(m, JSON.stringify(headers)));
@@ -206,6 +227,7 @@ export class Bridge {
     // Bodies arrive decoded — strip encoding/length headers per the ABI.
     const stripped = new Set(['set-cookie', 'content-encoding', 'content-length', 'transfer-encoding']);
     const entry = await this.capture.take(req.url);
+    st.took = true;
     const headers = [...res.headers.entries()].filter(([k]) => !stripped.has(k));
     if (entry) for (const v of setCookiesOf(entry)) headers.push(['set-cookie', v]);
     m._bib_net_response(

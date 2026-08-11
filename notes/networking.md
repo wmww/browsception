@@ -109,6 +109,36 @@ engine didn't send those headers; per-request DNR session rule (priority 2, exac
 carries engine-sent Cookie/Referer/Origin and beats the base strips; webRequest capture matches on
 `initiator` only (extension-page fetches carry the tab's id, so never filter on tabId).
 
+Redirect capture takes 3xx entries from **`onBeforeRedirect`**, not `onHeadersReceived`: some
+redirects are synthesized by the network stack and receive no response headers at all (HSTS
+upgrade — `http://wikipedia.org/`, `http://github.com/`, any preloaded host — and DNR redirect
+rules). `redirect:'error'` still aborts on those, so listening only to `onHeadersReceived` reported
+every such load as a bare network failure and the viewer sat on the boot page. `onBeforeRedirect`
+carries the same `responseHeaders` (hop `Set-Cookie` included) for server redirects plus the
+resolved `redirectUrl`, which we hand the engine as `Location`; `onHeadersReceived` skips
+redirect-status responses that have a `Location` so each fetch still enqueues exactly one entry (a
+3xx *without* `Location` is an ordinary response to fetch, and is captured there). Accepted delta:
+a redirect Chromium refuses outright (`net::ERR_UNSAFE_REDIRECT`, e.g. `Location: data:…`) fires
+`onHeadersReceived` but never `onBeforeRedirect`, so it now reaches the engine as a network failure
+instead of as a 3xx — the load fails either way.
+
+Two hygiene rules fall out of the same design, both tier-0 tested:
+
+- **Keys are normalized** (`new URL(url).href` on both sides). webRequest reports the URL Chromium
+  normalized (`:443` dropped, dot segments resolved, spaces/non-ASCII percent-encoded); the engine
+  sends whatever string it has. WebCore happens to canonicalize the same way today, so a raw-key
+  mismatch was latent — it would have cost a dropped `Set-Cookie`, an 800 ms stall (the success
+  path awaits `take()`), and a redirect misread as a network failure.
+- **Every request claims or discards its entry** (`capture.discard()` from `Bridge.#finish`). A
+  request cancelled between the webRequest event and its `take()` used to orphan an entry, and the
+  next fetch of the same URL would take it — stale `Set-Cookie` into the engine jar, or a stale 3xx
+  read as a redirect. A 30 s sweep on unclaimed entries backstops whatever else leaks.
+
+A failed top-level load is now visible: the bridge calls `onMainLoadFailed` for every non-cancelled
+`main` request failure and the viewer shows an error strip with a retry (no "open natively" button
+— that escape hatch is the popup's, ui.md). Failures the bridge never sees are still silent
+(issues/engine-side-load-failures-are-silent.md).
+
 ## What the nested site can and cannot reach (summary)
 
 Can: fetch any public http(s) resource, as an anonymous client from the user's IP.

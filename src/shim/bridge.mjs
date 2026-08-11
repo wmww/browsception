@@ -57,6 +57,12 @@ export class Bridge {
     this.module = module;
     this.capture = opts.capture;
     this.userAgent = opts.userAgent;
+    // 2.4 sandboxed->native boundary: called with the URL of every TOP-LEVEL
+    // document request ("main":1 from the engine); returning 'native' cancels
+    // the request engine-side and fires onNativeNavigation (the viewer then
+    // navigates the real tab).
+    this.navigationPolicy = opts.navigationPolicy ?? null;
+    this.onNativeNavigation = opts.onNativeNavigation ?? null;
     this.chrome = opts.chromeApi ?? globalThis.chrome;
     this.guardOpts = opts.guardOpts ?? {};
     this.maxResponseBytes = opts.maxResponseBytes ?? CAPS.MAX_RESPONSE_BYTES;
@@ -134,6 +140,12 @@ export class Bridge {
     const id = req.id;
     const st = { ctrl: new AbortController(), ruleId: null, unacked: 0, ackWaiter: null };
     this.#inflight.set(id, st);
+
+    if (req.main && this.navigationPolicy && this.navigationPolicy(req.url) === 'native') {
+      this.#fail(id, NET_ERR.CANCELLED, 'native disposition');
+      this.onNativeNavigation?.(req.url);
+      return;
+    }
 
     const verdict = evaluateRequest(req.url, this.guardOpts);
     if (!verdict.allow) return this.#fail(id, NET_ERR.GUARD, verdict.reason);

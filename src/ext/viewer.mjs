@@ -13,6 +13,8 @@ import { Bridge } from '../shim/bridge.mjs';
 import { RedirectCapture } from '../shim/redirect-capture.mjs';
 import { createStubModule } from '../shim/engine-stub.mjs';
 import { createPresenter } from './blit.mjs';
+import { shouldSandbox } from './dnr-rules.mjs';
+import { getState, onStateChanged } from './state.mjs';
 
 // Viewer params must precede url= — the raw target URL after it may contain
 // its own query (&stub=, &blit=, …) that must NOT be read as ours.
@@ -419,11 +421,29 @@ async function bootEngine() {
     },
   };
 
+  // 2.4 boundary policy: live activation/mode/list state decides whether a
+  // top-level navigation stays nested or hands the REAL tab the URL.
+  let listState = await getState();
+  let firstMainSeen = false;
+  onStateChanged((s) => (listState = s));
+
   // The bridge installs bibNet* on Module; must exist before the engine runs.
   const bridge = new Bridge(window.Module, {
     capture: new RedirectCapture(),
     // Host UA: sites should serve the same content they'd serve this browser.
     userAgent: navigator.userAgent,
+    guardOpts: { allowPrivateNetwork: listState.allowPrivateNetwork },
+    // The INITIAL target is exempt: it was already dispositioned by whatever
+    // opened this viewer (DNR redirect, sweep, dev/test direct-open); the
+    // boundary check is for navigating AWAY.
+    navigationPolicy: (url) => {
+      if (!firstMainSeen) {
+        firstMainSeen = true;
+        if (url === navigateURL) return 'sandbox';
+      }
+      return shouldSandbox(listState, url) ? 'sandbox' : 'native';
+    },
+    onNativeNavigation: (url) => location.replace(url),
   });
   await bridge.init();
 

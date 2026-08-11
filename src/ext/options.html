@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>browsception settings</title>
+<style>
+  body { margin: 0 auto; max-width: 640px; padding: 24px 16px; background: #1a1d23;
+         color: #d6dae2; font: 14px system-ui; }
+  h1 { font-size: 18px; }
+  h2 { font-size: 14px; margin: 24px 0 4px; }
+  p.hint { color: #8891a0; font-size: 12px; margin: 2px 0 8px; }
+  textarea { width: 100%; height: 10em; background: #14161a; color: #d6dae2;
+             border: 1px solid #3a4150; border-radius: 5px; padding: 8px;
+             font: 12px ui-monospace, monospace; box-sizing: border-box; }
+  button { margin-top: 10px; padding: 6px 16px; background: #2a303b; color: #cdd3de;
+           border: 1px solid #3a4150; border-radius: 5px; cursor: pointer; font: 13px system-ui; }
+  button:hover { background: #363d4b; }
+  #saved { color: #6fe0a8; font-size: 12px; margin-left: 10px; }
+  label { display: block; margin: 10px 0; }
+  input[type=checkbox] { accent-color: #44cc88; }
+  .warn { color: #e0996f; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>browsception settings</h1>
+
+<h2>Trusted sites (whitelist mode)</h2>
+<p class="hint">One domain per line — these run natively when whitelist mode is on.
+An entry covers its subdomains; prefix with <code>=</code> for exact-host.</p>
+<textarea id="whitelist" spellcheck="false"></textarea>
+
+<h2>Sandboxed sites (blacklist mode)</h2>
+<p class="hint">One domain per line — these are forced into the nested browser when
+blacklist mode is on.</p>
+<textarea id="blacklist" spellcheck="false"></textarea>
+
+<h2>Advanced</h2>
+<label><input type="checkbox" id="allowPrivateNetwork">
+  Allow sandboxed pages to reach private-network addresses
+  <span class="warn">(weakens a guard rail — for development against local servers only)</span>
+</label>
+
+<button id="save">Save</button><span id="saved"></span>
+<script type="module" src="options.mjs"></script>
+</body>
+</html>

@@ -132,9 +132,26 @@ session+tab-scoped allow rule (reaped on tab close) and renavigates. Tier-2
 now 9 scenarios, all green (~12 s), incl. scenario 10 chrome and the escape
 hatch. bibChrome delivers kind/json as JS strings (bibPersist-style; ABI
 docs updated). Build note: engine iteration is now genuinely incremental
-(engine-build.md fix 6, ~90 s for embedder-only changes). Next: 2.4
-activation & modes UI (toolbar popup, per-site actions, badge, options
-list editors, sandboxed→native boundary via engine policy delegate).
+(engine-build.md fix 6, ~90 s for embedder-only changes). 2.4 done: activation & modes UI + boundary. Shared state module
+(src/ext/state.mjs: {active,mode,whitelist,blacklist,allowPrivateNetwork} in
+storage.sync); popup (per-site action matrix in actions.mjs, tier-0-pinned;
+mode switch with confirm-to-blacklist; open-natively-once) + options page
+(textarea list editors, private-network override) + per-tab badge ("S"
+sandboxed / "off"). Sweep is now SYMMETRIC (ui.md revised: state edits
+auto-apply — viewer tabs whose target went native leave the sandbox too).
+Sandboxed→native boundary: engine marks top-level document requests
+("main":1 — must be derived in loadResource; DocumentLoader::
+mainResourceLoader() races to null during scheduling), bridge
+navigationPolicy cancels + viewer location.replace()s the real tab; the
+viewer's INITIAL target is exempt (dispositioned by whoever opened it).
+Tier-2 = 10 scenarios all green (~12 s), incl. boundary
+(whitelist-mode handoff) and both sweep directions; suite runs under a
+dev-posture blacklist of all fixture domains (a sandboxed viewer must match
+its disposition or the boundary policy natives its navigations). Next: 2.5
+guard-rail verification (tier-2 scenario 11: hostile.bstest full pass, CDP
+Network/Target audit that no target-origin bytes load top-level, DNR header
+rules don't fire on non-bridge traffic, mode/list transitions → exact rule
+sets), then 2.6 whitelist-by-default.
 
 Key decisions made so far:
 

@@ -1,0 +1,43 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { margin: 0; width: 300px; background: #1a1d23; color: #d6dae2;
+         font: 13px system-ui; }
+  section { padding: 10px 12px; border-bottom: 1px solid #2c313b; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  h1 { font-size: 13px; margin: 0; font-weight: 600; }
+  #disposition { font-size: 11px; padding: 2px 7px; border-radius: 9px; }
+  #disposition.sandboxed { background: #1d4634; color: #6fe0a8; }
+  #disposition.native { background: #3a3320; color: #e0c46f; }
+  #disposition.other { background: #2c313b; color: #8891a0; }
+  #host { font: 12px ui-monospace, monospace; word-break: break-all; margin: 6px 0; }
+  button { display: block; width: 100%; margin-top: 6px; padding: 6px 10px;
+           background: #2a303b; color: #cdd3de; border: 1px solid #3a4150;
+           border-radius: 5px; cursor: pointer; font: 12px system-ui; text-align: left; }
+  button:hover { background: #363d4b; }
+  .subtle { background: none; border: none; color: #8891a0; text-align: center; }
+  .subtle:hover { background: none; color: #cdd3de; text-decoration: underline; }
+  input[type=checkbox] { accent-color: #44cc88; }
+  #mode { color: #8891a0; font-size: 12px; }
+</style>
+</head>
+<body>
+<section class="row">
+  <h1>browsception</h1>
+  <label class="row"><span id="activelabel">active</span>
+    <input type="checkbox" id="active"></label>
+</section>
+<section id="tabsection">
+  <div class="row"><span id="mode"></span><span id="disposition" class="other">—</span></div>
+  <div id="host"></div>
+  <div id="actions"></div>
+</section>
+<section>
+  <button id="modeswitch" class="subtle"></button>
+  <button id="options" class="subtle">Site lists &amp; settings…</button>
+</section>
+<script type="module" src="popup.mjs"></script>
+</body>
+</html>

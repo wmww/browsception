@@ -30,6 +30,31 @@ test.after(async () => {
 
 const BOOT_TIMEOUT = 120000;
 
+// Suite posture: dev-style blacklist covering every fixture domain, so a
+// sandboxed viewer's domain always HAS sandbox disposition — required since
+// 2.4's boundary policy natives nested navigations to unlisted domains.
+const FIXTURE_BLACKLIST = ['grid.bstest', 'input.bstest', 'app.bstest', 'other.bstest'];
+
+async function configure(patch, ready) {
+  const cfg = await session.context.newPage();
+  await cfg.goto(`chrome-extension://${EXT_ID}/ext/viewer.html?stub=1`);
+  await cfg.evaluate((p) => chrome.storage.sync.set(p), patch);
+  if (ready) {
+    const t0 = Date.now();
+    while (Date.now() - t0 < 15000) {
+      if (await cfg.evaluate(ready)) break;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  }
+  await cfg.close();
+}
+
+test.before(() =>
+  configure({ active: true, mode: 'blacklist', blacklist: FIXTURE_BLACKLIST, whitelist: [] }, () =>
+    chrome.declarativeNetRequest.getDynamicRules().then((r) => r.length >= 4),
+  ),
+);
+
 async function bootViewer(target, extra = '') {
   const page = await session.context.newPage();
   page.consoleLines = [];
@@ -138,25 +163,9 @@ test('crash: engine abort -> crashed UI -> reload recovers', { timeout: 300000 }
 
 // --- 2.2 milestone: live blacklist interception end to end -----------------
 test('interception: blacklisted navigation lands in the viewer and renders sandboxed', { timeout: 300000 }, async () => {
-  // Configure the blacklist from an extension context; the SW reconciles on
-  // the storage change. (?stub=1 page is the lightest extension context.)
-  const cfg = await session.context.newPage();
-  await cfg.goto(`chrome-extension://${EXT_ID}/ext/viewer.html?stub=1`);
-  await cfg.evaluate(() => chrome.storage.sync.set({ mode: 'blacklist', blacklist: ['grid.bstest'] }));
-  {
-    const t0 = Date.now();
-    while (Date.now() - t0 < 10000) {
-      const n = await cfg.evaluate(() => chrome.declarativeNetRequest.getDynamicRules().then((r) => r.length));
-      if (n > 0) break;
-      await new Promise((r) => setTimeout(r, 200));
-    }
-  }
-
-  // Navigate a plain tab to the blacklisted domain — like typing in the
+  // Navigate a plain tab to a blacklisted domain — like typing in the
   // omnibox. DNR must redirect it to the viewer, which renders it nested.
   const page = await session.context.newPage();
-  page.consoleLines = [];
-  page.on('console', (m) => page.consoleLines.push(m.text()));
   await page.goto('https://grid.bstest/');
   assert.ok(
     page.url().startsWith(`chrome-extension://${EXT_ID}/ext/viewer.html?url=`),
@@ -166,42 +175,25 @@ test('interception: blacklisted navigation lands in the viewer and renders sandb
   await page.waitForFunction(() => globalThis.__bs?.ready, undefined, { timeout: BOOT_TIMEOUT });
   await until(page, 100, 100, is([255, 0, 0]), 120000, 'nested render after interception');
   await page.close();
-
-  // Cleanup: empty the blacklist and wait for the rules to drain so later
-  // scenarios see a clean slate.
-  await cfg.evaluate(() => chrome.storage.sync.set({ blacklist: [] }));
-  {
-    const t0 = Date.now();
-    while (Date.now() - t0 < 10000) {
-      const n = await cfg.evaluate(() => chrome.declarativeNetRequest.getDynamicRules().then((r) => r.length));
-      if (n === 0) break;
-      await new Promise((r) => setTimeout(r, 200));
-    }
-  }
-  await cfg.close();
 });
 
-// --- 2.2: sweep — list edits (and the install race) convert open tabs ------
-test('sweep: an open native tab on a newly-blacklisted domain is redirected to the viewer', { timeout: 300000 }, async () => {
-  const page = await session.context.newPage();
-  await page.goto('https://app.bstest/');
-  assert.ok(page.url().startsWith('https://app.bstest/'), 'native before listing');
+// --- 2.2/2.4: symmetric sweep — list edits convert open tabs both ways -----
+test('sweep: list edits convert open tabs (native->viewer and viewer->native)', { timeout: 300000 }, async () => {
+  // Unlist app.bstest; an open viewer tab on it must LEAVE the sandbox.
+  const nested = await session.context.newPage();
+  await nested.goto('https://app.bstest/');
+  assert.ok(nested.url().startsWith(`chrome-extension://${EXT_ID}/`), 'sandboxed while listed');
+  await configure({ blacklist: FIXTURE_BLACKLIST.filter((d) => d !== 'app.bstest') });
+  // startsWith: the fixture pushState()s to /pushed as soon as it runs.
+  await pollUntil(() => nested.url().startsWith('https://app.bstest/'), 'viewer tab swept to native');
 
-  const cfg = await session.context.newPage();
-  await cfg.goto(`chrome-extension://${EXT_ID}/ext/viewer.html?stub=1`);
-  await cfg.evaluate(() => chrome.storage.sync.set({ mode: 'blacklist', blacklist: ['app.bstest'] }));
-  const t0 = Date.now();
-  while (Date.now() - t0 < 15000) {
-    if (page.url().startsWith(`chrome-extension://${EXT_ID}/ext/viewer.html?url=`)) break;
-    await new Promise((r) => setTimeout(r, 250));
-  }
-  assert.ok(
-    page.url().startsWith(`chrome-extension://${EXT_ID}/ext/viewer.html?url=https://app.bstest/`),
-    `swept to viewer: ${page.url()}`,
+  // Re-list it; the (now-native) tab must sweep back into a viewer.
+  await configure({ blacklist: FIXTURE_BLACKLIST });
+  await pollUntil(
+    () => nested.url().startsWith(`chrome-extension://${EXT_ID}/ext/viewer.html?url=https://app.bstest/`),
+    'native tab swept to viewer',
   );
-  await page.close();
-  await cfg.evaluate(() => chrome.storage.sync.set({ blacklist: [] }));
-  await cfg.close();
+  await nested.close();
 });
 
 // --- Scenario 10: navigation chrome (2.3) ----------------------------------
@@ -248,14 +240,6 @@ test('chrome: URL bar tracks nested navigation; back/forward/reload; nested titl
 
 // --- 2.3 escape hatch: open natively, this tab only ------------------------
 test('escape hatch: native button reopens the tab natively; other tabs stay sandboxed', { timeout: 300000 }, async () => {
-  const cfg = await session.context.newPage();
-  await cfg.goto(`chrome-extension://${EXT_ID}/ext/viewer.html?stub=1`);
-  await cfg.evaluate(() => chrome.storage.sync.set({ mode: 'blacklist', blacklist: ['grid.bstest'] }));
-  await pollUntil(
-    () => cfg.evaluate(() => chrome.declarativeNetRequest.getDynamicRules().then((r) => r.length > 0)),
-    'blacklist rules applied',
-  );
-
   const page = await session.context.newPage();
   await page.goto('https://grid.bstest/');
   assert.ok(page.url().startsWith(`chrome-extension://${EXT_ID}/`), 'sandboxed first');
@@ -272,13 +256,30 @@ test('escape hatch: native button reopens the tab natively; other tabs stay sand
   assert.ok(other.url().startsWith(`chrome-extension://${EXT_ID}/`), 'other tabs still sandboxed');
   await other.close();
   await page.close(); // tab close reaps the session escape rule
+});
 
-  await cfg.evaluate(() => chrome.storage.sync.set({ blacklist: [] }));
-  await pollUntil(
-    () => cfg.evaluate(() => chrome.declarativeNetRequest.getDynamicRules().then((r) => r.length === 0)),
-    'blacklist drained',
+// --- 2.4 boundary: sandboxed page navigating to a native-disposition URL ---
+test('boundary: nested navigation to a whitelisted domain hands the real tab the URL', { timeout: 300000 }, async () => {
+  // Whitelist mode, grid.bstest trusted: everything else sandboxed via the
+  // static catch-all; a nested navigation to grid.bstest must go NATIVE.
+  await configure({ mode: 'whitelist', whitelist: ['grid.bstest'] }, () =>
+    chrome.declarativeNetRequest.getEnabledRulesets().then((r) => r.includes('catchall')),
   );
-  await cfg.close();
+
+  const page = await session.context.newPage();
+  await page.goto('https://input.bstest/');
+  assert.ok(page.url().startsWith(`chrome-extension://${EXT_ID}/`), 'unlisted domain sandboxed');
+  await page.waitForFunction(() => globalThis.__bs?.ready, undefined, { timeout: BOOT_TIMEOUT });
+  await until(page, 500, 100, is([0, 0, 255]), 120000, 'fixture render');
+
+  await page.evaluate(() => __bs.eval("location.href = 'https://grid.bstest/'"));
+  await pollUntil(() => page.url() === 'https://grid.bstest/', 'real tab went native', 60000);
+  await page.close();
+
+  // Restore the suite's blacklist posture.
+  await configure({ mode: 'blacklist', whitelist: [] }, () =>
+    chrome.declarativeNetRequest.getEnabledRulesets().then((r) => !r.includes('catchall')),
+  );
 });
 
 // --- Scenario 13: startup budget (regression tripwire, generous) -----------

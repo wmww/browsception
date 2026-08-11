@@ -59,9 +59,12 @@ Dispositions are evaluated per top-level navigation, so link clicks can cross th
 
 ## Toggle/edit behavior
 
-- Mode or list changes apply to **subsequent navigations**. Already-open tabs keep their current
-  disposition until reloaded; the popup offers "reload affected tabs."
-- Activation toggle is instant (enable/disable rulesets); no browser restart.
+- Mode or list changes **auto-apply to open tabs** (revised at 2.4; originally "apply on next
+  reload" + a popup button — the SW's symmetric sweep is simpler and stricter): native tabs whose
+  disposition became sandboxed redirect into a viewer; viewer tabs whose target became native
+  leave the sandbox. The pre-sweep instant of native execution is the same known limit as the
+  install race (issues/).
+- Activation toggle is instant (enable/disable rulesets + the same sweep); no browser restart.
 
 ## Toolbar UI
 

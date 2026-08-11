@@ -45,6 +45,24 @@ boot-size, grow, shrink, and post-resize input.
 - **Scrolling lives inside the engine** — wheel/touch deltas are forwarded as input; the host page
   never scrolls. Smooth scrolling, overscroll, scrollbars: all engine-drawn. This is the only way
   it stays coherent (fixed elements, iframes, JS scroll handlers).
+- **Fast-scroll blit works at any dpr** (2026-08-11; was dpr==1-only → full-viewport repaint per
+  scroll ≈ 1fps on HiDPI). `bibScrollBlit` shifts in device px, snapping to whole pixels with a
+  carried sub-pixel residual (bounded ±0.5, never accumulates); damage stays logical with
+  axis-only 1px inflation (both-axes inflation merges strip+scrollbar damage into a
+  frame-covering rect → full-repaint chain). After fractional-dpr scrolling goes quiet, a latched
+  settle flag triggers one full repaint (bib_tick, 200ms) landing exactly on truth.
+  `paintFrameRect` culls 1 logical px wider at fractional dpr so partial paints compose
+  boundary-straddling device rows identically to full paints. Wheel deltas coalesce per rAF tick
+  in the viewer (like mousemove) — smooth trackpads fire hundreds of float-delta events/s and
+  each engine wheel event costs a blit. WebCore snaps float wheel deltas to integer logical
+  scrolls (ChromeClient::scroll delta is IntSize), so floats never reach the blit. Note WebCore
+  skips invisible fixed layers in scrollContentsFastPath (NotCompositedForNoVisibleContent), so
+  an opacity:0 100vw/100vh fixed overlay doesn't force slow scrolling. Probes:
+  `experiments/perf-scroll-probe.mjs` (BIBPERF/BIBSCROLL via `?perflog=1`),
+  `experiments/scroll-roundtrip.mjs` (pixel-exactness). loginasroot.net @1600x860: 2-5ms strip
+  repaints / ~12% busy at any dpr (was ~100ms/98% at dpr≠1). Shadow-heavy full paints remain ~3x
+  a text page (~100ms vs ~30ms per 1.4Mpx) — matters for load/resize/settle only; Skia blur
+  caching is the lead if it ever hurts.
 - **Keyboard**: `keydown/keyup` with code/key/modifiers forwarded; prevent default for keys the
   page consumes, but pass through browser-level combos (Cmd/Ctrl+L jumps to our fake URL bar;
   Cmd/Ctrl+T/W, Alt+←/→, F5 etc. left to the real browser). Maintain a small routing table.

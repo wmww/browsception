@@ -158,3 +158,20 @@ example.com viewer tab native, fresh example.com nav native, unlisted
 wikipedia tab stayed sandboxed. ALL PASS. Tier 0–1: 28/28. Tier 2: 12/12
 (new "default posture" scenario asserts the pre-storage fresh-install
 redirect). Verdict: MVP gate passed.
+
+## 2026-08-11 — Scroll perf at dpr != 1 (user report: loginasroot.net ~1fps)
+
+Probe (experiments/perf-scroll-probe.mjs, ?perflog=1, synthesized wheel,
+1600x860): dpr=1 scrolled fine (2-3ms strips, 8% busy) but any other dpr hit
+~100ms full-viewport repaints at 98% busy (~10fps; ~1fps at real 4K) —
+bibScrollBlit bailed whenever g_dpr != 1. Fix (engine af6f559): shift in
+device px snapped to whole pixels with carried residual; axis-only damage
+inflation (both-axes united strip+scrollbar into a frame-covering rect →
+full-repaint chain, BIBSCROLL tracing found it); latched settle repaint
+after fractional scrolling quiets; paintFrameRect culls +1 logical px at
+fractional dpr (partial vs full paint AA hairlines — pre-existing). Viewer
+coalesces wheel deltas per rAF tick. Verified: 2-5ms strips / ~12% busy at
+dpr 1/1.25/1.5/2; scroll-roundtrip byte-identical at 1.5/1.25 (settle path;
+dpr 1/2 leave the pre-existing header text-AA specks); post pages fine
+(opacity:0 fixed overlay skipped via NotCompositedForNoVisibleContent).
+Tier 0-1: 28/28, tier 2: 13/13.

@@ -392,6 +392,16 @@ async function bootEngine() {
     Module._bib_mouse_move(pendingMove[0], pendingMove[1], pendingMove[2]);
     pendingMove = null;
   };
+  // Wheel deltas coalesce per frame like mousemove: a smooth trackpad fires
+  // hundreds of small (float) deltas per second, and each engine wheel event
+  // is a scroll step whose blit cost scales with the viewport. One summed
+  // event per tick scrolls the same distance.
+  let pendingWheel = null; // [x, y, dx, dy, mods]
+  const flushPendingWheel = () => {
+    if (!pendingWheel || bs.dead) return;
+    Module._bib_wheel(...pendingWheel);
+    pendingWheel = null;
+  };
   // Host-owned input: never forwarded, never preventDefault()ed, so the
   // browser's own history controls still work over the canvas. Ctrl/Cmd
   // combos (devtools, tab keys, Ctrl+R) are handled at the call sites.
@@ -408,12 +418,14 @@ async function bootEngine() {
       canvas.focus();
       e.preventDefault();
       flushPendingMove();
+      flushPendingWheel(); // scroll must land before the click's hit test
       Module._bib_mouse_button(1, e.button, fbX(e), fbY(e), e.detail || 1, mods(e));
     });
     canvas.addEventListener('mouseup', (e) => {
       if (bs.dead || hostButton(e)) return;
       e.preventDefault();
       flushPendingMove();
+      flushPendingWheel();
       Module._bib_mouse_button(0, e.button, fbX(e), fbY(e), e.detail || 1, mods(e));
     });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -423,7 +435,15 @@ async function bootEngine() {
         if (bs.dead) return;
         e.preventDefault();
         flushPendingMove();
-        Module._bib_wheel(fbX(e), fbY(e), e.deltaX, e.deltaY, mods(e));
+        if (pendingWheel && pendingWheel[4] === mods(e)) {
+          pendingWheel[0] = fbX(e);
+          pendingWheel[1] = fbY(e);
+          pendingWheel[2] += e.deltaX;
+          pendingWheel[3] += e.deltaY;
+        } else {
+          flushPendingWheel();
+          pendingWheel = [fbX(e), fbY(e), e.deltaX, e.deltaY, mods(e)];
+        }
       },
       { passive: false },
     );
@@ -461,6 +481,7 @@ async function bootEngine() {
   function tickLoop() {
     if (bs.dead) return;
     flushPendingMove();
+    flushPendingWheel();
     Module._bib_tick();
     bs.ticks++;
     requestAnimationFrame(tickLoop);

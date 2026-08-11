@@ -83,6 +83,9 @@ Load-bearing implementation facts:
 engine's back/forward list, so the browser's own back/forward/reload drive the engine and the
 viewer's own buttons are gone; the tab URL now always carries the live engine URL, which also
 fixed the popup escaping to the stale entry-point URL (ui.md § Viewer chrome & native history).
+*Scroll blit at any dpr* (2026-08-11, engine af6f559) — was dpr==1-only, every HiDPI/zoomed
+scroll a full-viewport repaint (~1fps at 4K); now device-px snapped shift + settle repaint +
+viewer wheel coalescing, 2-5ms strips at any dpr (rendering-input.md § scrolling).
 
 Open issues in issues/ (first-nav race residual, guest-JS wedge, engine-side load failures
 silent). Next work: [roadmap.md](roadmap.md).

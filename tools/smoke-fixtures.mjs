@@ -12,14 +12,18 @@ import { spawn } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { engineRoot } from './lib/paths.mjs';
+import { PORT_BASE } from '../test/harness/ports.mjs';
+
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const W = join(ROOT, 'engine/WebkitWasm');
-const PORT = 8094; // dev server
-const FIXTURE_HTTP = 8096; // fixture server (offset from tier-1's 8081)
+const W = join(engineRoot, 'WebkitWasm');
+const PORT = PORT_BASE + 4; // dev server
+const FIXTURE_HTTP = PORT_BASE + 2; // own fixture server (tier-1's is +0)
+const FIXTURE_HTTPS = PORT_BASE + 3;
 const headed = process.argv.includes('--headed');
 
 const servers = [
-  spawn('node', ['test/fixtures/server.mjs', '--http', String(FIXTURE_HTTP), '--https', '8497'], {
+  spawn('node', ['test/fixtures/server.mjs', '--http', String(FIXTURE_HTTP), '--https', String(FIXTURE_HTTPS)], {
     cwd: ROOT,
     stdio: 'ignore',
   }),

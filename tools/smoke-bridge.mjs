@@ -11,8 +11,11 @@ import { spawn } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const W = join(dirname(fileURLToPath(import.meta.url)), '../engine/WebkitWasm');
-const PORT = 8093;
+import { engineRoot } from './lib/paths.mjs';
+import { PORT_BASE } from '../test/harness/ports.mjs';
+
+const W = join(engineRoot, 'WebkitWasm');
+const PORT = PORT_BASE + 5;
 const headed = process.argv.includes('--headed');
 
 // --- dev server (serves harness + /__bibproxy; no wisp) ------------------

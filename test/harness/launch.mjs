@@ -15,8 +15,10 @@ import { createHash, webcrypto } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-export const HTTPS_PORT = 8443;
-export const HTTP_PORT = 8081;
+// Per-checkout ports (parallel worktrees must not share a fixture server —
+// the oracle would cross-contaminate). See ports.mjs.
+import { HTTP_PORT, HTTPS_PORT } from './ports.mjs';
+export { HTTP_PORT, HTTPS_PORT, PORT_BASE } from './ports.mjs';
 
 // plain-http.bstest maps to the fixture http port; everything else *.bstest to
 // the https port. Order matters only if Chromium applies first-match — the

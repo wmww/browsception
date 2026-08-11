@@ -7,7 +7,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { launch, extensionIdFromManifest, oracleClear, oracleRequests } from '../harness/launch.mjs';
+import { launch, extensionIdFromManifest, oracleClear, oracleRequests, HTTP_PORT } from '../harness/launch.mjs';
 import { ensureFixtureServer } from '../harness/fixture-server.mjs';
 
 const PROBE_EXT = join(dirname(fileURLToPath(import.meta.url)), '../../spikes/probe-ext');
@@ -45,9 +45,9 @@ test('http (not just https) is intercepted', async () => {
   const page = await context.newPage();
   await page.goto('http://plain-http.bstest/x').catch(() => {});
   // plain-http.bstest is not in the blacklist; use a blacklisted domain on http.
-  await page.goto('http://site-b.bstest:8081/x');
+  await page.goto(`http://site-b.bstest:${HTTP_PORT}/x`);
   assert.ok(page.url().startsWith(viewerPrefix()));
-  assert.ok(page.url().includes('http://site-b.bstest:8081/x'));
+  assert.ok(page.url().includes(`http://site-b.bstest:${HTTP_PORT}/x`));
   await page.close();
 });
 

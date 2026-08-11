@@ -8,7 +8,10 @@ https://example.com renders through the engine (Wisp networking, TLS in-engine,
 ## How to build
 
 `tools/build-engine.sh` — wraps upstream's idempotent scripts with the five fixes a
-fresh checkout needs (below). Output: `engine/WebkitWasm/build/webcore/bin/embedder.{js,wasm}`.
+fresh checkout needs (below). Output: `engine/WebkitWasm/build/webcore/bin/embedder.{js,wasm}`,
+snapshotted into `engine/artifacts/<stamp>/` (newest 5 kept) for staging. Worktree-safe:
+resolves the main checkout's `engine/` via the git common dir and serializes concurrent
+builds with `engine/.build.lock` — see notes/worktrees.md for the multi-worktree protocol.
 
 To run their demo:
 ```sh

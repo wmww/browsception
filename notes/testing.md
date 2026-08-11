@@ -129,8 +129,9 @@ without a human driving each experiment.
 2. **Use guibox when the question is visual or chrome-level**: real window, screenshot with grim,
    act with wdotool. Canonical session:
    ```sh
+   HTTPS_PORT=$(node -e 'import("./test/harness/ports.mjs").then(m=>console.log(m.HTTPS_PORT))')
    DIR=$(guibox start -s 1600x1000 -- chromium --user-data-dir=$DIR-profile --no-first-run \
-         --load-extension=$REPO/dist --host-resolver-rules="MAP *.bstest 127.0.0.1:8443" \
+         --load-extension=$REPO/dist --host-resolver-rules="MAP *.bstest 127.0.0.1:$HTTPS_PORT" \
          https://grid.bstest/)   # guibox path per skill; profile inside session dir
    . $DIR/env
    grim $DIR/1.png               # read screenshot, decide

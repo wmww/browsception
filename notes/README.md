@@ -30,6 +30,7 @@ surface for speed (no WebGPU for the nested engine, no nested-wasm-runs-natively
 | [rendering-input.md](rendering-input.md) | Blit paths, input forwarding, IME, find-in-page, clipboard, audio, popups |
 | [security.md](security.md) | Threat model, trust boundaries, what we must enforce ourselves |
 | [testing.md](testing.md) | Automated test tiers (unit/bridge/full-integration), fixture+oracle design, agent iteration loop |
+| [worktrees.md](worktrees.md) | Ephemeral-worktree workflow: wt-setup, shared engine tree + lock, artifact snapshots, per-checkout ports |
 | [open-questions.md](open-questions.md) | Unverified assumptions and spikes to run (answers appended in place) |
 | [roadmap.md](roadmap.md) | Post-MVP fast-follows, cleanups, standing risks, working agreements |
 

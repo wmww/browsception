@@ -8,7 +8,8 @@
 // and exposes them at /__requests for tests to assert on (e.g. "no Cookie from
 // the host jar ever arrived", "the blocked fetch never hit the wire").
 //
-// Usage: node test/fixtures/server.mjs [--https 8443] [--http 8081]
+// Usage: node test/fixtures/server.mjs [--https PORT] [--http PORT]
+// (defaults: this checkout's derived port block — test/harness/ports.mjs)
 
 import http from 'node:http';
 import https from 'node:https';
@@ -16,6 +17,7 @@ import { readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { HTTP_PORT as DEFAULT_HTTP, HTTPS_PORT as DEFAULT_HTTPS } from '../harness/ports.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PAGES = join(HERE, 'pages');
@@ -59,7 +61,11 @@ function send(res, status, body, type = 'html', extra = {}) {
 }
 
 function page(name) {
-  return readFileSync(join(PAGES, name));
+  // Ports are per-checkout (harness/ports.mjs), so pages that must hit the
+  // LIVE fixture ports (e.g. hostile.html's localhost probe) use placeholders.
+  return readFileSync(join(PAGES, name), 'utf8')
+    .replaceAll('__HTTP_PORT__', String(HTTP_PORT))
+    .replaceAll('__HTTPS_PORT__', String(HTTPS_PORT));
 }
 
 function handle(req, res, scheme) {
@@ -172,8 +178,8 @@ const flag = (name, dflt) => {
   const i = args.indexOf(`--${name}`);
   return i >= 0 ? Number(args[i + 1]) : dflt;
 };
-const HTTPS_PORT = flag('https', 8443);
-const HTTP_PORT = flag('http', 8081);
+const HTTPS_PORT = flag('https', DEFAULT_HTTPS);
+const HTTP_PORT = flag('http', DEFAULT_HTTP);
 
 https.createServer(ensureCert(), (q, s) => handle(q, s, 'https')).listen(HTTPS_PORT);
 http.createServer((q, s) => handle(q, s, 'http')).listen(HTTP_PORT);

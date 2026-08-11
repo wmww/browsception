@@ -4,14 +4,58 @@
 # current Arch host needs. See notes/engine-build.md for the full story.
 #
 # Produces: engine/WebkitWasm/build/webcore/bin/embedder.{js,wasm} (~103 MB)
+# and an immutable snapshot under engine/artifacts/<stamp>/ (kept: newest 5)
+# that stage-engine.mjs hardlinks into checkouts. `--snapshot-only` skips the
+# build and just snapshots the current build output.
 # Cost: ~9 GB WebKit clone (blobless) + ~3 GB deps/toolchain; ~12 GB total in
 # third_party/. Dep tier ~40 min, WebCore ~7.4k ninja targets (~40-60 min on
-# 24 threads at BIB_JOBS=12).
+# 24 threads at BIB_JOBS=12). Incremental embedder-only change: ~2-3 min.
 set -euo pipefail
 
-HERE="$(cd "$(dirname "$0")/../engine" && pwd)"
+# engine/ lives ONLY in the main checkout (gitignored). Resolve it through
+# the shared .git so running this from an ephemeral worktree reuses the one
+# engine tree instead of cloning + building 12 GB from scratch.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+MAIN_ROOT="$(dirname "$(git -C "$SCRIPT_DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || echo "$SCRIPT_DIR/../.git")")"
+HERE="$MAIN_ROOT/engine"
+mkdir -p "$HERE"
 W="$HERE/WebkitWasm"
 JOBS="${BIB_JOBS:-12}"
+
+# The engine tree (sources + ninja graph) is a shared singleton — serialize
+# builds across worktrees. Waits (with a note) if another build holds it.
+exec 9>"$HERE/.build.lock"
+if ! flock -n 9; then
+  echo "==> engine busy [$(cat "$HERE/.build.owner" 2>/dev/null || echo '?')] — waiting for lock..."
+  flock 9
+fi
+printf '%s pid=%s %s\n' "$SCRIPT_DIR" "$$" "$(date -u +%FT%TZ)" > "$HERE/.build.owner"
+
+# Copy (not link) build output into an immutable, stamped snapshot dir; a
+# later relink can rewrite build output in place, snapshots never change.
+snapshot() {
+  local BIN="$W/build/webcore/bin" SHA DIRTY STAMP DEST
+  [ -f "$BIN/embedder.wasm" ] || { echo "nothing to snapshot ($BIN)"; return 1; }
+  if cmp -s "$BIN/embedder.wasm" "$HERE/artifacts/latest/embedder.wasm" 2>/dev/null; then
+    echo "snapshot unchanged — keeping $(readlink "$HERE/artifacts/latest")"
+    return 0
+  fi
+  SHA="$(git -C "$W" rev-parse --short HEAD 2>/dev/null || echo nogit)"
+  DIRTY=""
+  [ -n "$(git -C "$W" status --porcelain --untracked-files=no 2>/dev/null)" ] && DIRTY="-dirty"
+  STAMP="$(date -u +%Y%m%d-%H%M%S)-$SHA$DIRTY"
+  DEST="$HERE/artifacts/$STAMP"
+  mkdir -p "$DEST"
+  cp "$BIN/embedder.js" "$BIN/embedder.wasm" "$DEST/"
+  printf '{ "stamp": "%s", "wkw_branch": "%s", "wkw_sha": "%s", "wkw_dirty": %s }\n' \
+    "$STAMP" "$(git -C "$W" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')" "$SHA" \
+    "$([ -n "$DIRTY" ] && echo true || echo false)" > "$DEST/meta.json"
+  ln -sfn "$STAMP" "$HERE/artifacts/latest"
+  ls -1d "$HERE/artifacts"/2* 2>/dev/null | head -n -5 | xargs -r rm -rf
+  echo "OK — snapshot $DEST"
+}
+
+if [ "${1:-}" = "--snapshot-only" ]; then snapshot; exit; fi
 
 # --- 0. clone (pins live in upstream's bootstrap: WebKit webkitglib/2.52
 #        @ aec9d2ad95, Emscripten 6.0.0) ---------------------------------
@@ -96,3 +140,5 @@ fi
 BIB_JOBS="$JOBS" bash "$W/tools/build-webcore.sh"
 ls -lh "$W/build/webcore/bin/embedder.wasm"
 echo "OK — engine at $W/build/webcore/bin/"
+snapshot
+echo "    stage into a checkout with: node tools/stage-engine.mjs"

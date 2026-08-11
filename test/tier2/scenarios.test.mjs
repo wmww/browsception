@@ -4,9 +4,9 @@
 // (tools/stage-engine.mjs); run via `npm run test:tier2` (per-merge/nightly,
 // not per-commit).
 //
-// Scenarios here: 7 render, 8 execute, 9 input, 12 crash/recovery, 13
-// startup budget. 10 (navigation chrome) and 11 (invariants) land with
-// 2.3/2.5.
+// Scenarios here: 7 render, 8 execute, 9 input, 14 resize, 12
+// crash/recovery, 13 startup budget. 10 (navigation chrome) and 11
+// (invariants) land with 2.3/2.5.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -162,6 +162,58 @@ test('input: input.bstest full battery through the viewer canvas', { timeout: 30
   await until(page, 100, 350, is([209, 209, 209]), 60000, 'type checksum');
   await page.mouse.click(...at(320, 350)); // #nav link
   await until(page, 400, 300, is([102, 51, 153]), 120000, 'link navigation');
+  await page.close();
+});
+
+// --- Scenario 14: resize ---------------------------------------------------
+test('resize: canvas fills the window; framebuffer follows resizes; input stays aligned', { timeout: 300000 }, async () => {
+  const page = await bootViewer('https://grid.bstest/');
+  await until(page, 100, 100, is([255, 0, 0]), 120000, 'initial paint');
+
+  // The canvas must fill the window below the chrome, and the ENGINE
+  // framebuffer (readback geometry, not canvas CSS) must match its layout
+  // size — probes assert on __bs.fb, which only bibFrame updates.
+  const fbMatchesCanvas = (what) =>
+    pollUntil(
+      () =>
+        page.evaluate(() => {
+          const r = document.getElementById('screen').getBoundingClientRect();
+          const w = Math.round(r.width * devicePixelRatio);
+          const h = Math.round(r.height * devicePixelRatio);
+          const fills = Math.abs(r.right - innerWidth) < 2 && Math.abs(r.bottom - innerHeight) < 2;
+          return fills && __bs.fb && Math.abs(__bs.fb.w - w) <= 1 && Math.abs(__bs.fb.h - h) <= 1
+            ? { w: __bs.fb.w, h: __bs.fb.h }
+            : null;
+        }),
+      what,
+    );
+
+  // Boot: left the 800x600 engine default for the real layout size
+  // (harness viewport is 1280x720).
+  const initial = await fbMatchesCanvas('boot framebuffer matches canvas');
+  assert.ok(initial.w > 800 && initial.h > 600, `left boot default: ${JSON.stringify(initial)}`);
+
+  // Grow: framebuffer follows, and the engine painted the new area (probe
+  // near the new corner — grid.bstest background is white).
+  await page.setViewportSize({ width: 1500, height: 900 });
+  const grown = await fbMatchesCanvas('grown framebuffer matches canvas');
+  assert.ok(grown.w > initial.w && grown.h > initial.h, `grew: ${JSON.stringify(grown)}`);
+  await until(page, grown.w - 10, grown.h - 10, is([255, 255, 255]), 60000, 'grown area painted');
+  await until(page, 100, 100, is([255, 0, 0]), 60000, 'content intact after grow');
+
+  // Shrink: framebuffer shrinks too; old coordinates fall out of bounds.
+  await page.setViewportSize({ width: 700, height: 500 });
+  const shrunk = await fbMatchesCanvas('shrunk framebuffer matches canvas');
+  assert.ok(shrunk.w <= 700 && shrunk.w < grown.w && shrunk.h < grown.h, `shrank: ${JSON.stringify(shrunk)}`);
+  assert.equal(await probe(page, 1400, 100), null, 'old width out of bounds after shrink');
+
+  // Input alignment at the post-resize size: canvas CSS px must still map
+  // 1:1 onto framebuffer px (click zone turns green).
+  await page.evaluate(() => __bs.navigate('https://input.bstest/'));
+  await until(page, 500, 100, is([0, 0, 255]), 120000, 'input fixture load');
+  const box = await (await page.$('#screen')).boundingBox();
+  await page.mouse.click(box.x + 100, box.y + 100);
+  await until(page, 100, 100, is([0, 255, 0]), 60000, 'click lands after resize');
   await page.close();
 });
 

@@ -28,8 +28,13 @@ viewer rAF loop uploads latest complete frame; drop intermediate frames rather t
 Vsync/throttle inside the engine driven by a host rAF-derived tick so the engine doesn't paint
 faster than display.
 
-DPR & resize: canvas backing size = CSS size × devicePixelRatio; `ResizeObserver` → debounce →
-engine viewport resize. Engine renders at device pixels (no host-side scaling blur).
+DPR & resize (implemented): the canvas fills the window (viewer.html flex column);
+`ResizeObserver` (device-pixel-content-box, dpr fallback) → 100 ms trailing debounce →
+`bib_set_viewport(w, h, dpr)`; the engine reallocates the framebuffer, resizes the frame view, and
+answers with a full frame whose fbW/fbH resize the canvas backing store (raster only — GPU mode
+ignores resize; engine clamps to 1–8192 px, dpr 0.25–8). Input coords scale by the live
+backing/CSS ratio so clicks stay aligned while the engine catches up. Tier-2 scenario 14 covers
+boot-size, grow, shrink, and post-resize input.
 
 ## Input forwarding
 

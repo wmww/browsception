@@ -7,7 +7,8 @@
   /* The chrome strip must stay visually distinct from the (site-controlled)
      canvas below it — dark UI chrome vs. white page area (security.md). */
   html, body { margin: 0; height: 100%; background: #14161a; color: #ddd;
-               font: 13px system-ui; }
+               font: 13px system-ui; overflow: hidden; }
+  body { display: flex; flex-direction: column; }
   #chrome { display: flex; gap: 4px; align-items: center; padding: 5px 6px;
             background: #1f232b; border-bottom: 1px solid #343a46; }
   #chrome button { background: #2a303b; color: #cdd3de; border: 1px solid #3a4150;
@@ -24,7 +25,11 @@
               transition: width 0.15s linear, opacity 0.3s; }
   #boot { padding: 1em; }
   #boot button { margin-left: 8px; }
-  #screen { display: block; background: #fff; outline: none; }
+  /* Fills the window below the chrome; the engine framebuffer tracks this
+     layout size via bib_set_viewport (viewer.mjs), so CSS size and backing
+     size agree except transiently mid-resize. */
+  #screen { display: block; flex: 1; min-height: 0; width: 100%;
+            background: #fff; outline: none; }
 </style>
 </head>
 <body>

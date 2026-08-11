@@ -58,7 +58,7 @@ lives in [roadmap.md](roadmap.md). Phase summaries:
   gate: tools/smoke-mvp.mjs real-site pass — sandboxed example.com/wikipedia, whitelist→native
   sweep (experiments/log.md 2026-08-10).
 
-Tests: `npm test` = tiers 0–1, pure headless, per-commit (28 tests). `npm run test:tier2` = 12
+Tests: `npm test` = tiers 0–1, pure headless, per-commit (28 tests). `npm run test:tier2` = 13
 scenarios against the staged engine artifact (~15 s; restage with tools/stage-engine.mjs after
 engine rebuilds — src/engine/ is gitignored). Engine iteration is genuinely incremental (~90 s
 for embedder-only changes; engine-build.md fix 6).

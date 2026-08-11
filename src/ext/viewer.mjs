@@ -161,6 +161,10 @@ async function bootEngine() {
     dead: false,
     frames: 0,
     ticks: 0,
+    // Engine framebuffer geometry as of the last bibFrame / the last
+    // bib_set_viewport request (device px).
+    fb: null,
+    viewport: null,
     // Filled by bibChrome signals (true engine URL, not the ?url= param).
     state: { url: null, title: null, canGoBack: false, canGoForward: false, progress: 0 },
     metrics: { bootMs: null, engineFetchMs: null },
@@ -213,9 +217,53 @@ async function bootEngine() {
     },
   });
 
+  // --- viewport: the framebuffer tracks the canvas layout size -------------
+  // #screen fills the window below the chrome (viewer.html flex); the engine
+  // boots at its 800x600 default and is resized to match at ready + on every
+  // canvas resize (window resize, zoom, boot strip hiding).
+  let vpW = 0;
+  let vpH = 0;
+  let vpDpr = window.devicePixelRatio || 1;
+  let vpApplied = null;
+  let vpTimer = 0;
+  const applyViewport = () => {
+    if (!bs.ready || bs.dead || vpW < 1 || vpH < 1 || !Module._bib_set_viewport) return;
+    const key = `${vpW}x${vpH}@${vpDpr}`;
+    if (key === vpApplied) return;
+    vpApplied = key;
+    bs.viewport = { w: vpW, h: vpH, dpr: vpDpr };
+    Module._bib_set_viewport(vpW, vpH, vpDpr);
+  };
+  const noteCanvasSize = (entry) => {
+    vpDpr = window.devicePixelRatio || 1;
+    const dp = entry?.devicePixelContentBoxSize?.[0];
+    if (dp) {
+      vpW = dp.inlineSize;
+      vpH = dp.blockSize;
+    } else {
+      vpW = Math.round(canvas.clientWidth * vpDpr);
+      vpH = Math.round(canvas.clientHeight * vpDpr);
+    }
+    // Trailing debounce: a resize drag is a burst, and each engine resize is
+    // a framebuffer realloc + full repaint.
+    clearTimeout(vpTimer);
+    vpTimer = setTimeout(applyViewport, 100);
+  };
+  const vpObserver = new ResizeObserver((entries) => noteCanvasSize(entries[entries.length - 1]));
+  try {
+    vpObserver.observe(canvas, { box: 'device-pixel-content-box' });
+  } catch {
+    vpObserver.observe(canvas); // fallback: CSS-px box scaled by dpr
+  }
+
   // --- input forwarding (port of the harness wiring) -----------------------
   const mods = (e) =>
     (e.shiftKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.altKey ? 4 : 0) | (e.metaKey ? 8 : 0);
+  // CSS px → framebuffer device px. Backing and CSS size agree except
+  // transiently mid-resize; use the live ratio, not dpr, so clicks stay
+  // aligned while the engine catches up.
+  const fbX = (e) => e.offsetX * (canvas.width / (canvas.clientWidth || canvas.width));
+  const fbY = (e) => e.offsetY * (canvas.height / (canvas.clientHeight || canvas.height));
   let pendingMove = null;
   const flushPendingMove = () => {
     if (!pendingMove || bs.dead) return;
@@ -224,20 +272,20 @@ async function bootEngine() {
   };
   function wireInput() {
     canvas.addEventListener('mousemove', (e) => {
-      pendingMove = [e.offsetX, e.offsetY, mods(e)];
+      pendingMove = [fbX(e), fbY(e), mods(e)];
     });
     canvas.addEventListener('mousedown', (e) => {
       if (bs.dead) return;
       canvas.focus();
       e.preventDefault();
       flushPendingMove();
-      Module._bib_mouse_button(1, e.button, e.offsetX, e.offsetY, e.detail || 1, mods(e));
+      Module._bib_mouse_button(1, e.button, fbX(e), fbY(e), e.detail || 1, mods(e));
     });
     canvas.addEventListener('mouseup', (e) => {
       if (bs.dead) return;
       e.preventDefault();
       flushPendingMove();
-      Module._bib_mouse_button(0, e.button, e.offsetX, e.offsetY, e.detail || 1, mods(e));
+      Module._bib_mouse_button(0, e.button, fbX(e), fbY(e), e.detail || 1, mods(e));
     });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     canvas.addEventListener(
@@ -246,7 +294,7 @@ async function bootEngine() {
         if (bs.dead) return;
         e.preventDefault();
         flushPendingMove();
-        Module._bib_wheel(e.offsetX, e.offsetY, e.deltaX, e.deltaY, mods(e));
+        Module._bib_wheel(fbX(e), fbY(e), e.deltaX, e.deltaY, mods(e));
       },
       { passive: false },
     );
@@ -331,6 +379,7 @@ async function bootEngine() {
     bibFrame(ptr, fbW, fbH, strideBytes, x, y, w, h) {
       if (bs.dead) return;
       presenter.present(new Uint8Array(Module.HEAPU8.buffer), ptr, fbW, fbH, strideBytes, y, h);
+      bs.fb = { w: fbW, h: fbH };
       bs.frames++;
     },
     bibReadbackReady(data, w, h) {
@@ -377,6 +426,11 @@ async function bootEngine() {
       bs.metrics.bootMs = Math.round(performance.now() - t0);
       bootEl.style.display = 'none';
       setStatus(`engine live (${bs.metrics.bootMs} ms boot)`);
+      // Size the engine to the canvas now (boot default is 800x600); hiding
+      // the boot strip just changed the layout, so measure fresh.
+      noteCanvasSize(null);
+      clearTimeout(vpTimer);
+      applyViewport();
       wireInput();
       // Chrome controls (2.3).
       backBtn.addEventListener('click', () => {

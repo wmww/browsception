@@ -147,11 +147,19 @@ viewer's INITIAL target is exempt (dispositioned by whoever opened it).
 Tier-2 = 10 scenarios all green (~12 s), incl. boundary
 (whitelist-mode handoff) and both sweep directions; suite runs under a
 dev-posture blacklist of all fixture domains (a sandboxed viewer must match
-its disposition or the boundary policy natives its navigations). Next: 2.5
-guard-rail verification (tier-2 scenario 11: hostile.bstest full pass, CDP
-Network/Target audit that no target-origin bytes load top-level, DNR header
-rules don't fire on non-bridge traffic, mode/list transitions → exact rule
-sets), then 2.6 whitelist-by-default.
+its disposition or the boundary policy natives its navigations). 2.5 guard-rail verification: tier-2 scenario 11 landed — hostile.bstest full
+pass (every private-network / bad-port / bad-scheme / file: attempt GUARD-
+blocked), oracle shows no host-jar cookie on any bridge request, tab stays
+extension-origin with zero http(s) frames (target bytes never become a real
+document), and CDP Target discovery sees no fixture-origin top-level target.
+The DNR-header-rules-don't-fire-on-native-traffic and mode/list→exact-rules
+checks already live in tier-0/tier-1 (dnr-rules + interception suites);
+per the no-duplicate-tests policy, scenario 11 adds only the engine-level
+invariants those tiers can't reach. Tier-2 now 11 scenarios, all green
+(~15 s). Remaining in Phase 2: **2.6 whitelist-by-default** — enable the
+static catch-all as the shipping default (empty whitelist → all http(s)
+sandboxed), flipping DEFAULT_STATE.mode to 'whitelist' (state.mjs + sw.mjs
+still say blacklist). That is the MVP-done gate.
 
 Key decisions made so far:
 

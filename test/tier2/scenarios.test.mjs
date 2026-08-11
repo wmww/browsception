@@ -33,7 +33,7 @@ const BOOT_TIMEOUT = 120000;
 // Suite posture: dev-style blacklist covering every fixture domain, so a
 // sandboxed viewer's domain always HAS sandbox disposition — required since
 // 2.4's boundary policy natives nested navigations to unlisted domains.
-const FIXTURE_BLACKLIST = ['grid.bstest', 'input.bstest', 'app.bstest', 'other.bstest'];
+const FIXTURE_BLACKLIST = ['grid.bstest', 'input.bstest', 'app.bstest', 'other.bstest', 'hostile.bstest'];
 
 async function configure(patch, ready) {
   const cfg = await session.context.newPage();
@@ -280,6 +280,58 @@ test('boundary: nested navigation to a whitelisted domain hands the real tab the
   await configure({ mode: 'blacklist', whitelist: [] }, () =>
     chrome.declarativeNetRequest.getEnabledRulesets().then((r) => !r.includes('catchall')),
   );
+});
+
+// --- Scenario 11: guard-rail invariants (2.5) ------------------------------
+import { oracleClear, oracleRequests } from '../harness/launch.mjs';
+
+test('invariants: hostile.bstest — guard blocks private-network; no target document loads top-level', { timeout: 300000 }, async () => {
+  await oracleClear();
+  const cdpTargets = []; // any top-level target navigated to a fixture origin
+  const page = await bootViewer('https://hostile.bstest/');
+  const cdp = await session.context.newCDPSession(page);
+  await cdp.send('Target.setDiscoverTargets', { discover: true });
+  cdp.on('Target.targetInfoChanged', ({ targetInfo }) => {
+    if (targetInfo.type === 'page' && /\.bstest/.test(targetInfo.url)) cdpTargets.push(targetInfo.url);
+  });
+
+  // Drive the guest pass to completion, then read its per-attempt verdicts.
+  const results = await (async () => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < 90000) {
+      const text = await evalProbe(
+        page,
+        "document.getElementById('results').innerText.replace(/\\n/g,'|')",
+        /./,
+        1,
+      ).catch(() => '');
+      if (/DONE-SENTINEL/.test(text)) return text;
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+    throw new Error('hostile pass never completed');
+  })();
+
+  // Every private-network / bad-scheme / bad-port attempt must be blocked.
+  for (const name of ['loopback-port1', 'localhost', 'rfc1918', 'metadata', 'v6-loopback', 'bad-port-25', 'ftp', 'file'])
+    assert.match(results, new RegExp(`${name}: blocked`), `${name} must be blocked (got: ${results})`);
+
+  // Oracle: no private/blocked request ever reached a fixture wire, and the
+  // host jar never rode a bridge request (credentials:'omit', structurally).
+  const reqs = await oracleRequests();
+  assert.equal(reqs.filter((r) => r.headers.cookie).length, 0, 'no host-jar cookie on any bridge request');
+
+  // The nested document must never exist as a real frame: the engine renders
+  // to canvas pixels, so every frame in the tab is extension-origin (the
+  // viewer's own URL embeds ?url=…bstest in its query — check the frame
+  // ORIGIN, not a substring of the URL).
+  assert.equal(page.url().startsWith(`chrome-extension://${EXT_ID}/`), true, 'tab stays on the extension origin');
+  // No frame may carry a fixture (http/https) origin — that would mean target
+  // bytes were parsed into a real document. Extension-origin and opaque
+  // (about:blank / null) frames are fine.
+  const httpFrameUrls = page.frames().map((f) => f.url()).filter((u) => /^https?:/.test(u));
+  assert.deepEqual(httpFrameUrls, [], `no http(s)-origin frame in the tab (got ${JSON.stringify(httpFrameUrls)})`);
+  assert.deepEqual(cdpTargets, [], 'no top-level target navigated to a fixture origin');
+  await page.close();
 });
 
 // --- Scenario 13: startup budget (regression tripwire, generous) -----------

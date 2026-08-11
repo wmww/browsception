@@ -40,7 +40,7 @@
   "rule_resources": [
    {
     "id": "catchall",
-    "enabled": false,
+    "enabled": true,
     "path": "rules/catchall.json"
    }
   ]

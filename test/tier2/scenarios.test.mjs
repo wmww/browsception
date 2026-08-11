@@ -49,11 +49,29 @@ async function configure(patch, ready) {
   await cfg.close();
 }
 
-test.before(() =>
-  configure({ active: true, mode: 'blacklist', blacklist: FIXTURE_BLACKLIST, whitelist: [] }, () =>
+// 2.6 shipping default, probed BEFORE any storage write: whitelist mode with
+// an empty whitelist and the static catch-all enabled from the manifest, so a
+// fresh install intercepts even if the SW hasn't run yet. The navigation
+// lands here; the "default posture" scenario asserts on the recorded URL.
+let freshInstallUrl;
+test.before(async () => {
+  const page = await session.context.newPage();
+  await page.goto('https://other.bstest/', { waitUntil: 'commit' });
+  freshInstallUrl = page.url();
+  await page.close();
+  await configure({ active: true, mode: 'blacklist', blacklist: FIXTURE_BLACKLIST, whitelist: [] }, () =>
     chrome.declarativeNetRequest.getDynamicRules().then((r) => r.length >= 4),
-  ),
-);
+  );
+});
+
+// --- 2.6 milestone: whitelist-by-default is the fresh-install posture ------
+test('default posture: fresh install sandboxes any http(s) URL with no stored state', () => {
+  assert.ok(
+    freshInstallUrl.startsWith(`chrome-extension://${EXT_ID}/ext/viewer.html?url=`),
+    `fresh-install navigation redirected to viewer: ${freshInstallUrl}`,
+  );
+  assert.ok(freshInstallUrl.endsWith('url=https://other.bstest/'), `raw url plumbed: ${freshInstallUrl}`);
+});
 
 async function bootViewer(target, extra = '') {
   const page = await session.context.newPage();

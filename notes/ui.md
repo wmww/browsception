@@ -110,9 +110,11 @@ Dispositions are evaluated per top-level navigation, so link clicks can cross th
 - Firefox (later): same semantics implemented in the blocking `onBeforeRequest` listener — an
   in-listener decision function replaces the rule table (simpler, since it's imperative).
 
-## Interaction with MVP staging
+## Shipping default (landed 2.6, 2026-08-10)
 
-Early development builds run in **blacklist mode with a hand-curated list of test domains** — the
-exact semantics of the shipped blacklist mode, so no throwaway mechanism is needed. Whitelist mode
-(catch-all interception) is enabled once the guard rails pass (plans/mvp.md Phase 2.4), and
-becomes the default at release per this spec.
+Whitelist mode is the default: `DEFAULT_STATE` in src/ext/state.mjs is
+`{active: true, mode: 'whitelist'}` with empty lists, and the static catch-all ships **enabled in
+the manifest** (tools/gen-ext.mjs) so a fresh install intercepts before the SW ever runs — the two
+must stay in agreement. The SW disables the catch-all for blacklist/inactive states and that
+toggle persists. Test suites that need native fixture traffic pin their own posture explicitly
+(tier-1 bridge suite: blacklist+empty; tier-2: fixture-domain blacklist).

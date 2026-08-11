@@ -23,7 +23,7 @@ PORT=8090 node tools/dev-server.mjs web --mount /engine=build/webcore/bin
 
 | Thing | Value |
 |---|---|
-| WebkitWasm | github.com/theogbob/WebkitWasm `main` (= pthread branch; `wb1-pthread` is a stale snapshot — plans/mvp.md's reference was outdated) |
+| WebkitWasm | github.com/theogbob/WebkitWasm `main` (= pthread branch; `wb1-pthread` is a stale snapshot — the old MVP plan's reference was outdated) |
 | WebKit | branch `webkitglib/2.52` @ `aec9d2ad95` (blobless clone) |
 | Emscripten | 6.0.0 via emsdk (installed into `third_party/emsdk`) |
 | Host CMake | **must be < 4.0** — we pin 3.31.7 locally (`engine/cmake-3.31.7-linux-x86_64/`) |

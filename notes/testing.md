@@ -91,7 +91,7 @@ whole machine, end to end:
    test).
 10. **Navigation chrome**: link click inside nested page updates fake URL bar; back/forward work;
     sandboxed→native handoff navigates the real tab when target is whitelisted.
-11. **Invariants** (the guard-rail suite from plans/mvp.md 2.5): during all of the above, CDP
+11. **Invariants** (the 2.5 guard-rail suite): during all of the above, CDP
     Network/Target events show no target-origin document or subresource ever loaded top-level;
     oracle shows no credentialed/blocked request; `hostile.bstest` full pass.
 12. **Crash/recovery**: kill the engine worker → viewer shows crashed state → reload recovers.

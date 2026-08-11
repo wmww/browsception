@@ -145,3 +145,16 @@ extension bridge's idle-timeout guard covers this in production). Run 2
 Findings for Phase 2: guest history.back() does not traverse (BackForwardList
 wiring is part of 2.3, together with bib_stop/reload/go); MDN telemetry CORS
 preflights fail loudly in-engine (harmless, blocklist candidates).
+
+## 2026-08-10 — Phase-2 exit gate (MVP done): whitelist-by-default, real sites
+
+2.6 flipped the shipping default: DEFAULT_STATE.mode = 'whitelist' and the
+static catch-all is enabled in the manifest (fresh install intercepts with
+zero stored state, SW not required). tools/smoke-mvp.mjs (real sites,
+sparing) on a fresh profile: example.com omnibox-style nav → viewer,
+nested commit + title→tab-title + pixel probe (#eee) all ok;
+en.wikipedia.org sandboxed concurrently; whitelist edit swept the open
+example.com viewer tab native, fresh example.com nav native, unlisted
+wikipedia tab stayed sandboxed. ALL PASS. Tier 0–1: 28/28. Tier 2: 12/12
+(new "default posture" scenario asserts the pre-storage fresh-install
+redirect). Verdict: MVP gate passed.

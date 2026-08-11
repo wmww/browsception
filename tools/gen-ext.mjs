@@ -45,7 +45,10 @@ const manifest = {
     rule_resources: [
       {
         id: CATCHALL_RULESET_ID,
-        enabled: false, // whitelist mode goes live in 2.6
+        // Enabled at install: DEFAULT_STATE is whitelist mode, and the static
+        // toggle must not wait for the SW (first-navigation race). The SW
+        // disables it for blacklist/inactive states; that choice persists.
+        enabled: true,
         path: 'rules/catchall.json',
       },
     ],

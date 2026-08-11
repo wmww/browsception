@@ -1,4 +1,4 @@
-// Spike 0.2 graduated into tier 1 (plans/mvp.md): the platform behaviors the
+// Spike 0.2 graduated into tier 1: the platform behaviors the
 // fetch bridge design rests on. If Chrome changes any of these, the bridge
 // needs a design review — results table in notes/bridge-probe.md.
 import { test, before, after } from 'node:test';

@@ -31,6 +31,13 @@ before(async () => {
   page = await context.newPage();
   await page.goto(`chrome-extension://${extId}/ext/viewer.html?stub=1`);
   await page.waitForFunction(() => !!globalThis.__bs);
+  // This suite tests bridge semantics, not interception: pin an
+  // everything-native posture so its native control navigations stay native
+  // (the shipping default is whitelist mode with the catch-all enabled).
+  await page.evaluate(() => chrome.storage.sync.set({ mode: 'blacklist' }));
+  await page.waitForFunction(() =>
+    chrome.declarativeNetRequest.getEnabledRulesets().then((r) => !r.includes('catchall')),
+  );
 }, { timeout: 30000 });
 
 after(async () => {

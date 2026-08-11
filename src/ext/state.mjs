@@ -1,10 +1,13 @@
 // Activation/mode/list state (notes/ui.md), shared by SW, viewer, popup,
 // and options. storage.sync holds only explicitly-set keys; readers overlay
-// defaults. Shipped default: active, blacklist mode (2.6 flips to whitelist).
+// defaults. Shipped default: active, whitelist mode (sandbox-by-default;
+// empty whitelist → every http(s) site runs nested). Must agree with the
+// manifest's static-ruleset enabled flag (tools/gen-ext.mjs) so a fresh
+// install intercepts before the SW ever runs.
 
 export const DEFAULT_STATE = {
   active: true,
-  mode: 'blacklist',
+  mode: 'whitelist',
   whitelist: [],
   blacklist: [],
   allowPrivateNetwork: false, // guard override (options page; networking.md)

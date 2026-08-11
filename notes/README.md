@@ -49,7 +49,7 @@ lives in [roadmap.md](roadmap.md). Phase summaries:
 - **Phase 2 extension**: viewer hosts the engine (src/ext/viewer.mjs + blit.mjs, OPFS persistence,
   `__bs` test hook); SW reconciles storage.sync state → DNR + symmetric tab sweep (sw.mjs);
   browser chrome v1 (true-URL bar, back/forward/reload via real BackForwardList, progress, nested
-  title, escape hatch); activation & modes UI (popup/options/badge, actions.mjs matrix);
+  title); activation & modes UI (popup/options/badge, actions.mjs matrix);
   sandboxed→native boundary (engine flags top-level loads, bridge policy natives them);
   guard-rail invariants green (hostile.bstest full pass, no top-level target docs); **2.6
   whitelist-by-default** — `DEFAULT_STATE.mode='whitelist'`, static catch-all enabled in the

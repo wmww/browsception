@@ -99,7 +99,6 @@ async function bootEngine() {
   const backBtn = document.getElementById('back');
   const fwdBtn = document.getElementById('fwd');
   const reloadBtn = document.getElementById('reloadbtn');
-  const nativeBtn = document.getElementById('native');
   const progressEl = document.getElementById('progress');
 
   // --- engine-state persistence (OPFS; one profile per extension origin) ---
@@ -391,11 +390,6 @@ async function bootEngine() {
       });
       urlbarEl.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && bs.navigate(urlbarEl.value)) canvas.focus();
-      });
-      nativeBtn.addEventListener('click', () => {
-        const url = bs.state.url;
-        if (/^https?:/.test(url ?? ''))
-          chrome.runtime.sendMessage({ type: 'open-natively', url });
       });
       canvas.focus();
       requestAnimationFrame(tickLoop);

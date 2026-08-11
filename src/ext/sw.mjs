@@ -100,15 +100,16 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     await updateBadge(tabId, tab.url ?? tab.pendingUrl ?? '', await getState());
 });
 
-// 2.3 escape hatch: the viewer asks to reopen its current URL natively in
-// this tab. Session+tab-scoped allow rule (dies with the browser session,
-// removed on tab close), then the tab navigates for real.
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+// Escape hatch: the popup asks to reopen a tab's URL natively. Session+tab-
+// scoped allow rule (dies with the browser session, removed on tab close),
+// then the tab navigates for real.
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type !== 'open-natively') return false;
   (async () => {
-    // sender.tab for viewer-initiated requests; msg.tabId for the popup
-    // (real browser chrome — allowed to act on the tab it inspected).
-    const tabId = sender.tab?.id ?? msg.tabId;
+    // Only the popup (real browser chrome) may trigger this — it names the
+    // tab it inspected. In-viewer callers are deliberately not supported:
+    // nested content must never be one click away from going native.
+    const tabId = msg.tabId;
     let entry = null;
     let url = null;
     try {

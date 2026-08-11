@@ -55,7 +55,10 @@ Dispositions are evaluated per top-level navigation, so link clicks can cross th
   Without this check, whitelisted sites would get stuck rendering inside the engine.
 - **One-time escape hatch** ("open this page natively, just this once"): distinct from a list
   edit. Implemented with a session-scoped, tab-scoped DNR allow rule (session rules support
-  `tabIds`) so it doesn't survive the tab or edit any list.
+  `tabIds`) so it doesn't survive the tab or edit any list. **Popup only** — the viewer briefly
+  had a "native" button next to its URL bar too (2.3); removed, since nested content can paint a
+  convincing lookalike right under it, and the SW now requires the caller to name the tab
+  (`msg.tabId`), which only real chrome can do.
 
 ## Toggle/edit behavior
 

@@ -256,8 +256,10 @@ test('chrome: URL bar tracks nested navigation; back/forward/reload; nested titl
   await page.close();
 });
 
-// --- 2.3 escape hatch: open natively, this tab only ------------------------
-test('escape hatch: native button reopens the tab natively; other tabs stay sandboxed', { timeout: 300000 }, async () => {
+// --- escape hatch: open natively, this tab only ----------------------------
+// Driven the way the popup drives it (message + explicit tabId); the popup
+// itself isn't a tab, so it can't be scripted here.
+test('escape hatch: popup reopens the tab natively; other tabs stay sandboxed', { timeout: 300000 }, async () => {
   const page = await session.context.newPage();
   await page.goto('https://grid.bstest/');
   assert.ok(page.url().startsWith(`chrome-extension://${EXT_ID}/`), 'sandboxed first');
@@ -266,7 +268,21 @@ test('escape hatch: native button reopens the tab natively; other tabs stay sand
     () => page.evaluate(() => __bs.state.url === 'https://grid.bstest/'),
     'engine committed the target',
   );
-  await page.click('#native');
+
+  const chromeUI = await session.context.newPage();
+  await chromeUI.goto(`chrome-extension://${EXT_ID}/ext/viewer.html?stub=1`);
+  const ok = await chromeUI.evaluate(async () => {
+    const tabs = await chrome.tabs.query({});
+    const target = tabs.find((t) => (t.url ?? '').includes('viewer.html?url=https%3A%2F%2Fgrid.bstest%2F')
+      || (t.url ?? '').includes('viewer.html?url=https://grid.bstest/'));
+    if (!target) return false;
+    const r = await chrome.runtime.sendMessage({
+      type: 'open-natively', url: 'https://grid.bstest/', tabId: target.id,
+    });
+    return !!r?.ok;
+  });
+  assert.ok(ok, 'popup-style escape request accepted');
+  await chromeUI.close();
   await pollUntil(() => page.url() === 'https://grid.bstest/', 'tab went native', 30000);
 
   const other = await session.context.newPage();

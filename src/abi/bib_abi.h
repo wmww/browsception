@@ -230,7 +230,17 @@ void bib_crash(void);
  * bibChrome(kind, json)                         [page]  chrome signal. Unlike
  *          the other hooks, both args arrive as JS STRINGS (decoded + freed
  *          engine-side, bibPersist-style delivery). kinds:
- *          "title" {"title"}         "url" {"url","canGoBack","canGoForward"}
+ *          "title" {"title"}
+ *          "url" {"url","canGoBack","canGoForward","kind","index","length"}
+ *                kind: what the navigation did to the back/forward list —
+ *                "new" (entry appended) | "replace" (current entry
+ *                overwritten: replaceState, client redirect) | "traverse"
+ *                (back/forward) | "reload". index = current entry's position,
+ *                length = entry count; together they let the host mirror the
+ *                engine's history into the real tab's session history. On a
+ *                "new" cross-document load the commit signal fires before the
+ *                entry is added, so index (like canGoBack) is one navigation
+ *                stale until the didFinishLoad re-emit.
  *          "progress" {"p": 0..1}    "cursor" {"cursor": css-name}
  *          "hover" {"url"|null}      "favicon" {"ptr","len","mime"} (bytes
  *          engine-malloc'd, JS frees)

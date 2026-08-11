@@ -47,7 +47,7 @@ boot-size, grow, shrink, and post-resize input.
   it stays coherent (fixed elements, iframes, JS scroll handlers).
 - **Keyboard**: `keydown/keyup` with code/key/modifiers forwarded; prevent default for keys the
   page consumes, but pass through browser-level combos (Cmd/Ctrl+L jumps to our fake URL bar;
-  Cmd/Ctrl+T/W etc. left to the real browser). Maintain a small routing table.
+  Cmd/Ctrl+T/W, Alt+←/→, F5 etc. left to the real browser). Maintain a small routing table.
 - **IME/composition — the known-hard one.** A canvas can't host the platform IME. Standard trick
   (Figma/VS Code lineage): keep a hidden 1px `<input>`/contenteditable positioned at the engine's
   caret (engine reports caret rect), focused whenever the nested page has an editable focused;
@@ -68,8 +68,10 @@ boot-size, grow, shrink, and post-resize input.
 - **Find-in-page**: intercept Ctrl/Cmd+F → viewer find bar UI → engine's own find machinery
   (WebCore `findString` / FindController: search, highlight, scroll-to-match all happen inside the
   pixmap, like every WebKit embedder). We build UI only.
-- **Navigation**: back/forward/reload buttons → engine BackForwardList. History persistence
-  (profile OPFS) post-MVP.
+- **Navigation**: no buttons — the *host* browser's back/forward/reload drive the engine's
+  BackForwardList, via the tab-history mirror (ui.md § Viewer chrome & native history). The
+  canvas therefore passes Alt+←/→, F5 and mouse buttons 3/4 straight through. History
+  persistence (profile OPFS) post-MVP.
 - **Downloads**: engine signals download (navigation policy decision) → bytes stream through the
   bridge to a Blob → `chrome.downloads.download({url: blobUrl, filename})`.
 - **File upload**: engine requests file picker → viewer opens real `<input type=file>` (needs the

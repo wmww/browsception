@@ -42,8 +42,9 @@ Registers static DNR rules; otherwise inert. The engine does **not** live here (
 
 ### Viewer page ("browser chrome")
 One extension page per nested tab (`viewer.html?url=...`). Owns:
-- The **fake URL bar** and navigation chrome (address bar spoofing of the real omnibox is
-  impossible by design — see extension-platform.md).
+- The **fake URL bar** (address bar spoofing of the real omnibox is impossible by design — see
+  extension-platform.md) and the **tab-history mirror** that lets the browser's own
+  back/forward/reload drive the engine (ui.md).
 - The display canvas and blit loop (see rendering-input.md).
 - Input capture and the hidden-input IME trick.
 - The **fetch bridge** (see networking.md) — the only component with real network authority.
@@ -88,7 +89,7 @@ agnostic to the mode.
 | | A: extension-page viewer (MVP) | B: stay-on-origin viewer |
 |---|---|---|
 | Mechanism | DNR/webRequest redirect main_frame → `viewer.html` | Let navigation commit; rewrite response body to viewer HTML |
-| URL bar shows | `chrome-extension://…` (fake in-page URL bar) | real `https://example.com` |
+| URL bar shows | `chrome-extension://…?url=<live URL>` (fake in-page URL bar) | real `https://example.com` |
 | Target bytes parsed top-level | none, guaranteed | Firefox: none, guaranteed (StreamFilter). Chrome: partial (document_start neuter; preload-scanner leaks) — degraded |
 | SAB/threads | Chrome: yes (manifest COOP/COEP). Firefox: **no** (bug 1673477) | yes on Firefox (inject COOP/COEP headers); Chrome unverified |
 | Origin of viewer | extension origin (strong isolation) | target origin — site's old service workers, other extensions' content scripts, ambient credentials all in play |

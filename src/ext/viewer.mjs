@@ -54,7 +54,8 @@ globalThis.__bsBoot = async (opts = {}) => {
 // The DNR redirect's \0 carries the matched URL RAW (un-encoded), so the
 // target's own query would be truncated by URLSearchParams — slice at the
 // first "url=" instead. Manual/test paths pass it percent-encoded; decode
-// only that form.
+// only that form. A raw target's #fragment ends up as OUR fragment (the tab
+// URLs we write back carry it), so it has to be glued back on.
 function rawUrlParam() {
   const q = location.search;
   const i = q.indexOf('url=');
@@ -64,8 +65,9 @@ function rawUrlParam() {
     try {
       raw = decodeURIComponent(raw);
     } catch {}
+    return raw;
   }
-  return raw;
+  return raw + location.hash;
 }
 
 // http(s) only: anything else must never reach bib_load_url (?url= arrives
@@ -96,9 +98,6 @@ async function bootEngine() {
   const presenter = createPresenter(canvas, params.get('blit'));
   const setStatus = (s) => (statusEl.textContent = s);
   const urlbarEl = document.getElementById('urlbar');
-  const backBtn = document.getElementById('back');
-  const fwdBtn = document.getElementById('fwd');
-  const reloadBtn = document.getElementById('reloadbtn');
   const progressEl = document.getElementById('progress');
 
   // --- engine-state persistence (OPFS; one profile per extension origin) ---
@@ -166,7 +165,16 @@ async function bootEngine() {
     fb: null,
     viewport: null,
     // Filled by bibChrome signals (true engine URL, not the ?url= param).
-    state: { url: null, title: null, canGoBack: false, canGoForward: false, progress: 0 },
+    // index/length = position + size of the engine's back/forward list.
+    state: {
+      url: null,
+      title: null,
+      canGoBack: false,
+      canGoForward: false,
+      progress: 0,
+      index: null,
+      length: 0,
+    },
     metrics: { bootMs: null, engineFetchMs: null },
     workers: [],
     killEngine() {
@@ -256,6 +264,116 @@ async function bootEngine() {
     vpObserver.observe(canvas); // fallback: CSS-px box scaled by dpr
   }
 
+  // --- tab-history mirror (native back/forward/reload; notes/ui.md) --------
+  // The TAB's session history mirrors the engine's back/forward list: every
+  // url signal rewrites the tab URL to viewer.html?<our params>url=<live
+  // engine URL>, pushing a new entry or replacing the current one, and tags
+  // it with the engine's index. Two things fall out: the browser's own
+  // back/forward/reload drive the engine (popstate -> bib_go), and everything
+  // that reads tab.url — popup escape hatch, SW sweep, badge — sees the page
+  // actually loaded instead of the entry point we were redirected to.
+  //
+  // Every mirrored entry carries a real URL, so an entry the engine can't
+  // traverse to (fresh engine after a native reload, pruned list) still
+  // cold-boots correctly via bib_load_url.
+  const viewerParams = (() => {
+    const q = location.search;
+    const i = q.indexOf('url=');
+    if (i >= 0) return q.slice(0, i); // "?" or "?blit=2d&" — must precede url=
+    return q ? `${q}&` : '?';
+  })();
+  // Raw, never percent-encoded: popup/sweep slice at the first url= without
+  // decoding (the DNR \0 contract).
+  const tabURLFor = (url) => location.pathname + viewerParams + 'url=' + url;
+  const sameURL = (a, b) => {
+    if (a === b) return true;
+    if (!a || !b) return false;
+    try {
+      return new URL(a).href === new URL(b).href;
+    } catch {
+      return false;
+    }
+  };
+
+  // What the current tab entry reflects. index stays null until the first
+  // signal: the entry we booted in already IS the engine's first page, so it
+  // gets replaced, never duplicated.
+  let mirror = { url: null, index: null };
+  let forceReplace = false; // next signal fixes up an entry, doesn't add one
+  let want = null; // {index, url}: entry the tab is on, engine isn't (yet)
+  let issuedFrom = null; // engine index the in-flight bib_go was computed from
+
+  function syncTabHistory(url, kind, index) {
+    const push = kind === 'new' && mirror.index !== null && !forceReplace && !sameURL(url, mirror.url);
+    forceReplace = false;
+    // Each navigation signals twice (commit + didFinishLoad), and the commit
+    // one carries a stale index — the repeat replaces, fixing the index up.
+    try {
+      if (push) history.pushState({ bsIndex: index }, '', tabURLFor(url));
+      else if (url !== mirror.url || index !== mirror.index)
+        history.replaceState({ bsIndex: index }, '', tabURLFor(url));
+      else return; // nothing changed; don't spend the History-API rate limit
+    } catch {
+      // Rate-limited (a guest SPA hammering pushState): leave the tab URL
+      // stale and retry on the next signal. Traversal to a stale entry still
+      // works — it falls back to loading the entry's URL.
+      return;
+    }
+    mirror = { url, index };
+  }
+
+  // Move the engine to where the tab's current entry says it should be.
+  // Re-entered from every url signal: one hop is issued at a time and the
+  // next only after the engine actually moved, so a burst of popstates
+  // converges instead of over-shooting.
+  function drive() {
+    if (!want || !bs.ready || bs.dead) return;
+    const here = bs.state.index;
+    if (here === null) return;
+    const target = want;
+    if (here === target.index) {
+      want = null;
+      issuedFrom = null;
+      if (target.url && bs.state.url && !sameURL(target.url, bs.state.url)) loadEntry(target.url);
+      return;
+    }
+    if (issuedFrom === here) return; // hop in flight — wait for the engine
+    if (target.index >= 0 && target.index < bs.state.length) {
+      issuedFrom = here;
+      Module._bib_go(target.index - here);
+      return;
+    }
+    loadEntry(target.url); // not in this engine's list — cold-load it
+  }
+
+  function loadEntry(url) {
+    want = null;
+    issuedFrom = null;
+    if (!url) return;
+    forceReplace = true; // we're already ON this entry; don't push another
+    if (!bs.navigate(url)) forceReplace = false;
+  }
+
+  window.addEventListener('popstate', (e) => {
+    const idx = typeof e.state?.bsIndex === 'number' ? e.state.bsIndex : null;
+    const url = normalizeEngineURL(rawUrlParam());
+    // The tab is already on this entry — mirror it so the engine's echo fixes
+    // it up in place.
+    mirror = { url, index: idx };
+    if (bs.dead || !window.Module) {
+      location.reload(); // no engine left: cold-boot this entry
+      return;
+    }
+    issuedFrom = null;
+    want = idx === null ? null : { index: idx, url };
+    if (idx === null) {
+      // Entry from before the mirror existed (or an external history edit).
+      if (url && !sameURL(url, bs.state.url)) loadEntry(url);
+      return;
+    }
+    drive();
+  });
+
   // --- input forwarding (port of the harness wiring) -----------------------
   const mods = (e) =>
     (e.shiftKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.altKey ? 4 : 0) | (e.metaKey ? 8 : 0);
@@ -270,19 +388,26 @@ async function bootEngine() {
     Module._bib_mouse_move(pendingMove[0], pendingMove[1], pendingMove[2]);
     pendingMove = null;
   };
+  // Host-owned input: never forwarded, never preventDefault()ed, so the
+  // browser's own history controls still work over the canvas. Ctrl/Cmd
+  // combos (devtools, tab keys, Ctrl+R) are handled at the call sites.
+  const hostKey = (e) =>
+    e.key === 'F5' || (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight'));
+  const hostButton = (e) => e.button === 3 || e.button === 4; // mouse back/forward
+
   function wireInput() {
     canvas.addEventListener('mousemove', (e) => {
       pendingMove = [fbX(e), fbY(e), mods(e)];
     });
     canvas.addEventListener('mousedown', (e) => {
-      if (bs.dead) return;
+      if (bs.dead || hostButton(e)) return;
       canvas.focus();
       e.preventDefault();
       flushPendingMove();
       Module._bib_mouse_button(1, e.button, fbX(e), fbY(e), e.detail || 1, mods(e));
     });
     canvas.addEventListener('mouseup', (e) => {
-      if (bs.dead) return;
+      if (bs.dead || hostButton(e)) return;
       e.preventDefault();
       flushPendingMove();
       Module._bib_mouse_button(0, e.button, fbX(e), fbY(e), e.detail || 1, mods(e));
@@ -308,8 +433,9 @@ async function bootEngine() {
             [type, e.key, e.code, text, e.keyCode | 0, e.repeat ? 1 : 0, mods(e)],
           );
     canvas.addEventListener('keydown', (e) => {
-      // Ctrl/Cmd combos stay with the HOST browser (devtools, tab keys).
-      if (e.ctrlKey || e.metaKey) return;
+      // Ctrl/Cmd combos stay with the HOST browser (devtools, tab keys), as
+      // do its history shortcuts (Alt+arrows, F5).
+      if (e.ctrlKey || e.metaKey || hostKey(e)) return;
       e.preventDefault();
       sendKey(0, e, '');
       if (e.key.length === 1) sendKey(2, e, e.key);
@@ -317,7 +443,7 @@ async function bootEngine() {
       else if (e.key === 'Tab') sendKey(2, e, '\t');
     });
     canvas.addEventListener('keyup', (e) => {
-      if (e.ctrlKey || e.metaKey) return;
+      if (e.ctrlKey || e.metaKey || hostKey(e)) return;
       sendKey(1, e, '');
     });
     const setFocus = (v) => {
@@ -402,9 +528,12 @@ async function bootEngine() {
         bs.state.url = data.url ?? null;
         bs.state.canGoBack = !!data.canGoBack;
         bs.state.canGoForward = !!data.canGoForward;
+        bs.state.index = typeof data.index === 'number' ? data.index : null;
+        bs.state.length = typeof data.length === 'number' ? data.length : 0;
         if (document.activeElement !== urlbarEl) urlbarEl.value = shown;
-        backBtn.disabled = !data.canGoBack;
-        fwdBtn.disabled = !data.canGoForward;
+        // Boot/about pages are never mirrored into tab history.
+        if (shown) syncTabHistory(data.url, data.kind, bs.state.index);
+        drive();
       } else if (kind === 'title') {
         bs.state.title = data.title ?? '';
         document.title = data.title || bs.state.url || 'browsception';
@@ -432,16 +561,8 @@ async function bootEngine() {
       clearTimeout(vpTimer);
       applyViewport();
       wireInput();
-      // Chrome controls (2.3).
-      backBtn.addEventListener('click', () => {
-        if (!bs.dead) Module._bib_go(-1);
-      });
-      fwdBtn.addEventListener('click', () => {
-        if (!bs.dead) Module._bib_go(1);
-      });
-      reloadBtn.addEventListener('click', () => {
-        if (!bs.dead && Module._bib_reload) Module._bib_reload();
-      });
+      // Back/forward/reload are the HOST browser's (tab-history mirror
+      // above); the only chrome control left here is the URL bar.
       urlbarEl.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && bs.navigate(urlbarEl.value)) canvas.focus();
       });

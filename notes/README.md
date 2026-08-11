@@ -50,7 +50,7 @@ lives in [roadmap.md](roadmap.md). Phase summaries:
 - **Phase 2 extension**: viewer hosts the engine (src/ext/viewer.mjs + blit.mjs, OPFS persistence,
   `__bs` test hook); SW reconciles storage.sync state → DNR + symmetric tab sweep (sw.mjs);
   browser chrome v1 (true-URL bar, back/forward/reload via real BackForwardList, progress, nested
-  title); activation & modes UI (popup/options/badge, actions.mjs matrix);
+  title — the buttons later gave way to native history, below); activation & modes UI (popup/options/badge, actions.mjs matrix);
   sandboxed→native boundary (engine flags top-level loads, bridge policy natives them);
   guard-rail invariants green (hostile.bstest full pass, no top-level target docs); **2.6
   whitelist-by-default** — `DEFAULT_STATE.mode='whitelist'`, static catch-all enabled in the
@@ -71,15 +71,20 @@ Load-bearing implementation facts:
   `'wasm-unsafe-eval'`). The manifest's catch-all `enabled: true` must agree with DEFAULT_STATE.
 - Portability gotchas: TextDecoder rejects SAB views (copy first — heap.mjs); assigning a class's
   `.prototype` throws in ESM strict mode.
-- bibChrome/bibPersist callbacks deliver kind/json as JS strings (ABI docs in bib_abi.h).
+- bibChrome/bibPersist callbacks deliver kind/json as JS strings (ABI docs in bib_abi.h). The
+  `url` signal carries `kind`/`index`/`length` so the viewer can mirror the engine's history into
+  real tab history; the commit-time index (like canGoBack) is one navigation stale.
 - Boot is fast (~620 ms cold / ~360 ms warm to interactive) — module caching / eager boot dropped
   (open-questions #11).
 - Test-posture rule: suites that need native fixture traffic must pin a posture (tier-1 bridge:
   blacklist+empty; tier-2: fixture-domain blacklist) now that the default sandboxes everything.
 
-Open issues in issues/ (first-nav race residual, guest-JS wedge). Next work: [roadmap.md](roadmap.md);
-planned: native back/forward/reload via tab-history mirroring (plans/native-history-controls.md —
-step 1 also fixes the popup stale-URL escape-hatch bug, former issue absorbed there).
+**Post-MVP landed**: *native history* (2026-08-11) — the tab's session history mirrors the
+engine's back/forward list, so the browser's own back/forward/reload drive the engine and the
+viewer's own buttons are gone; the tab URL now always carries the live engine URL, which also
+fixed the popup escaping to the stale entry-point URL (ui.md § Viewer chrome & native history).
+
+Open issues in issues/ (first-nav race residual, guest-JS wedge). Next work: [roadmap.md](roadmap.md).
 
 ## Key decisions
 

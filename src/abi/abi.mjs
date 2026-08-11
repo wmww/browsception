@@ -74,5 +74,9 @@ export const NET_WINDOW_BYTES = 4 * 1024 * 1024;
 // bibChrome signal kinds (v1; reserved fast-follows excluded).
 export const CHROME_KINDS = ['title', 'url', 'progress', 'cursor', 'hover', 'favicon'];
 
+// bibChrome "url" nav kinds: what the navigation did to the engine's
+// back/forward list. The viewer mirrors it into real tab history.
+export const NAV_KINDS = ['new', 'replace', 'traverse', 'reload'];
+
 // bib_query kinds (v1). 'eval' exists in dev builds only.
 export const QUERY_KINDS = ['text', 'state', 'metrics', 'eval'];

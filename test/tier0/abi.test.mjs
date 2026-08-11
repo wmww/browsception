@@ -14,6 +14,7 @@ import {
   KEY,
   NET_ERR,
   NET_WINDOW_BYTES,
+  NAV_KINDS,
 } from '../../src/abi/abi.mjs';
 
 const header = readFileSync(
@@ -38,6 +39,12 @@ test('modifier, key-type, and net-error constants match', () => {
   assert.deepEqual(KEY, macros('BIB_KEY_'));
   assert.deepEqual(NET_ERR, macros('BIB_NET_ERR_'));
   assert.equal(NET_WINDOW_BYTES, macros('BIB_NET_').WINDOW_BYTES);
+});
+
+test('url-signal nav kinds match the header', () => {
+  const doc = header.slice(header.indexOf('"url" {'), header.indexOf('"progress" {'));
+  const declared = [...doc.matchAll(/"(new|replace|traverse|reload)"/g)].map((m) => m[1]);
+  assert.deepEqual(new Set(NAV_KINDS), new Set(declared));
 });
 
 test('every export in abi.mjs is declared in the header, and vice versa', () => {

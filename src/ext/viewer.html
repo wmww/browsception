@@ -11,11 +11,6 @@
   body { display: flex; flex-direction: column; }
   #chrome { display: flex; gap: 4px; align-items: center; padding: 5px 6px;
             background: #1f232b; border-bottom: 1px solid #343a46; }
-  #chrome button { background: #2a303b; color: #cdd3de; border: 1px solid #3a4150;
-                   border-radius: 4px; padding: 3px 9px; cursor: pointer;
-                   font: 13px system-ui; }
-  #chrome button:hover:not(:disabled) { background: #363d4b; }
-  #chrome button:disabled { opacity: 0.35; cursor: default; }
   #urlbar { flex: 1; font: 12px ui-monospace, monospace; padding: 4px 8px;
             background: #14161a; color: #d6dae2; border: 1px solid #3a4150;
             border-radius: 4px; min-width: 0; }
@@ -34,9 +29,8 @@
 </head>
 <body>
 <div id="chrome">
-  <button id="back" title="Back" disabled>&#8592;</button>
-  <button id="fwd" title="Forward" disabled>&#8594;</button>
-  <button id="reloadbtn" title="Reload">&#10227;</button>
+  <!-- No back/forward/reload here: the tab's own controls drive the engine
+       (viewer.mjs tab-history mirror). -->
   <input id="urlbar" spellcheck="false" autocomplete="off"
          placeholder="sandboxed — engine URL">
 </div>

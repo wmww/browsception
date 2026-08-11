@@ -89,8 +89,9 @@ whole machine, end to end:
 9. **Input**: CDP-dispatched clicks/keys/scroll on the viewer canvas → `input.bstest` colors flip
    correctly (covers DOM capture → queue → engine dispatch → page JS → repaint → blit, in one
    test).
-10. **Navigation chrome**: link click inside nested page updates fake URL bar; back/forward work;
-    sandboxed→native handoff navigates the real tab when target is whitelisted.
+10. **Navigation chrome**: link click inside nested page updates the fake URL bar *and the tab
+    URL* (also the escape-hatch stale-URL regression); native back/forward/reload drive the
+    engine; sandboxed→native handoff navigates the real tab when target is whitelisted.
 11. **Invariants** (the 2.5 guard-rail suite): during all of the above, CDP
     Network/Target events show no target-origin document or subresource ever loaded top-level;
     oracle shows no credentialed/blocked request; `hostile.bstest` full pass.

@@ -136,6 +136,12 @@ test('execute: app.bstest JS/timer/fetch/xfetch/cookie/pushState + redirect chai
   const SW = { JS: 25, TIMER: 75, FETCH: 125, XFETCH: 175, COOKIE: 225, PUSHSTATE: 275 };
   for (const [name, x] of Object.entries(SW))
     await until(page, x, 425, is([0, 255, 0]), 120000, name);
+  // Guest pushState is a same-document NEW entry — the tab history mirror
+  // follows it too, not just cross-document commits.
+  await pollUntil(
+    () => page.url().endsWith('url=https://app.bstest/pushed'),
+    'tab URL follows guest pushState',
+  );
   await page.evaluate(() => __bs.eval("document.getElementById('redirlink').click()"));
   await evalProbe(page, 'location.href', /^https:\/\/app\.bstest\/final\b/);
   await page.close();
@@ -278,33 +284,79 @@ async function pollUntil(fn, what, timeoutMs = 30000) {
   throw new Error(`${what} (last: ${JSON.stringify(last)})`);
 }
 
-test('chrome: URL bar tracks nested navigation; back/forward/reload; nested title', { timeout: 300000 }, async () => {
+// --- Scenario 10: navigation chrome ---------------------------------------
+// The viewer has no back/forward/reload buttons: the TAB's history mirrors
+// the engine's, so the browser's own controls drive it. Asserting tab.url
+// tracks nested navigation is also the regression test for the popup escape
+// hatch, which slices the live target out of it.
+const rawViewerURL = (target) => `chrome-extension://${EXT_ID}/ext/viewer.html?url=${target}`;
+
+test('chrome: tab URL + native back/forward/reload drive the engine', { timeout: 300000 }, async () => {
   const page = await bootViewer('https://input.bstest/');
   const box = await (await page.$('#screen')).boundingBox();
   const at = (x, y) => [box.x + x, box.y + y];
   const urlbar = () => page.evaluate(() => document.getElementById('urlbar').value);
+  // Native history, driven the way the toolbar buttons do; same-document
+  // traversals produce no response, so don't let the wait dominate.
+  const back = () => page.goBack({ timeout: 20000 }).catch(() => {});
+  const forward = () => page.goForward({ timeout: 20000 }).catch(() => {});
 
   await until(page, 500, 100, is([0, 0, 255]), 120000, 'fixture load');
   await pollUntil(async () => (await urlbar()) === 'https://input.bstest/', 'urlbar shows fixture URL');
+  // Entry-point tab URL (percent-encoded here) is REPLACED by the live one,
+  // raw — popup/sweep slice at url= without decoding.
+  await pollUntil(
+    () => page.url() === rawViewerURL('https://input.bstest/'),
+    'tab URL synced to the committed URL',
+  );
+  assert.ok(await page.evaluate(() => !document.getElementById('back')), 'no in-viewer back button');
 
-  // Nested link click -> URL bar follows, back becomes possible.
+  // Nested link click -> new tab entry, URL bar + tab URL follow.
   await page.mouse.click(...at(320, 350));
   await until(page, 400, 300, is([102, 51, 153]), 120000, 'link nav');
   await pollUntil(async () => (await urlbar()) === 'https://input.bstest/final.html', 'urlbar follows link');
-  await pollUntil(() => page.evaluate(() => !document.getElementById('back').disabled), 'back enabled');
+  await pollUntil(
+    () => page.url() === rawViewerURL('https://input.bstest/final.html'),
+    'tab URL follows nested navigation',
+  );
+  await pollUntil(() => page.evaluate(() => __bs.state.canGoBack), 'engine can go back');
   await pollUntil(async () => (await page.title()) === 'NAV-TARGET', 'nested title -> tab title');
 
-  await page.click('#back');
+  // Native back: popstate -> bib_go, same document, no engine reboot.
+  const bootMs = await page.evaluate(() => __bs.metrics.bootMs);
+  await back();
   await until(page, 500, 100, is([0, 0, 255]), 120000, 'back re-renders fixture');
   await pollUntil(async () => (await urlbar()) === 'https://input.bstest/', 'urlbar after back');
-  await pollUntil(() => page.evaluate(() => !document.getElementById('fwd').disabled), 'forward enabled');
+  await pollUntil(
+    () => page.url() === rawViewerURL('https://input.bstest/'),
+    'tab URL after back',
+  );
+  assert.equal(
+    await page.evaluate(() => __bs.metrics.bootMs),
+    bootMs,
+    'traversal reused the live engine (no reboot)',
+  );
+  await pollUntil(() => page.evaluate(() => __bs.state.canGoForward), 'engine can go forward');
 
-  await page.click('#fwd');
+  await forward();
   await until(page, 400, 300, is([102, 51, 153]), 120000, 'forward re-renders target');
+  await pollUntil(
+    () => page.url() === rawViewerURL('https://input.bstest/final.html'),
+    'tab URL after forward',
+  );
 
-  await page.click('#reloadbtn');
+  // Native reload: re-navigates the mirrored entry, so the engine reboots on
+  // the page actually being viewed (not the entry point).
+  await page.reload();
+  await page.waitForFunction(() => globalThis.__bs?.ready, undefined, { timeout: BOOT_TIMEOUT });
   await until(page, 400, 300, is([102, 51, 153]), 120000, 'reload renders target');
   await pollUntil(async () => (await urlbar()) === 'https://input.bstest/final.html', 'urlbar after reload');
+
+  // Traversing to an entry the rebooted engine never had: falls back to
+  // loading the entry's URL.
+  await back();
+  await until(page, 500, 100, is([0, 0, 255]), 120000, 'back after reload cold-loads the entry');
+  await pollUntil(async () => (await urlbar()) === 'https://input.bstest/', 'urlbar after post-reload back');
   await page.close();
 });
 
@@ -378,7 +430,10 @@ test('invariants: hostile.bstest — guard blocks private-network; no target doc
   const cdp = await session.context.newCDPSession(page);
   await cdp.send('Target.setDiscoverTargets', { discover: true });
   cdp.on('Target.targetInfoChanged', ({ targetInfo }) => {
-    if (targetInfo.type === 'page' && /\.bstest/.test(targetInfo.url)) cdpTargets.push(targetInfo.url);
+    // ORIGIN, not substring: the viewer's own URL embeds ?url=…bstest, and
+    // the tab-history mirror rewrites it on every nested navigation.
+    if (targetInfo.type === 'page' && /^https?:\/\/[^/]*\.bstest/.test(targetInfo.url))
+      cdpTargets.push(targetInfo.url);
   });
 
   // Drive the guest pass to completion, then read its per-attempt verdicts.

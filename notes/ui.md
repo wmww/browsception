@@ -58,7 +58,37 @@ Dispositions are evaluated per top-level navigation, so link clicks can cross th
   `tabIds`) so it doesn't survive the tab or edit any list. **Popup only** — the viewer briefly
   had a "native" button next to its URL bar too (2.3); removed, since nested content can paint a
   convincing lookalike right under it, and the SW now requires the caller to name the tab
-  (`msg.tabId`), which only real chrome can do.
+  (`msg.tabId`), which only real chrome can do. The URL it escapes to (and the host its allow
+  rule is keyed on) is the live one — see § Viewer chrome & native history.
+
+## Viewer chrome & native history (2026-08-11)
+
+The viewer's chrome strip is a true-URL bar + progress bar and nothing else: the **tab's own
+back/forward/reload drive the engine**, because the tab's session history mirrors the engine's
+back/forward list (src/ext/viewer.mjs).
+
+- Every `bibChrome('url')` signal rewrites the tab URL to `viewer.html?<our params>url=<live
+  engine URL>` — `pushState` when the signal's `kind` says a new entry was created, else
+  `replaceState`, tagging the entry with the engine's list index in `history.state`. Each
+  navigation signals twice (commit + didFinishLoad) and the commit's index is stale, so the
+  repeat of the same URL replaces, fixing the index up. Raw `?url=`, our params first — same
+  contract as the DNR redirect, so popup/sweep can keep slicing at the first `url=`.
+- `popstate` → `bib_go(entry index − engine index)`, one hop at a time and the next only after
+  the engine actually moved, so a burst of clicks converges instead of over-shooting. An entry
+  this engine can't reach (fresh engine after a native reload, pruned list) falls back to
+  `bib_load_url` of the entry's own `?url=` — every mirrored entry carries a real URL, so any of
+  them cold-boots correctly.
+- Native reload re-navigates the mirrored entry: the engine reboots on the page being *viewed*,
+  not the entry point. It is a full reboot (~0.5 s) and drops the engine-side list; the fallback
+  above covers traversal afterwards. (bfcache is deliberately blocked — a cached page would
+  retain the whole engine instance.)
+- Back past the first nested entry leaves the sandbox for whatever preceded it, and a navigation
+  from mid-stack prunes forward entries in both lists. Both fall out for free.
+- The canvas must not swallow the host's controls: Alt+←/→, F5 and mouse buttons 3/4 are never
+  forwarded and never `preventDefault`ed (Ctrl/Cmd combos already weren't).
+- The tab URL being live is load-bearing beyond the chrome: popup escape hatch, SW sweep and
+  badge all read `tab.url`. Before this they saw the entry point, so escaping natively from a
+  nested page went to the *original* URL and keyed the session allow rule on the wrong host.
 
 ## Toggle/edit behavior
 

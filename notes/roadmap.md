@@ -18,9 +18,9 @@ Never: printing, DRM, nested GPU/JIT.
 
 ## Cleanups & untested corners
 
-- Delete curl from the engine link (superseded by the bridge; still linked). WebSocket bridging
-  is also engine-side future work (networking.md). When cutting curl/OpenSSL from the dep tier:
-  brotli + fontconfig live in curl-tier.sh and must survive (engine-build.md § Build traps).
+- Delete curl/wisp from the engine (superseded by the bridge; still linked): planned in
+  detail in `plans/remove-wisp-curl.md`. WebSocket bridging over host WS remains engine-side
+  future work (networking.md) and becomes the only guest-WS path after the cut.
 - Flatten `engine/WebkitWasm/` → `engine/` — cosmetic; only with an intentional from-scratch
   rebuild (build graph has absolute paths baked in).
 - One-time verification that a truly fresh clone bootstraps: tracked sources + bootstrap.sh must

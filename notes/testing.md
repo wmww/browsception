@@ -48,6 +48,9 @@ semantics into colors and text, and `__bs` reads both sides.
   raw CDP: `--load-extension=dist/ --user-data-dir=<tmp> --no-first-run --host-resolver-rules=…`.
   One browser boot per suite, fresh profile per test where isolation matters.
   (Verify headless=new extension + DNR + COOP/COEP behavior early — open-questions #19.)
+  Use the **full system chromium**, never Playwright's bundled `chromium-headless-shell`: the
+  shell SEGVs in V8 JIT code space on ~1/3 of heavy-JS engine loads and drops WebGL contexts at
+  first composite (fork-era finding; harness artifact, not an engine bug).
 - **Agent GUI sessions**: the gui-testing skill's `guibox` — headless sway compositor, real
   windowed Chromium, `grim` screenshots, `wdotool` input. For anything CDP can't reach or fakes:
   the real omnibox, the toolbar popup, actual user-gesture semantics, focus/IME quirks, "does it

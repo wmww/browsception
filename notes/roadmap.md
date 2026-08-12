@@ -19,7 +19,14 @@ Never: printing, DRM, nested GPU/JIT.
 ## Cleanups & untested corners
 
 - Delete curl from the engine link (superseded by the bridge; still linked). WebSocket bridging
-  is also engine-side future work (networking.md).
+  is also engine-side future work (networking.md). When cutting curl/OpenSSL from the dep tier:
+  brotli + fontconfig live in curl-tier.sh and must survive (engine-build.md § Build traps).
+- Flatten `engine/WebkitWasm/` → `engine/` — cosmetic; only with an intentional from-scratch
+  rebuild (build graph has absolute paths baked in).
+- One-time verification that a truly fresh clone bootstraps: tracked sources + bootstrap.sh must
+  recreate third_party/ from nothing (believed true, unverified since the import).
+- Engine licensing: webkitwasm-derived files are ambiguously licensed pending
+  theogbob/WebkitWasm#1; revisit engine/WebkitWasm/LICENSING.md when it resolves.
 - dpr≠1 rendering untested; frame-cost measurement pending (`bib_query` "metrics").
 - Dev-harness transport has no request timeout (dev-only; extension bridge has the idle guard).
 - MDN telemetry CORS preflights fail loudly in-engine (harmless; blocklist candidates).

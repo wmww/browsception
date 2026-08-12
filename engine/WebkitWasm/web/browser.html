@@ -1,0 +1,1217 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>BrowserInBrowser — WebKit-in-wasm canvas</title>
+  <style>
+    body { font: 14px system-ui, sans-serif; margin: 16px; background: #1e1e1e; color: #ddd; }
+    canvas { border: 1px solid #555; background: #fff; image-rendering: pixelated; }
+    canvas:focus { outline: 2px solid #4c8; }
+    pre { color: #9a9; max-height: 14em; overflow-y: auto; }
+    #gate.pass { color: #4c4; } #gate.fail { color: #e55; }
+    #urlrow { display: flex; gap: 6px; margin: 8px 0; max-width: 802px; }
+    #urlbar { flex: 1; font: 13px monospace; padding: 5px 8px; background: #2a2a2a;
+              color: #ddd; border: 1px solid #555; border-radius: 4px; }
+    #urlbar:focus { outline: 1px solid #4c8; }
+    #gobtn { padding: 5px 14px; background: #355; color: #ddd; border: 1px solid #577;
+             border-radius: 4px; cursor: pointer; }
+    #gobtn:hover { background: #466; }
+    #gobtn:disabled { opacity: 0.4; cursor: default; }
+  </style>
+</head>
+<body>
+  <h1>WebKit-in-wasm: engine framebuffer → canvas</h1>
+  <p>
+    crossOriginIsolated: <b id="coi"></b> |
+    status: <span id="status">booting…</span> |
+    gate: <b id="gate">n/a</b> |
+    ticks: <span id="ticks">0</span> |
+    blits: <span id="blits">0</span>
+  </p>
+  <div id="urlrow">
+    <input id="urlbar" type="text" placeholder="https://example.com/ — Enter or Go navigates the engine"
+           spellcheck="false" autocomplete="off" disabled>
+    <button id="gobtn" disabled>Go</button>
+  </div>
+  <style>
+    /* #79 freeze/loading indicator — host-side corner badge (bottom-right, no
+       canvas dim). Its spinner animates on the host compositor while the engine
+       pthread is blocked in a long no-JIT RunLoop::cycle. */
+    #screenwrap { position: relative; display: inline-block; line-height: 0; }
+    #bibfreeze { display: none; position: absolute; right: 10px; bottom: 10px;
+      align-items: center; flex-flow: row wrap; gap: 6px 9px; max-width: 240px;
+      padding: 8px 11px; border-radius: 8px;
+      background: rgba(16,18,24,0.82); color: #e8eaf0; text-align: left;
+      font: 12px/1.4 system-ui, -apple-system, Segoe UI, sans-serif;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.4); pointer-events: none; }
+    #bibfreeze .spin { width: 15px; height: 15px; border: 2px solid rgba(255,255,255,0.25);
+      border-top-color: #fff; border-radius: 50%; animation: bibspin 0.9s linear infinite; flex: none; }
+    #bibfreeze[data-spin="0"] .spin { display: none; }
+    #bibfreeze-msg { font-weight: 600; font-size: 12.5px; }
+    #bibfreeze-sub { flex-basis: 100%; opacity: 0.8; font-size: 11.5px; }
+    #bibfreeze-sub:empty { display: none; }
+    #bibfreeze-reload { flex-basis: 100%; align-self: flex-start; pointer-events: auto;
+      margin-top: 2px; padding: 4px 11px; background: #5865f2; color: #fff; border: 0;
+      border-radius: 5px; cursor: pointer; font: inherit; font-size: 11.5px; }
+    @keyframes bibspin { to { transform: rotate(360deg); } }
+  </style>
+  <div id="screenwrap">
+    <canvas id="screen" width="800" height="600" tabindex="0"></canvas>
+    <div id="bibfreeze" data-spin="1">
+      <div class="spin"></div>
+      <div id="bibfreeze-msg">Loading…</div>
+      <div id="bibfreeze-sub"></div>
+      <button id="bibfreeze-reload" style="display:none" onclick="location.reload()">Reload</button>
+    </div>
+  </div>
+  <pre id="log"></pre>
+  <!-- wisp-js client polyfill (global `wisp_client`), vendored from
+       node_modules/@mercuryworkshop/wisp-js@0.4.1/dist/wisp-client.js -->
+  <script src="vendor/wisp-client.js"></script>
+  <script src="bib-net.js"></script>
+  <!-- Build-stamped engine-threading mode (window.BIB_PTHREAD_BUILD). Emitted
+       into build/webcore/bin by embedder.cmake; served at /engine/. The host
+       MUST know this before choosing #screen's context (context type is
+       exclusive: 2d vs bitmaprenderer vs engine-owned webgl2). Missing (stale
+       build) => the inline script defaults to true (the pthread daily-driver). -->
+  <script src="engine/bib-build-config.js"></script>
+  <script>
+    document.getElementById("coi").textContent = String(globalThis.crossOriginIsolated);
+    const logEl = document.getElementById("log");
+    const statusEl = document.getElementById("status");
+    const gateEl = document.getElementById("gate");
+    const ticksEl = document.getElementById("ticks");
+    const blitsEl = document.getElementById("blits");
+    function log(line) {
+      // Keep the on-page log bounded — engine stderr can be chatty and
+      // textContent += is O(n^2) on an ever-growing string.
+      logEl.textContent = (logEl.textContent + line + "\n").slice(-20000);
+      console.log("[bib] " + line);
+    }
+
+    const canvas = document.getElementById("screen");
+    // Present mode is chosen ONCE per page load — a <canvas>'s context type is
+    // EXCLUSIVE (2d vs bitmaprenderer vs engine-owned webgl2), so the host must
+    // pick #screen's context before the engine boots:
+    //   raster-2d    : CPU pixels via Module.bibBlit → putImageData (safety net;
+    //                  pixel-exact gates; automation default).
+    //   gpu-bitmap   : BIB_PTHREAD build — the engine paints on its worker and
+    //                  ships zero-copy ImageBitmaps to a bitmaprenderer #screen
+    //                  (fixes the W-B2 OffscreenCanvas commit starvation).
+    //   gpu-implicit : BIB_PTHREAD=OFF build — the engine owns #screen's webgl2
+    //                  context on the main thread and presents implicitly (the
+    //                  pre-W-B1 MotionMark 109@144fps path; no SharedArrayBuffer).
+    // Default GPU for humans (G3/M2: 2.6-3.4× paint), raster for automation so
+    // the pixel-exact gates keep their semantics; ?gpu=0/1 overrides. The boot
+    // present-bench still demotes software-GL contexts to raster automatically.
+    const gpuParam = new URLSearchParams(location.search).get("gpu");
+    const requestedGPU = gpuParam !== null ? gpuParam !== "0" : !navigator.webdriver;
+    // Build-stamped (bib-build-config.js, emitted by embedder.cmake). Missing
+    // (stale build) => default true, the pthread daily-driver. Must NOT be
+    // inferred after getContext() — context acquisition is one-way.
+    const BIB_PTHREAD_BUILD =
+      (typeof window.BIB_PTHREAD_BUILD === "boolean") ? window.BIB_PTHREAD_BUILD : true;
+    function supportsBitmapPresent() {
+      if (typeof OffscreenCanvas !== "function") return false;
+      try { return !!document.createElement("canvas").getContext("bitmaprenderer"); }
+      catch { return false; }
+    }
+    // A pthread build needs bitmaprenderer to present GPU frames; if it's
+    // unsupported, fall back to raster rather than show a blank screen.
+    const gpuMode = requestedGPU && (!BIB_PTHREAD_BUILD || supportsBitmapPresent());
+    const presentMode =
+      !gpuMode ? "raster-2d" :
+      BIB_PTHREAD_BUILD ? "gpu-bitmap" : "gpu-implicit";
+    let ctx = null;        // raster putImageData target
+    let bitmapCtx = null;  // gpu-bitmap ImageBitmap present target
+    if (presentMode === "raster-2d") {
+      ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("BIB: failed to create #screen 2d context");
+    } else if (presentMode === "gpu-bitmap") {
+      bitmapCtx = canvas.getContext("bitmaprenderer");
+      if (!bitmapCtx) throw new Error("BIB: failed to create #screen bitmaprenderer context");
+    } // gpu-implicit: leave #screen untouched — the engine creates webgl2 on it.
+    log(`present mode: ${presentMode} (pthreadBuild=${BIB_PTHREAD_BUILD})`);
+
+    // gpu-bitmap present receiver: catch the engine worker's one-time hello
+    // (self.postMessage from C++ → engine-pre.js), take the transferred
+    // MessagePort, and paint each ImageBitmap onto #screen via bitmaprenderer.
+    // Credit model: ack {t:"ready"} on receive — before compositing — so the
+    // engine isn't serialized behind each present round-trip. Depth = maxInFlight
+    // (DEFAULT 1; ?inflight=N to A/B). The old depth-3 default floods the page
+    // main thread under load and collapses delivery (the "random stutter"), so 1
+    // is now default; see the maxInFlight config below + engine-pre.js
+    // bibBitmapPresentReady. The shared main-thread rAF caps production.
+    // The Worker subclass MUST be installed before embedder.js so Emscripten's
+    // pthread pool is constructed through it.
+    const bibPresent = { bound: false, port: null, frames: 0, lastFrameId: 0 };
+    function installBibPresentWorkerHook() {
+      if (presentMode !== "gpu-bitmap") return;
+      const NativeWorker = window.Worker;
+      window.Worker = class BIBPresentWorker extends NativeWorker {
+        constructor(url, options) {
+          super(url, options);
+          this.addEventListener("message", (e) => {
+            const d = e.data || {};
+            // Only the proxied-main engine worker sends this exact hello;
+            // Emscripten's own cmd-tagged messages never match.
+            if (d.__bibPresent !== "hello" || bibPresent.bound) return;
+            const port = e.ports && e.ports[0];
+            if (!port) { log("present: hello arrived without a port"); return; }
+            bibPresent.bound = true;
+            bibPresent.port = port;
+            port.onmessage = (ev) => {
+              const m = ev.data || {};
+              if (m.t !== "frame") return;
+              const bitmap = m.bitmap, id = m.id || 0;
+              // Return the credit IMMEDIATELY — before compositing — so the
+              // engine can render the next frame concurrently (triple-buffered,
+              // never blocked on the transferFromImageBitmap round-trip). The
+              // old code acked only AFTER compositing, serializing the engine
+              // behind every present and causing the hard-graphics stutter.
+              port.postMessage({ t: "ready", id });
+              if (!bitmap) return;
+              try {
+                bitmapCtx.transferFromImageBitmap(bitmap); // consumes the bitmap
+                bibPresent.frames++;
+                bibPresent.lastFrameId = id;
+                if (typeof bib !== "undefined") bib.frames = bibPresent.frames;
+                blitsEl.textContent = bibPresent.frames;
+              } catch (err) {
+                console.error("BIB: bitmap present failed:", err);
+                try { bitmap.close(); } catch {}
+              }
+            };
+            if (port.start) port.start();
+            // Present depth. DEFAULT 1 (strict one-in-flight). The old depth-3
+            // default floods the page main thread under high render rate (engine
+            // posts faster than transferFromImageBitmap drains) and collapses
+            // delivery — the "random stutter" non-determinism. inflight A/B,
+            // Discord, 2026-06-13 (research-06): depth-3 was BIMODAL (cv
+            // 0.6–4.3, one run near-frozen at 2.4fps); depth-1 was STEADY
+            // (cv ~0.77 every run). ?inflight=N overrides (1–8; 3 = old
+            // triple-buffer) for A/B. Sent before the first ready so it applies
+            // from the very first frame.
+            const inflightParam = new URLSearchParams(location.search).get("inflight");
+            const n = inflightParam !== null
+              ? Math.max(1, Math.min(8, parseInt(inflightParam, 10) || 1))
+              : 1;
+            port.postMessage({ t: "config", maxInFlight: n });
+            log("present: maxInFlight=" + n);
+            port.postMessage({ t: "ready", id: 0 }); // unblock the worker's first frame
+            log("present: gpu-bitmap port bound");
+          });
+        }
+      };
+      // Preserve enough constructor shape for Emscripten-generated code.
+      Object.setPrototypeOf(window.Worker, NativeWorker);
+      window.Worker.prototype = NativeWorker.prototype;
+    }
+
+    // --- Event-driven engine pump (perf) --------------------------------
+    // The engine pokes Module.bibWakeUp on every RunLoop wake-up (dispatch,
+    // timer start) and Module.bibArmTimer(ms) for its earliest pending
+    // timer. Engine work then runs at event-loop rate instead of once per
+    // rAF frame (which quantized every async hop to ~16.7ms — measured
+    // 13.9ms/setTimeout(0) hop before this). MessageChannel posts are
+    // macrotasks: they NEVER run while the engine is on the stack (bibWakeUp
+    // fires under the engine's RunLoop lock — scheduling only, no sync
+    // call-back), and unlike setTimeout they aren't throttled in background
+    // tabs, so loads keep progressing when the tab is hidden.
+    const pumpChannel = new MessageChannel();
+    let pumpScheduled = false;
+    pumpChannel.port1.onmessage = () => {
+      pumpScheduled = false;
+      if (bib.dead) return;
+      if (Module._bib_pump) Module._bib_pump();
+    };
+    const schedulePump = () => {
+      if (pumpScheduled) return;
+      pumpScheduled = true;
+      pumpChannel.port2.postMessage(0);
+    };
+    // Single host setTimeout for the engine's earliest timer deadline.
+    // Later (larger) requests while a sooner one is armed are dropped —
+    // the end-of-cycle hook in the engine re-arms whatever remains.
+    const pumpTimer = { id: 0, at: Infinity };
+    const armPumpTimer = (ms) => {
+      if (bib.dead) return;
+      const at = performance.now() + ms;
+      if (at >= pumpTimer.at - 0.25) return;
+      clearTimeout(pumpTimer.id);
+      pumpTimer.at = at;
+      pumpTimer.id = setTimeout(() => {
+        pumpTimer.at = Infinity;
+        if (bib.dead) return;
+        if (Module._bib_pump) Module._bib_pump();
+      }, Math.max(0, ms));
+    };
+    // Socket-data poke: wisp stream bytes arrived; SOCKFS only buffers them,
+    // curl needs a multi pass to consume. Dedupe via its own channel so a
+    // burst of messages drains fully before one combined pump runs.
+    const netPumpChannel = new MessageChannel();
+    let netPumpScheduled = false;
+    netPumpChannel.port1.onmessage = () => {
+      netPumpScheduled = false;
+      if (bib.dead) return;
+      if (Module._bib_pump_network) Module._bib_pump_network();
+    };
+    const scheduleNetPump = () => {
+      if (netPumpScheduled) return;
+      netPumpScheduled = true;
+      netPumpChannel.port2.postMessage(0);
+    };
+
+    // A live engine instance is huge (256 MB wasm heap + compiled code for
+    // an ~89 MB module). NEVER let this page enter the back/forward cache:
+    // a bfcached page retains the whole instance, so every same-URL
+    // navigation/reload ratchets ~0.5-1 GB that is never freed (the
+    // Firefox lockup of 2026-06-10). An unload listener makes the page
+    // bfcache-ineligible; pagehide additionally drops the Module root so
+    // GC can reclaim the instance promptly.
+    window.addEventListener("unload", () => {});
+    // Best-effort persistence flush before the Module root drops. The dump
+    // is async (engine thread -> bibPersist -> debounced OPFS write), so a
+    // hard tab close may lose it — the dependable flush is visibilitychange
+    // below (tab switch), and the 5s steady-state cadence bounds the loss.
+    const flushPersist = () => {
+      try {
+        if (window.Module && Module._bib_persist_now && bib.ready && !bib.dead)
+          Module._bib_persist_now();
+      } catch {}
+    };
+    window.addEventListener("pagehide", () => {
+      flushPersist();
+      window.Module = null;
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") flushPersist();
+    });
+
+    // ?demo=hello loads the Phase 2 gate page (pixel-stable, script-free,
+    // verdict computed on frame 0 — used by gate2-browser-test.mjs).
+    // Default is the interactive Phase 3 page (script ON, driven by
+    // gate3-browser-test.mjs through real input).
+    // ?url=http://... navigates to a REAL page over Wisp once the engine is
+    // live (Phase 4).
+    const params = new URLSearchParams(location.search);
+    const demo = params.get("demo") ?? "interactive";
+    const navigateURL = params.get("url");
+
+    // --- Engine-state persistence (cookies + guest localStorage) ---------
+    // The engine dumps one JSON blob (Module.bibPersist, ~5s cadence, only
+    // on change); it lands in OPFS keyed to THIS page's origin — one
+    // "browser profile" regardless of ?url=. On boot the blob is read back
+    // and handed to the engine as Module.bibSeedState before the first
+    // load. ?persist=0 disables for this load; ?persist=clear wipes the
+    // profile and continues fresh. Playwright gates launch fresh browser
+    // profiles, so OPFS starts empty there — no cross-run leakage.
+    const persistParam = params.get("persist");
+    const persistOn = persistParam !== "0" && !!(navigator.storage && navigator.storage.getDirectory);
+    const PERSIST_FILE = "bib-state-v1.json";
+    const persistSeedReady = (async () => {
+      if (!persistOn) return null;
+      try {
+        const root = await navigator.storage.getDirectory();
+        if (persistParam === "clear") {
+          await root.removeEntry(PERSIST_FILE).catch(() => {});
+          log("persist: cleared stored engine state");
+          return null;
+        }
+        const file = await (await root.getFileHandle(PERSIST_FILE)).getFile();
+        const text = await file.text();
+        // Engine-side dumps cap at 12MB — anything bigger is a corrupt or
+        // foreign file; don't copy it into the wasm heap (Codex LOW).
+        if (text.length > 16 * 1024 * 1024) {
+          log("persist: stored profile oversized — ignoring");
+          return null;
+        }
+        return text || null;
+      } catch {
+        return null; // first run — no profile yet
+      }
+    })();
+    let persistTimer = 0;
+    let persistPending = null;
+    let persistWriting = false;
+    async function persistWriteLoop() {
+      if (persistWriting) return;
+      persistWriting = true;
+      try {
+        while (persistPending !== null) {
+          const text = persistPending;
+          persistPending = null;
+          try {
+            const root = await navigator.storage.getDirectory();
+            const handle = await root.getFileHandle(PERSIST_FILE, { create: true });
+            const w = await handle.createWritable();
+            await w.write(text);
+            await w.close();
+          } catch (e) {
+            // The engine's change-detector already advanced — losing this
+            // blob here would lose it FOREVER (no new push until the state
+            // changes again). Re-queue and retry on a timer (Codex MEDIUM).
+            log("persist: write failed (will retry): " + e);
+            if (persistPending === null) persistPending = text;
+            break;
+          }
+        }
+      } finally {
+        persistWriting = false;
+        if (persistPending !== null && !persistTimer)
+          persistTimer = setTimeout(() => {
+            persistTimer = 0;
+            persistWriteLoop();
+          }, 5000);
+      }
+    }
+    function bibPersist(json) {
+      if (!persistOn) return;
+      persistPending = json;
+      if (persistTimer) return;
+      persistTimer = setTimeout(() => {
+        persistTimer = 0;
+        persistWriteLoop();
+      }, 500);
+    }
+
+    // --- Media bridge (M-A, audio-only, ?media=1) -------------------------
+    // The engine's BibMediaPlayer mirrors guest <audio> elements to host
+    // Audio() elements living HERE: host does fetch + decode + clock,
+    // engine does DOM semantics. NOTE the flagged wisp exception: these
+    // elements fetch media URLs directly from the host browser.
+    // Event/op codes mirror src/embedder/BibMediaPlayer.cpp — keep in sync.
+    const mediaEnabled = params.get("media") === "1";
+    const mediaPlayers = new Map();
+    const bibMediaCanPlay = (type) => {
+      try {
+        const answer = new Audio().canPlayType(type);
+        return answer === "probably" ? 2 : answer === "maybe" ? 1 : 0;
+      } catch {
+        return 0;
+      }
+    };
+    const bibMediaCreate = (id) => {
+      const el = new Audio();
+      el.preload = "auto";
+      const send = (code, a = 0, b = 0) => {
+        try {
+          if (window.Module && Module._bib_media_event)
+            Module._bib_media_event(id, code, a, b);
+        } catch {}
+      };
+      el.addEventListener("loadedmetadata", () => send(1, el.duration));
+      el.addEventListener("canplay", () => send(2));
+      el.addEventListener("canplaythrough", () => send(3));
+      el.addEventListener("playing", () => send(4));
+      el.addEventListener("pause", () => send(5));
+      el.addEventListener("timeupdate", () => send(6, el.currentTime));
+      el.addEventListener("ended", () => send(7, el.currentTime));
+      el.addEventListener("error", () => send(8, (el.error && el.error.code) || 2));
+      el.addEventListener("durationchange", () => send(9, el.duration));
+      el.addEventListener("progress", () =>
+        send(10, el.buffered.length ? el.buffered.end(el.buffered.length - 1) : 0));
+      el.addEventListener("seeked", () => send(11, el.currentTime));
+      mediaPlayers.set(id, { el, send });
+    };
+    // WISP INVARIANT: the engine fetched these bytes itself (guest curl
+    // over wisp, guest cookies); the host element only decodes a Blob —
+    // it never touches the network.
+    const bibMediaLoadBytes = (id, bytes, mime) => {
+      const p = mediaPlayers.get(id);
+      if (!p) return;
+      if (p.url) URL.revokeObjectURL(p.url);
+      p.url = URL.createObjectURL(new Blob([bytes], { type: mime || "application/octet-stream" }));
+      log(`media: ${bytes.length} bytes (${mime}) -> blob`);
+      p.el.src = p.url;
+      p.el.load();
+    };
+    const bibMediaCtl = (id, op, a) => {
+      const p = mediaPlayers.get(id);
+      if (!p) return;
+      const el = p.el;
+      switch (op) {
+        case 1:
+          // Autoplay policy applies to the HOST element; guest clicks land
+          // on our canvas, so a user gesture usually exists. A rejection is
+          // surfaced as MediaError.code 2 (network) — closest spec fit the
+          // engine can map without a play-promise channel.
+          el.play().catch((e) => {
+            log("media: play rejected: " + e.name);
+            p.send(8, 2);
+          });
+          break;
+        case 2: el.pause(); break;
+        case 3: try { el.currentTime = a; } catch {} break;
+        case 4: el.volume = Math.min(1, Math.max(0, a)); break;
+        case 5: el.muted = !!a; break;
+        case 6: el.playbackRate = a; break;
+        case 7:
+          el.pause();
+          el.removeAttribute("src");
+          el.load();
+          if (p.url) { URL.revokeObjectURL(p.url); p.url = null; }
+          break;
+      }
+    };
+    const bibMediaDestroy = (id) => {
+      const p = mediaPlayers.get(id);
+      if (!p) return;
+      p.el.pause();
+      p.el.removeAttribute("src");
+      p.el.load(); // run the unload algorithm — releases the resource (Codex)
+      if (p.url) URL.revokeObjectURL(p.url);
+      mediaPlayers.delete(id);
+    };
+    // Harness/diagnostics: the bridge elements are DETACHED Audio()s —
+    // invisible to querySelectorAll, only reachable through this map.
+    window.__bibMedia = mediaPlayers;
+
+    // --- Wisp transport (Phase 4) ---------------------------------------
+    // The engine's BSD sockets surface as SOCKFS WebSockets. With
+    // Module.websocket.url = 'ws://', SOCKFS builds exactly
+    // 'ws://<host>:<port>/' — the destination hostname survives, because
+    // Emscripten maps its fake DNS IPs back via DNS.lookup_addr before
+    // connect. The dispatcher reroutes those URLs onto Wisp streams
+    // (one shared mux connection per wisp endpoint); everything else gets
+    // the page's native WebSocket. TLS terminates inside the engine — the
+    // Wisp stream is a plain byte pipe.
+    const wispServer = params.get("wisp") ?? "ws://127.0.0.1:5001/";
+    const NativeWebSocket = window.WebSocket;
+    const sockfsURL = /^ws:\/\/([^:/]+):(\d+)\/$/;
+    // Discriminator: only sockets carrying the engine's marker subprotocol
+    // (Module.websocket.subprotocol below — only SOCKFS sends it) are
+    // rerouted; a stray page-level `new WebSocket("ws://x:1/")` stays
+    // native (Codex 2026-06-10). WispWebSocket ignores subprotocols.
+    const isEngineSocket = (protocols) =>
+      protocols === "bib-sockfs" ||
+      (Array.isArray(protocols) && protocols.includes("bib-sockfs"));
+    window.WebSocket = function (url, protocols) {
+      const m = sockfsURL.exec(url);
+      if (m && isEngineSocket(protocols)) {
+        log(`wisp: stream -> ${m[1]}:${m[2]}`);
+        const ws = new wisp_client.client.WispWebSocket(`${wispServer}${m[1]}:${m[2]}`);
+        // W-B1 wedge diagnostics: count payload bytes that REACHED the page
+        // so a stalled load splits into "bytes never arrived" (wisp/server)
+        // vs "engine never consumed" (pump/proxy). Cheap; kept.
+        ws.addEventListener("message", (e) => {
+          const n = e.data?.byteLength || e.data?.length || 0;
+          window.__bibWispBytes = (window.__bibWispBytes || 0) + n;
+          // #78: per-host byte accounting. These are TLS-encrypted stream bytes
+          // (TLS terminates in-engine), so the count ≈ the compressed payload
+          // size per host — enough to size Discord's gateway READY and validate
+          // the payload-reduction levers (IDB client_state, large_threshold).
+          // null-proto: a host literally named "constructor"/"__proto__" must
+          // not collide with Object.prototype keys (Codex LOW).
+          const sb = (window.__bibStreamBytes || (window.__bibStreamBytes = Object.create(null)));
+          sb[m[1]] = (sb[m[1]] || 0) + n;
+        });
+        // Surface non-voluntary stream closes with the wisp reason name.
+        // A failed dial otherwise dies inside TLS as a phantom curl=35
+        // "SSL connect error" — e.g. hosts an ad-blocking DNS resolves to
+        // 0.0.0.0 land here as NetworkError/ConnRefused.
+        ws.addEventListener("close", (e) => {
+          if (e.code === 2) return; // Voluntary
+          const names = wisp_client.packet.close_reasons;
+          const name = Object.keys(names).find((k) => names[k] === e.code) ?? "?";
+          log(`wisp: stream CLOSED ${m[1]}:${m[2]} reason=${e.code} (${name})`);
+        });
+        // Data arrived for an engine socket — give curl a pass promptly
+        // instead of waiting out the pump's polling re-arm.
+        ws.addEventListener("message", scheduleNetPump);
+        ws.addEventListener("open", scheduleNetPump);
+        return ws;
+      }
+      return new NativeWebSocket(url, protocols);
+    };
+    window.WebSocket.prototype = NativeWebSocket.prototype;
+
+    // --- #78/#79 host-side freeze UX + gateway payload accounting ---------
+    // The engine runs on a pthread; the host main thread stays responsive while
+    // the engine is blocked in a long no-JIT RunLoop::cycle (e.g. Discord's
+    // ~10s gateway READY hydration — task #77). Watch window.__bib.frames; a
+    // stall means the engine is busy, so show a host overlay whose CSS spinner
+    // animates on the host compositor, unaffected by the engine stall. An idle
+    // page ALSO stops delivering frames, so steady-state stalls surface the
+    // overlay only if the user just interacted (a freeze they caused) — never
+    // on a quiescent page. During initial load it shows unconditionally.
+    (function bibFreezeUX() {
+      const ov = document.getElementById("bibfreeze");
+      const msgEl = document.getElementById("bibfreeze-msg");
+      const subEl = document.getElementById("bibfreeze-sub");
+      const reloadEl = document.getElementById("bibfreeze-reload");
+      const STALL_MS = 450;        // no new frame this long while busy => mid-cycle
+      const INPUT_WINDOW_MS = 3000;
+      const LOAD_DONE_FRAMES = 60; // ~2s of real painting => the app is up
+      // browsception 1.5 heartbeat: frames stalling is ambiguous (idle pages
+      // stop pushing too), so when a stall lasts, probe the engine thread
+      // with a readback round-trip; one unanswered past HEARTBEAT_MS means
+      // the thread is gone or wedged (guest infinite loop — see
+      // issues/guest-js-can-wedge-engine-thread.md) => offer Reload.
+      // ?hbms=N shortens the window for tests.
+      const HEARTBEAT_MS = Number(params.get("hbms")) || 20000;
+      let hbSentAt = 0, hbAnswered = true;
+      let lastFrames = -1, lastFrameT = performance.now(), loadDone = false, inFreeze = false, lastInputT = 0, shown = "";
+      // Track input across the whole page (canvas AND host chrome — the URL
+      // bar / Go button), so a guest navigation typed into #urlbar still counts
+      // as a user-caused stall and surfaces the overlay (Codex MEDIUM). Capture
+      // phase so it fires even if a handler stops propagation.
+      ["pointerdown", "keydown", "wheel"].forEach((ev) =>
+        document.addEventListener(ev, () => { lastInputT = performance.now(); }, { passive: true, capture: true }));
+      function set(title, sub, reload) {
+        const key = title + "|" + sub + "|" + reload;
+        if (shown === key) return; // don't thrash the DOM every tick
+        shown = key;
+        msgEl.textContent = title;
+        subEl.textContent = sub || "";
+        ov.dataset.spin = reload ? "0" : "1";
+        reloadEl.style.display = reload ? "" : "none";
+        ov.style.display = "flex";
+      }
+      function hide() { if (shown !== "") { shown = ""; ov.style.display = "none"; } }
+      setInterval(() => {
+        const b = window.__bib;
+        if (!b) return;
+        const now = performance.now();
+        if (b.dead) { set("Engine stopped", "Reload to restart.", true); return; }
+        if (!b.ready) return; // boot is covered by the status line
+        if (b.frames !== lastFrames) {
+          lastFrames = b.frames; lastFrameT = now; inFreeze = false;
+          if (b.frames >= LOAD_DONE_FRAMES) loadDone = true;
+          hide();
+          return;
+        }
+        const stalled = now - lastFrameT;
+        // Heartbeat (see above): only while stalled; each probe waits for the
+        // previous answer, so an alive-but-idle engine just answers cheaply.
+        if (stalled >= HEARTBEAT_MS) {
+          if (!hbAnswered && now - hbSentAt >= HEARTBEAT_MS) {
+            set("Engine unresponsive", "Likely stuck or gone — reload to recover.", true);
+            return;
+          }
+          if (hbAnswered && now - hbSentAt >= HEARTBEAT_MS) {
+            hbAnswered = false;
+            hbSentAt = now;
+            b.readback().then(() => { hbAnswered = true; });
+          }
+        }
+        if (!loadDone) {
+          if (stalled >= 800)
+            set("Loading…", "", false);
+          return;
+        }
+        // steady state: surface only a freeze the user caused; never on idle.
+        if (!inFreeze && stalled >= STALL_MS && now - lastInputT <= INPUT_WINDOW_MS)
+          inFreeze = true;
+        if (inFreeze)
+          set("Working…", "", false);
+      }, 150);
+      // #78: periodic per-host wisp byte dump (perflog only) to size the payload.
+      if (params.get("perflog") === "1") {
+        setInterval(() => {
+          const sb = window.__bibStreamBytes; if (!sb) return;
+          const top = Object.keys(sb).sort((a, c) => sb[c] - sb[a]).slice(0, 5)
+            .map((h) => h + "=" + (sb[h] / 1048576).toFixed(2) + "MB").join("  ");
+          if (top) log("wisp bytes/host: " + top);
+        }, 2000);
+      }
+    })();
+
+    // MUST stay byte-identical to kTestHTML in src/embedder/main.cpp so the
+    // browser pixel counts match the offscreen gate exactly.
+    const helloHTML =
+      "<!DOCTYPE html>" +
+      "<html><head><title>gate</title></head>" +
+      "<body style='background:#ffffff; margin:0'>" +
+      "<h1 style='color:#cc0000; font-size:48px; margin:20px'>hello</h1>" +
+      "<div style='width:200px; height:100px; background:#0066cc'></div>" +
+      "</body></html>";
+
+    // Interactive test page. Absolute positions + flat colors so the gate
+    // can probe exact pixels regardless of fonts:
+    //   hoverbox  (20,20 100x100)  #00aa00 -> #ff8800 on :hover
+    //   clickbtn  (160,20 100x100) #888888; onclick paints result #ff00ff
+    //   result    (300,20 100x100) #444444
+    //   keyresult (440,20 100x100) #222222; 'h' keydown -> #00ffff,
+    //                                       field value 'hi' -> #ffff00
+    //   field     (580,30 input)   typing target
+    //   marker    (20,700 100x100) #123456, visible only after scrolling
+    const interactiveHTML =
+      "<!DOCTYPE html><html><head><style>" +
+      "  body { margin:0; background:#ffffff; }" +
+      "  #hoverbox { position:absolute; left:20px; top:20px; width:100px; height:100px; background:#00aa00; }" +
+      "  #hoverbox:hover { background:#ff8800; }" +
+      "  #clickbtn { position:absolute; left:160px; top:20px; width:100px; height:100px; background:#888888; }" +
+      "  #result   { position:absolute; left:300px; top:20px; width:100px; height:100px; background:#444444; }" +
+      "  #keyresult{ position:absolute; left:440px; top:20px; width:100px; height:100px; background:#222222; }" +
+      "  #field    { position:absolute; left:580px; top:30px; width:150px; height:32px; font-size:16px; }" +
+      "  #marker   { position:absolute; left:20px; top:700px; width:100px; height:100px; background:#123456; }" +
+      "</style></head><body>" +
+      "<div id=hoverbox></div>" +
+      "<div id=clickbtn onclick=\"document.getElementById('result').style.background='#ff00ff'\"></div>" +
+      "<div id=result></div>" +
+      "<div id=keyresult></div>" +
+      "<input id=field>" +
+      "<div style='height:1400px'></div>" +
+      "<div id=marker></div>" +
+      "<script>" +
+      "  document.addEventListener('keydown', function(e) { if (e.key === 'h') document.getElementById('keyresult').style.background = '#00ffff'; });" +
+      "  document.getElementById('field').addEventListener('input', function(e) { if (e.target.value === 'hi') document.getElementById('keyresult').style.background = '#ffff00'; });" +
+      "<\/script>" +
+      "</body></html>";
+
+    // Diagnostic: does an inline <script> execute at all? Body turns green
+    // iff JSC ran. Probe any pixel: #00cc00 = script ran, #ffffff = not.
+    const scriptTestHTML =
+      "<!DOCTYPE html><html><body style='margin:0; background:#ffffff'>" +
+      "<script>document.body.style.background='#00cc00';<\/script>" +
+      "</body></html>";
+
+    // Machine-readable state for the gate tests.
+    // W-B1: the engine renders on its own pthread — the page cannot pull
+    // pixels synchronously. probe() is now ASYNC: it requests a readback
+    // and resolves when the engine pushes the frame to bibReadbackReady.
+    // playwright's evaluate() awaits returned promises, so gate harnesses
+    // calling `__bib.probe(x, y)` keep working unchanged.
+    let readbackWaiters = [];
+    const bib = (window.__bib = {
+      ready: false, dead: false, ticks: 0, frames: 0, verdict: "pending",
+      exactBlue: -1, redGlyph: -1,
+      // Force a repaint and read one pixel straight from the engine's
+      // unpremultiplied RGBA buffer (NOT canvas getImageData — the canvas
+      // premul round-trip is lossy). Resolves null if the engine is dead
+      // or the readback failed.
+      probe(x, y) {
+        return this.readback().then((frame) => {
+          if (!frame) return null;
+          x |= 0; y |= 0;
+          if (x < 0 || y < 0 || x >= frame.w || y >= frame.h) return null;
+          const i = (y * frame.w + x) * 4;
+          return [frame.data[i], frame.data[i + 1], frame.data[i + 2]];
+        });
+      },
+      // SYNC probe against the LAST pushed readback frame, kicking a fresh
+      // (collapsed) request for the next caller. For waitForFunction
+      // predicates, which CANNOT be async: playwright treats an async
+      // predicate's returned Promise as truthy under interval polling, so
+      // the wait passes vacuously (cost us a day's worth of phantom W-B1
+      // "wedges"). Polling predicates converge one poll late; one-shot
+      // reads should use the async probe() via an awaited evaluate.
+      lastFrame: null,
+      probeSync(x, y) {
+        if (!this.ready || this.dead) return null;
+        Module._bib_request_readback();
+        const frame = this.lastFrame;
+        if (!frame) return null;
+        x |= 0; y |= 0;
+        if (x < 0 || y < 0 || x >= frame.w || y >= frame.h) return null;
+        const i = (y * frame.w + x) * 4;
+        return [frame.data[i], frame.data[i + 1], frame.data[i + 2]];
+      },
+      // Full-frame async readback: {data (tightly packed RGBA copy), w, h}
+      // or null. Harnesses that sample many pixels use ONE of these instead
+      // of per-pixel probes (each probe forces a full engine repaint).
+      readback() {
+        // Pre-ready: the engine thread doesn't exist yet and the C side
+        // DROPS proxied requests — a waiter pushed now never resolves, and
+        // a never-settling promise stalls waitForFunction polling forever
+        // (gate6/7 regression). Resolve null, like the old sync probe did
+        // before main() set g_engine.
+        if (!this.ready || this.dead) return Promise.resolve(null);
+        return new Promise((resolve) => {
+          readbackWaiters.push(resolve);
+          Module._bib_request_readback();
+        });
+      },
+      // Diagnostic: run JS in the GUEST page's main world. Results come
+      // back via the guest-console forwarder (wrap in console.log).
+      // W-B1: queued to the engine thread; 1 = queued, not yet executed.
+      eval(code) {
+        return Module.ccall("bib_eval", "number", ["string"], [code]);
+      },
+      // browsception 1.5: every Worker the engine spawns (pthread pool incl.
+      // the proxied-main engine thread) — see the tracker in the boot gate.
+      workers: [],
+      // Test hook: hard-kill the engine like a real worker death (no abort
+      // signal fires — detection is the heartbeat's job, which is the point).
+      killEngine() {
+        for (const w of this.workers) {
+          try { w.terminate(); } catch {}
+        }
+      },
+    });
+
+    // Same region assertions as the offscreen gate (hello demo only).
+    // tol=0 (CPU) keeps the blue test pixel-exact; GPU passes tol=2 so the
+    // gate doesn't fail on driver-level rounding (shading has matched the
+    // CPU raster exactly so far — M1 readback was pixel-identical).
+    function judgeHelloFrame(pixels, w, h, tol = 0) {
+      let exactBlue = 0, redGlyph = 0;
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const i = (y * w + x) * 4;
+          const r = pixels[i], g = pixels[i + 1], b = pixels[i + 2];
+          if (r <= tol && Math.abs(g - 0x66) <= tol && Math.abs(b - 0xcc) <= tol) exactBlue++;
+          if (y < 76 && r > 0x90 && g < 0x60 && b < 0x60) redGlyph++;
+        }
+      }
+      bib.exactBlue = exactBlue;
+      bib.redGlyph = redGlyph;
+      bib.verdict = exactBlue === 200 * 100 && redGlyph >= 200 ? "PASS" : "FAIL";
+      gateEl.textContent = `${bib.verdict} (blue=${exactBlue} glyph=${redGlyph})`;
+      gateEl.className = bib.verdict === "PASS" ? "pass" : "fail";
+      log(`gate: ${bib.verdict} exactBlue=${exactBlue} redGlyph=${redGlyph}`);
+    }
+
+    // Mousemove coalescing: forwarding every host mousemove (can be
+    // hundreds/sec) synchronously enters the engine's hit-test path. Keep
+    // only the latest; flush once per frame — and before any button/wheel
+    // event so the engine sees positions in order.
+    let pendingMove = null;
+    function flushPendingMove() {
+      if (!pendingMove || bib.dead) return;
+      Module._bib_mouse_move(pendingMove[0], pendingMove[1], pendingMove[2]);
+      pendingMove = null;
+    }
+
+    // GPU context loss: G4 (W-B2) recovers IN PLACE engine-side — the
+    // canvas (OffscreenCanvas under pthreads, the DOM canvas otherwise)
+    // fires lost/restored on the engine's side and it rebuilds its Ganesh
+    // world there. This reload protocol is only the FALLBACK, invoked by
+    // the engine (Module.bibGpuLostReload) when restore never arrives or
+    // the rebuild fails. No page-side webglcontextlost listener anymore:
+    // under pthreads the page canvas is a placeholder that gets no events,
+    // and in single-threaded builds a page listener would race the
+    // engine's in-place recovery. Loss state rides the URL (?gpulost=1),
+    // NOT sessionStorage: opaque-origin / privacy-hardened contexts throw
+    // on storage access, which would kill the handler and leave the page
+    // dead (Codex, G3). A second loss means this GPU/driver can't hold a
+    // context → ?gpu=0.
+    function gpuLostReload() {
+      // gpuMode guard mirrors bibGpuFallback: a stray engine call on a
+      // raster page must not bolt ?gpulost=1 onto a working session.
+      if (!gpuMode || bib.dead) return;
+      const u = new URL(location.href);
+      const second = u.searchParams.get("gpulost") === "1";
+      if (second) u.searchParams.set("gpu", "0");
+      else u.searchParams.set("gpulost", "1");
+      log(`WebGL context lost — reloading${second ? " in raster mode" : ""}`);
+      statusEl.textContent = "GPU context lost — reloading";
+      location.replace(u.href);
+    }
+
+    // W-B1: the rAF loop only provides CADENCE — _bib_tick self-proxies to
+    // the engine thread (bursts collapse engine-side, so a pegged engine
+    // never accumulates a backlog) and the engine PUSHES painted frames
+    // back through Module.bibBlit below. The page never touches engine
+    // pixels synchronously anymore.
+    function blitLoop() {
+      if (bib.dead) return; // ends the rAF chain after an abort
+      flushPendingMove();
+      Module._bib_tick();
+      bib.ticks++;
+      // A DOM write per frame is pointless churn; the counter is cosmetic.
+      if (!(bib.ticks % 30)) ticksEl.textContent = bib.ticks;
+      requestAnimationFrame(blitLoop);
+    }
+
+    // browsception 1.3 zero-copy frame receiver (raster path): the engine
+    // passes a POINTER into the shared heap plus the framebuffer geometry;
+    // we copy just the dirty box out (ImageData rejects SAB-backed views)
+    // and putImageData it. fbW/fbH changing means bib_set_viewport resized
+    // the engine framebuffer — resize #screen to match (the resize clears
+    // the canvas; the first post-resize push is always a full frame).
+    function bibFrame(ptr, fbW, fbH, strideBytes, x, y, w, h) {
+      if (bib.dead || !ctx) return;
+      if (canvas.width !== fbW || canvas.height !== fbH) {
+        canvas.width = fbW;
+        canvas.height = fbH;
+        canvas.style.width = fbW + "px";
+        canvas.style.height = fbH + "px";
+      }
+      // Fresh view every frame: a cross-thread memory grow leaves cached
+      // views stale (W-B0), and the buffer object survives growth.
+      const heap = new Uint8Array(Module.HEAPU8.buffer);
+      const pixels = new Uint8ClampedArray(w * h * 4);
+      for (let row = 0; row < h; row++) {
+        const src = ptr + (y + row) * strideBytes + x * 4;
+        pixels.set(heap.subarray(src, src + w * 4), row * w * 4);
+      }
+      ctx.putImageData(new ImageData(pixels, w, h), x, y);
+      if (bib.frames === 0 && demo === "hello") judgeHelloFrame(pixels, w, h, 0);
+      bib.frames++;
+      blitsEl.textContent = bib.frames;
+    }
+
+    // Frame push receiver: `bytes` is a tightly-packed COPY of the dirty
+    // box (the engine copied it out of the shared heap — ImageData rejects
+    // SAB-backed views). The first push is always the forced full frame,
+    // which is when the hello gate judges. (Legacy path — raster engines
+    // with bibFrame support use the zero-copy receiver above.)
+    function bibBlit(bytes, x, y, w, h) {
+      if (bib.dead || !ctx) return;
+      const pixels = new Uint8ClampedArray(bytes.buffer, bytes.byteOffset, w * h * 4);
+      ctx.putImageData(new ImageData(pixels, w, h), x, y);
+      // tol=2 in GPU mode absorbs driver-level rounding (Ganesh paint differs
+      // from CPU raster by ≤1-2 LSB); raster stays pixel-exact (tol=0).
+      if (bib.frames === 0 && demo === "hello") judgeHelloFrame(pixels, w, h, gpuMode ? 2 : 0);
+      bib.frames++;
+      blitsEl.textContent = bib.frames;
+    }
+
+    // Readback push receiver (async __bib.probe): resolve every waiter
+    // with the same frame; `data` is null when the engine-side render
+    // failed.
+    function bibReadbackReady(data, w, h) {
+      const waiters = readbackWaiters;
+      readbackWaiters = [];
+      const frame = data ? { data, w, h } : null;
+      if (frame) bib.lastFrame = frame; // probeSync's cache
+      for (const resolve of waiters) resolve(frame);
+    }
+
+    // --- Input forwarding: canvas events -> engine EventHandler ---
+    const mods = (e) =>
+      (e.shiftKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.altKey ? 4 : 0) | (e.metaKey ? 8 : 0);
+
+    function wireInput() {
+      canvas.addEventListener("mousemove", (e) => {
+        pendingMove = [e.offsetX, e.offsetY, mods(e)];
+      });
+      canvas.addEventListener("mousedown", (e) => {
+        if (bib.dead) return;
+        canvas.focus();
+        e.preventDefault();
+        flushPendingMove();
+        Module._bib_mouse_button(1, e.button, e.offsetX, e.offsetY, e.detail || 1, mods(e));
+      });
+      canvas.addEventListener("mouseup", (e) => {
+        if (bib.dead) return;
+        e.preventDefault();
+        flushPendingMove();
+        Module._bib_mouse_button(0, e.button, e.offsetX, e.offsetY, e.detail || 1, mods(e));
+      });
+      canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+      canvas.addEventListener("wheel", (e) => {
+        if (bib.dead) return; // dead engine: give scrolling back to the host
+        e.preventDefault();
+        flushPendingMove();
+        Module._bib_wheel(e.offsetX, e.offsetY, e.deltaX, e.deltaY, mods(e));
+      }, { passive: false });
+
+      const sendKey = (type, e, text) =>
+        bib.dead ? 0 : Module.ccall("bib_key", "number",
+          ["number", "string", "string", "string", "number", "number", "number"],
+          [type, e.key, e.code, text, e.keyCode | 0, e.repeat ? 1 : 0, mods(e)]);
+      canvas.addEventListener("keydown", (e) => {
+        // Ctrl/Cmd combos belong to the HOST browser (devtools, reload) —
+        // don't preventDefault AND don't forward, or Ctrl+A would both
+        // select-all in the host and insert "a" into a focused engine
+        // field (Codex review 2026-06-10).
+        if (e.ctrlKey || e.metaKey) return;
+        e.preventDefault();
+        sendKey(0, e, "");
+        // The Char half of the RawKeyDown/Char split for printable keys
+        // (Enter/Tab included, matching WM_CHAR-style ports).
+        if (e.key.length === 1) sendKey(2, e, e.key);
+        else if (e.key === "Enter") sendKey(2, e, "\r");
+        else if (e.key === "Tab") sendKey(2, e, "\t");
+      });
+      canvas.addEventListener("keyup", (e) => {
+        if (e.ctrlKey || e.metaKey) return;
+        sendKey(1, e, "");
+      });
+
+      // browsception 1.4: canvas focus follows into the guest page (caret
+      // blink, :focus styling). Guarded — older engine builds lack the export.
+      const setFocus = (v) => {
+        if (!bib.dead && Module._bib_set_focus) Module._bib_set_focus(v);
+      };
+      canvas.addEventListener("focus", () => setFocus(1));
+      canvas.addEventListener("blur", () => setFocus(0));
+    }
+
+    // --- URL bar: navigate the ENGINE in place (no host-page reload) ---
+    const urlbarEl = document.getElementById("urlbar");
+    const gobtnEl = document.getElementById("gobtn");
+    // http(s) only: file: would read MEMFS (CA bundle, fonts) as content,
+    // javascript: executes in the engine page — and ?url= arrives from
+    // arbitrary links (Codex 2026-06-10).
+    function normalizeEngineURL(raw) {
+      let url = (raw ?? "").trim();
+      if (!url) return null;
+      if (!/^[a-z][a-z0-9+.-]*:/i.test(url)) url = "https://" + url;
+      try {
+        const parsed = new URL(url);
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+      } catch {
+        return null;
+      }
+      return url;
+    }
+    function navigateEngine(raw) {
+      if (bib.dead) {
+        statusEl.textContent = "engine crashed — reload the tab first";
+        return;
+      }
+      const url = normalizeEngineURL(raw ?? urlbarEl.value);
+      if (!url) {
+        statusEl.textContent = "blocked: only http(s) URLs";
+        return;
+      }
+      urlbarEl.value = url;
+      statusEl.textContent = `loading ${url}`;
+      log(`navigate: ${url}`);
+      Module.ccall("bib_load_url", null, ["string"], [url]);
+      // Keep ?url= shareable/bookmarkable without reloading the page.
+      const next = new URL(location.href);
+      next.searchParams.set("url", url);
+      history.replaceState(null, "", next);
+      canvas.focus();
+    }
+    gobtnEl.addEventListener("click", () => navigateEngine());
+    urlbarEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") navigateEngine();
+    });
+
+    // ---- guest wasm shim, host side (decision-006 S-A) ----
+    // The engine's polyfill ships guest module bytes here; Binaryen's
+    // wasm2js (binaryen.js, same v130 as the spike CLI) translates them to
+    // plain JS. Synchronous by design: the whole engine is single-threaded,
+    // so __bibWasm2js -> EM_ASM -> this function is one same-thread call
+    // chain and sync `new WebAssembly.Module()` probes (Discord's
+    // wasmSupported) just work.
+    let binaryen = null;
+    const wasmShimReady = Promise.allSettled([
+      import("./vendor/binaryen.js").then((m) => { binaryen = m.default; }),
+      fetch("wasm-polyfill.js").then((r) => (r.ok ? r.text() : "")),
+      fetch("media-stub.js").then((r) => (r.ok ? r.text() : "")),
+    ]).then(([, polyfill, media]) => {
+      // The injection payload is generic guest-startup script: wasm polyfill
+      // first (it consumes the __bibWasm2js bridge), then the Audio media
+      // stub (Tier A1 — independent of binaryen, self-disables once an
+      // ENABLE_VIDEO build provides the real elements). Either half may be
+      // absent without breaking the other.
+      let wasmText = polyfill.status === "fulfilled" ? polyfill.value : "";
+      if (!binaryen || !wasmText) {
+        log("wasm shim unavailable" + (binaryen ? "" : " (binaryen.js failed to load)"));
+        wasmText = "";
+      }
+      const mediaText = media.status === "fulfilled" ? media.value : "";
+      if (!mediaText)
+        log("media stub unavailable (media-stub.js failed to load)");
+      return wasmText + (wasmText && mediaText ? "\n;\n" : "") + mediaText;
+    });
+    function bibWasm2js(payload, mode) {
+      if (!binaryen)
+        return null; // guest sees CompileError
+      let mod = null;
+      try {
+        const bin = atob(payload);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        mod = binaryen.readBinary(bytes); // throws on invalid bytes, instance survives
+        // Same feature set as the spike CLI's `wasm2js -all`. Without this,
+        // binaryen.js defaults to MVP and a bulk-memory module trips a
+        // C-level assert that ABORTS the binaryen instance — bricking the
+        // shim for the rest of the session (parity run, 2026-06-11).
+        mod.setFeatures(binaryen.Features.All);
+        if (mode === "validate")
+          return "1";
+        let js = mod.emitAsmjs();
+        // Output form: `import * as env from 'env';` lines, the asmFunc
+        // declaration, then an auto-instantiation tail (`var memasmFunc...
+        // var retasmFunc = asmFunc({...}); export var x = ...`). Rebuild as
+        // a factory expression over the guest's importObject.
+        const importLines = [];
+        js = js.replace(/^import \* as ([A-Za-z_$][\w$]*) from '([^']*)';\s*$/gm, (_, local, name) => {
+          importLines.push([local, name]);
+          return "";
+        });
+        // Column-0 anchored: the auto-instantiation tail is the only place
+        // these names appear unindented (verified across the 102-module
+        // corpus; function-body vars are always indented — Codex MED).
+        const tail = js.search(/\nvar (mem|ret)asmFunc/);
+        if (tail >= 0) js = js.slice(0, tail);
+        const header = importLines
+          .map(([local, name]) => `var ${local} = imports[${JSON.stringify(name)}] || {};\n`)
+          .join("");
+        return "(function(imports){\n" + header + js + "\n;return asmFunc(imports);})";
+      } catch (e) {
+        if (mode === "validate")
+          return "0";
+        log("wasm2js translate failed: " + (e && e.message ? e.message : e));
+        return null;
+      } finally {
+        try { mod && mod.dispose(); } catch { }
+      }
+    }
+
+    // Classic (non-modularized) Emscripten output picks this up: in browser
+    // global scope `var Module` re-declares without clobbering the value.
+    window.Module = {
+      bibInteractive: true,
+      // Ganesh-over-WebGL2 paint path (decision-005 G2/G3). Default-on for
+      // humans, ?gpu=0 to force raster; the engine falls back to CPU raster
+      // if context/caps setup fails.
+      bibGPU: gpuMode,
+      // Guest 2D canvases texture-backed (CanvasUsesAcceleratedDrawing) —
+      // default-on with GPU since the G3 A/B: 600-arc canvas anim 51.97
+      // (cpu) / 29.08 (gpu) / 18.73 (this) ms/frame, and guest getImageData
+      // showed NO readback penalty (2.70ms vs 3.14 cpu — CLoop dominates).
+      // Bonus: canvas buffers leave the 4GB wasm heap. ?canvasgpu=0 escapes.
+      bibCanvasGPU: gpuMode && params.get("canvasgpu") !== "0",
+      // Engine GPU boot failed AFTER the host committed to GPU mode (no 2d
+      // context, bib_render pointers ignored) — engine-side CPU fallback
+      // alone would never reach the screen. Reload in raster mode
+      // (?gpu=0 skips the GPU boot entirely, so this cannot loop).
+      bibGpuFallback: () => {
+        if (!gpuMode) return;
+        log("engine GPU setup failed — reloading in raster mode");
+        const u = new URL(location.href);
+        u.searchParams.set("gpu", "0");
+        location.replace(u.href);
+      },
+      // G4 fallback: engine-side context restore never arrived or the
+      // Ganesh rebuild failed — reload (?gpulost=1, second loss ?gpu=0).
+      bibGpuLostReload: gpuLostReload,
+      // ?gpubench=0 disables the software-renderer present-bench POLICY
+      // (the engine still prints the measurement). Worker OffscreenCanvas
+      // contexts land on SwiftShader in many environments — including
+      // playwright headless — where GPU mode is correct but slower than
+      // raster; gate8 uses this to validate the pipeline there.
+      bibGpuBench: params.get("gpubench") !== "0",
+      bibHTML: demo === "hello" ? helloHTML : demo === "scripttest" ? scriptTestHTML : interactiveHTML,
+      // Guest wasm shim: the engine reads the polyfill source once at first
+      // window-object setup and calls bibWasm2js per module (see shim block
+      // above). bibWasmPolyfill is filled in by the boot gate below.
+      bibWasm2js,
+      bibWasmPolyfill: "",
+      // SOCKFS websocket config: bare prefix => 'ws://<host>:<port>/',
+      // which the dispatcher above reroutes onto Wisp streams. The
+      // subprotocol is the dispatcher's engine-socket marker.
+      websocket: { url: "ws://", subprotocol: "bib-sockfs" },
+      // ?curldebug=1 -> libcurl verbose tracing via printErr. Read from C
+      // in main() via setenv — Module.ENV-based getenv proved unreliable.
+      bibCurlDebug: !!params.get("curldebug"),
+      // ?noblock=1 -> disable the analytics/ads request blocklist (A/B knob;
+      // the loader strategy reads this once at boot). Strict "1" so
+      // ?noblock=0 doesn't silently disable it (Codex).
+      bibNoBlock: params.get("noblock") === "1",
+      // Event-driven pump hooks. W-B1: the ENGINE-side pokes now land in
+      // the pthread worker's Module (web/engine-pre.js) — these page-side
+      // copies are kept as a harmless fallback for single-threaded builds.
+      bibWakeUp: schedulePump,
+      bibArmTimer: armPumpTimer,
+      // W-B1 push receivers: the engine thread pushes painted frames and
+      // probe readbacks to the page (it cannot be pulled synchronously).
+      bibBlit,
+      bibFrame,
+      bibReadbackReady,
+      // Persistence: engine pushes the state blob here (debounced OPFS
+      // write); bibSeedState is filled by the boot gate below before the
+      // engine script loads.
+      bibPersist,
+      bibSeedState: null,
+      // M-A media bridge (?media=1): engine-side BibMediaPlayer drives
+      // these; bibMedia gates registration at boot.
+      bibMedia: mediaEnabled,
+      bibMediaCanPlay,
+      bibMediaCreate,
+      bibMediaLoadBytes,
+      bibMediaCtl,
+      bibMediaDestroy,
+      preRun: [function () {
+        // fontconfig's compiled-in cache dir must exist in MEMFS.
+        Module.FS.mkdirTree("/var/cache/fontconfig");
+      }],
+      // Called from C right before emscripten_exit_with_live_runtime() —
+      // the engine page is loaded, laid out, and painted once.
+      onEngineReady: function () {
+        bib.ready = true;
+        statusEl.textContent = `engine live (${demo}${gpuMode ? ", gpu" : ""})`;
+        wireInput();
+        canvas.focus();
+        requestAnimationFrame(blitLoop);
+        // Hello-gate verdict: raster-2d judges in bibBlit (first putImageData).
+        // gpu-bitmap/gpu-implicit never call bibBlit (frames go via
+        // bitmaprenderer / implicit present), so judge from a readback instead
+        // — gate8 waits on __bib.verdict. The readback reads the engine's
+        // texture surface, independent of the present path. tol=2 (GPU rounding).
+        if (demo === "hello" && presentMode !== "raster-2d") {
+          const judgeViaReadback = (tries) => bib.readback().then((frame) => {
+            if (frame) judgeHelloFrame(frame.data, frame.w, frame.h, 2);
+            else if (tries > 0) setTimeout(() => judgeViaReadback(tries - 1), 100);
+          });
+          judgeViaReadback(20);
+        }
+        urlbarEl.disabled = false;
+        gobtnEl.disabled = false;
+        // Same allowlist as the URL bar — ?url= arrives from arbitrary
+        // links and must not smuggle javascript:/file:/data: schemes.
+        const bootURL = navigateURL && normalizeEngineURL(navigateURL);
+        if (navigateURL && !bootURL)
+          statusEl.textContent = "blocked: only http(s) URLs in ?url=";
+        if (bootURL) {
+          urlbarEl.value = bootURL;
+          statusEl.textContent = `loading ${bootURL}`;
+          Module.ccall("bib_load_url", null, ["string"], [bootURL]);
+        }
+      },
+      print: (s) => log("out: " + s),
+      printErr: (s) => log("err: " + s),
+      onAbort: (r) => {
+        // Kill switch: after a wasm abort EVERY export throws, so a host
+        // page that keeps pumping turns one crash into an endless
+        // RuntimeError storm that lags the tab (live-tab report,
+        // 2026-06-11). Flag the corpse and stop every entry point; the
+        // FIRST abort reason stays readable at the top of the log.
+        bib.dead = true;
+        bib.verdict = "abort";
+        statusEl.textContent = "ENGINE CRASHED — reload the tab" + (gpuMode ? " (or retry with ?gpu=0)" : "");
+        urlbarEl.disabled = true;
+        gobtnEl.disabled = true;
+        clearTimeout(pumpTimer.id);
+        pumpTimer.at = Infinity;
+        log("abort: " + r);
+      },
+    };
+
+    // Engine boot gate: the injection text must be on Module before the
+    // engine's first window-object setup (it is read ONCE and cached), so
+    // the engine script is appended only after the shim prep settles. If
+    // every piece failed to load, bibWasmPolyfill stays "" and the engine
+    // skips injection — the old no-wasm, no-Audio behavior.
+    Promise.all([wasmShimReady, persistSeedReady]).then(([polyfillText, seedState]) => {
+      // browsception 1.2b: resource loads go through the host-fetch bridge
+      // (bib-net.js -> dev-server /__bibproxy), not curl/wisp.
+      installBibNet(Module);
+      Module.bibWasmPolyfill = polyfillText;
+      // Read ONCE by C main() before the first load; cookies seed the jar,
+      // localStorage waits per-origin for first touch.
+      Module.bibSeedState = seedState;
+      if (seedState) log(`persist: profile loaded (${seedState.length} bytes)`);
+      // Install the gpu-bitmap present Worker subclass BEFORE embedder.js so
+      // Emscripten's pthread pool (incl. the proxied-main engine worker) is
+      // created through it (no-op unless presentMode==="gpu-bitmap").
+      installBibPresentWorkerHook();
+      // Worker tracker LAST (outermost wrapper) so __bib.workers sees every
+      // engine-spawned worker regardless of present mode.
+      {
+        const Prev = window.Worker;
+        window.Worker = class BIBTrackedWorker extends Prev {
+          constructor(url, options) {
+            super(url, options);
+            bib.workers.push(this);
+          }
+        };
+        Object.setPrototypeOf(window.Worker, Prev);
+        window.Worker.prototype = Prev.prototype;
+      }
+      const s = document.createElement("script");
+      s.src = "engine/embedder.js";
+      document.body.appendChild(s);
+    });
+  </script>
+</body>
+</html>

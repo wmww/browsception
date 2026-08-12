@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Reproducible WebkitWasm engine build (spike 0.1 deliverable, 2026-08-10).
-# Wraps upstream's own idempotent scripts with the fixes a fresh checkout on a
-# current Arch host needs. See notes/engine-build.md for the full story.
+# Reproducible engine build. Wraps the engine's own idempotent scripts
+# (engine/WebkitWasm/tools/) with the fixes a fresh checkout on a current
+# Arch host needs. See notes/engine-build.md for the full story.
 #
 # Produces: engine/WebkitWasm/build/webcore/bin/embedder.{js,wasm} (~103 MB)
 # and an immutable snapshot under engine/artifacts/<stamp>/ (kept: newest 5)
@@ -12,15 +12,33 @@
 # 24 threads at BIB_JOBS=12). Incremental embedder-only change: ~2-3 min.
 set -euo pipefail
 
-# engine/ lives ONLY in the main checkout (gitignored). Resolve it through
-# the shared .git so running this from an ephemeral worktree reuses the one
-# engine tree instead of cloning + building 12 GB from scratch.
+# Engine sources are tracked in this repo, but the build state (third_party/,
+# build/ — absolute paths baked in) lives ONLY in the main checkout. Resolve
+# it through the shared .git so running this from an ephemeral worktree
+# builds the one shared engine tree instead of rebuilding 12 GB.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+CHECKOUT_ROOT="$(dirname "$SCRIPT_DIR")"
 MAIN_ROOT="$(dirname "$(git -C "$SCRIPT_DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || echo "$SCRIPT_DIR/../.git")")"
 HERE="$MAIN_ROOT/engine"
 mkdir -p "$HERE"
 W="$HERE/WebkitWasm"
 JOBS="${BIB_JOBS:-12}"
+
+[ -f "$W/src/embedder/main.cpp" ] || { echo "ERROR: engine sources missing at $W"; exit 1; }
+
+# Builds always compile the MAIN checkout's engine sources. If a worktree has
+# local engine/ edits, building from it would silently ignore them — abort.
+if [ "$CHECKOUT_ROOT" != "$MAIN_ROOT" ] && [ "${1:-}" != "--main-sources" ]; then
+  for d in src tools web; do
+    if ! diff -rq "$CHECKOUT_ROOT/engine/WebkitWasm/$d" "$W/$d" >/dev/null 2>&1; then
+      echo "ERROR: this worktree's engine/WebkitWasm/$d differs from the main checkout's."
+      echo "Builds compile the main checkout's sources — edit engine/ there instead"
+      echo "(notes/worktrees.md), or pass --main-sources to build main's sources anyway."
+      exit 1
+    fi
+  done
+fi
+[ "${1:-}" = "--main-sources" ] && shift
 
 # The engine tree (sources + ninja graph) is a shared singleton — serialize
 # builds across worktrees. Waits (with a note) if another build holds it.
@@ -40,15 +58,15 @@ snapshot() {
     echo "snapshot unchanged — keeping $(readlink "$HERE/artifacts/latest")"
     return 0
   fi
-  SHA="$(git -C "$W" rev-parse --short HEAD 2>/dev/null || echo nogit)"
+  SHA="$(git -C "$MAIN_ROOT" log -1 --format=%h -- engine/ 2>/dev/null || echo nogit)"
   DIRTY=""
-  [ -n "$(git -C "$W" status --porcelain --untracked-files=no 2>/dev/null)" ] && DIRTY="-dirty"
+  [ -n "$(git -C "$MAIN_ROOT" status --porcelain -- engine/ 2>/dev/null)" ] && DIRTY="-dirty"
   STAMP="$(date -u +%Y%m%d-%H%M%S)-$SHA$DIRTY"
   DEST="$HERE/artifacts/$STAMP"
   mkdir -p "$DEST"
   cp "$BIN/embedder.js" "$BIN/embedder.wasm" "$DEST/"
-  printf '{ "stamp": "%s", "wkw_branch": "%s", "wkw_sha": "%s", "wkw_dirty": %s }\n' \
-    "$STAMP" "$(git -C "$W" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')" "$SHA" \
+  printf '{ "stamp": "%s", "engine_branch": "%s", "engine_sha": "%s", "engine_dirty": %s }\n' \
+    "$STAMP" "$(git -C "$MAIN_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')" "$SHA" \
     "$([ -n "$DIRTY" ] && echo true || echo false)" > "$DEST/meta.json"
   ln -sfn "$STAMP" "$HERE/artifacts/latest"
   ls -1d "$HERE/artifacts"/2* 2>/dev/null | head -n -5 | xargs -r rm -rf
@@ -57,11 +75,9 @@ snapshot() {
 
 if [ "${1:-}" = "--snapshot-only" ]; then snapshot; exit; fi
 
-# --- 0. clone (pins live in upstream's bootstrap: WebKit webkitglib/2.52
-#        @ aec9d2ad95, Emscripten 6.0.0) ---------------------------------
-[ -d "$W/.git" ] || git clone https://github.com/theogbob/WebkitWasm "$W"
-
 # --- 1. host toolchain fixes --------------------------------------------
+# (pins live in the engine's bootstrap: WebKit webkitglib/2.52 @ aec9d2ad95,
+#  Emscripten 6.0.0)
 # CMake >= 4 breaks the pin (WebKitMacros.cmake:311 unquoted empty var, only
 # reachable in the Emscripten port). Pin CMake 3.31 locally.
 CMAKE_DIR="$HERE/cmake-3.31.7-linux-x86_64"
@@ -110,8 +126,6 @@ else
   echo "==> third_party ready — skipping bootstrap/dep stages (incremental build)"
 fi
 
-[ -d "$W/node_modules" ] || npm --prefix "$W" install
-
 # --- 4. font staging for non-Debian hosts: build-webcore.sh hardcodes
 #        /usr/share/fonts/truetype/dejavu/. Pre-stage from wherever the
 #        DejaVu faces actually are; the script's guard then skips its copy. --
@@ -141,4 +155,16 @@ BIB_JOBS="$JOBS" bash "$W/tools/build-webcore.sh"
 ls -lh "$W/build/webcore/bin/embedder.wasm"
 echo "OK — engine at $W/build/webcore/bin/"
 snapshot
+
+# --- 6. WebKit-patch drift guard: the tracked patch is the ONLY record of
+#        third_party/WebKit edits (the checkout is gitignored). Re-export and
+#        warn loudly if the WebKit working tree had edits not yet captured. --
+PATCH="$W/src/patches/webkit-emscripten.patch"
+BEFORE="$(sha256sum "$PATCH" 2>/dev/null | cut -d' ' -f1)"
+bash "$W/tools/export-webkit-patches.sh" >/dev/null
+if [ "$BEFORE" != "$(sha256sum "$PATCH" | cut -d' ' -f1)" ]; then
+  echo "WARNING: third_party/WebKit has edits that were NOT in the tracked patch."
+  echo "         src/patches/webkit-emscripten.patch has been re-exported — review and"
+  echo "         commit it, or WebKit-tree changes exist only in the 12 GB build state."
+fi
 echo "    stage into a checkout with: node tools/stage-engine.mjs"

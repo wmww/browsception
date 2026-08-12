@@ -19,7 +19,7 @@ node tools/wt-setup.mjs     # also auto-runs via npm pretest/pretest:tier2 hooks
 
 | Resource | Where | Sharing |
 |---|---|---|
-| `engine/` (12 GB WebkitWasm tree) | main checkout only | singleton; resolved via git common dir (`tools/lib/paths.mjs`), build serialized by `engine/.build.lock` (flock; owner in `.build.owner`) |
+| engine build state (`engine/WebkitWasm/{third_party,build}`, ~12 GB, gitignored) | main checkout only | singleton; resolved via git common dir (`tools/lib/paths.mjs`), build serialized by `engine/.build.lock` (flock; owner in `.build.owner`). Engine *sources* are tracked, so worktrees have copies — but never edit/build them there |
 | `engine/artifacts/<stamp>/` | main checkout | immutable snapshots of `embedder.{js,wasm}` + meta.json, newest 5 kept, `latest` symlink; created by `build-engine.sh` after each build (deduped if unchanged) |
 | `src/engine/` | per checkout | hardlinks into a snapshot (~0 disk; Chrome can't reliably follow symlinks, hardlinks are fine). Pruning a snapshot never breaks staged copies — hardlinks keep inodes alive |
 | `node_modules` | per checkout | hardlink-clone of main's |
@@ -35,26 +35,32 @@ don't interact at all.
 
 ## Engine (C++) work
 
-The engine tree is a **shared singleton** (sources + 7.4k-object ninja graph; per-worktree copies
-would cost 12 GB + a 45-min cold build each, ext4 has no reflinks, and there's no ccache). Protocol:
+Engine **sources** (`engine/WebkitWasm/{src,tools,web}`) are tracked in the main repo, so every
+worktree carries a copy — but builds always compile the **main checkout's** working tree (the
+7.4k-object ninja graph in `build/` + `third_party/` exist only there; per-worktree builds would
+cost 12 GB + a 45-min cold build each). Protocol:
 
-1. Edit sources in `/home/ai/browsception/engine/WebkitWasm` (branch `browsception`); WebKit-tree
-   edits go in its `third_party/WebKit` working tree.
+1. **Edit engine sources in the main checkout's working tree only** (`/home/ai/browsception`),
+   and commit them there directly. Worktree branches carry JS-side work; for coupled ABI+engine
+   changes, do the engine half in the main checkout and the JS half in the worktree. WebKit-tree
+   edits go in `third_party/WebKit`'s working tree.
 2. `bash tools/build-engine.sh` — works from any worktree (resolves the shared tree, takes the
    lock, waits with a message if another build is running). Incremental: no-op ~1 min,
-   embedder-only ~2–3 min (engine-build.md fix 6).
+   embedder-only ~2–3 min (engine-build.md fix 6). **Guard**: run from a worktree whose tracked
+   engine sources differ from main's, it aborts (your edits would be silently ignored);
+   `--main-sources` overrides.
 3. It snapshots to `engine/artifacts/` automatically; `node tools/stage-engine.mjs` in your
    worktree to pick it up (`--from <stamp>` to pin an older snapshot).
-4. Before ending an engine session: `tools/export-webkit-patches.sh` (in WebkitWasm) if you touched
-   the WebKit tree, and commit the WebkitWasm branch — leave the shared tree clean for the next
-   claude. `engine/.build.owner` says who built last.
+4. If you touched `third_party/WebKit`: build-engine.sh re-exports
+   `src/patches/webkit-emscripten.patch` after each build and warns if it changed — commit the
+   updated patch (it's the only tracked record of WebKit-tree edits). Leave the main checkout's
+   engine/ clean-and-committed for the next claude; `engine/.build.owner` says who built last.
 
 **Consequence**: only one line of engine work at a time. Two claudes with *divergent* engine
-changes would fight over the shared working tree/branch — don't; coordinate via the user. (If truly
-parallel engine work is ever needed: WebkitWasm `git worktree` + symlinked
-`third_party/{emsdk,build-deps,wasm-sysroot}` + a WebKit `git worktree` with the patch re-applied +
-its own build dir — costs a full ~45-min first build per workspace, cheaper only with ccache set
-up. Not built; escalate deliberately.)
+changes would fight over the shared working tree — don't; coordinate via the user. (If truly
+parallel engine work is ever needed: symlinked `third_party/{emsdk,build-deps,wasm-sysroot}` + a
+WebKit `git worktree` with the patch re-applied + its own build dir — costs a full ~45-min first
+build per workspace, cheaper only with ccache set up. Not built; escalate deliberately.)
 
 JS-side claudes are immune to concurrent engine rebuilds: staged artifacts are hardlinked
 snapshots, never the live build output (a relink can rewrite output in place).

@@ -1,0 +1,3498 @@
+diff --git a/Source/JavaScriptCore/CMakeLists.txt b/Source/JavaScriptCore/CMakeLists.txt
+index ea9ea17802f..0d82fa38651 100644
+--- a/Source/JavaScriptCore/CMakeLists.txt
++++ b/Source/JavaScriptCore/CMakeLists.txt
+@@ -312,11 +312,19 @@ add_custom_command(
+     COMMAND ${Ruby_EXECUTABLE} ${JAVASCRIPTCORE_DIR}/offlineasm/generate_settings_extractor.rb -I${JavaScriptCore_DERIVED_SOURCES_DIR}/ ${JAVASCRIPTCORE_DIR}/llint/LowLevelInterpreter.asm ${JavaScriptCore_DERIVED_SOURCES_DIR}/LLIntDesiredSettings.h ${OFFLINE_ASM_BACKEND}
+     VERBATIM)
+ 
++# Under Emscripten, $<TARGET_FILE> is the .js loader stub; the byte-scannable
++# binary (where offlineasm's magic values live) is the companion .wasm file.
++if (EMSCRIPTEN)
++    set(LLINT_SETTINGS_BINARY $<TARGET_FILE_DIR:LLIntSettingsExtractor>/LLIntSettingsExtractor.wasm)
++else ()
++    set(LLINT_SETTINGS_BINARY $<TARGET_FILE:LLIntSettingsExtractor>)
++endif ()
++
+ add_custom_command(
+     OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/LLIntDesiredOffsets.h
+     MAIN_DEPENDENCY ${JAVASCRIPTCORE_DIR}/offlineasm/generate_offset_extractor.rb
+     DEPENDS LLIntSettingsExtractor ${LLINT_ASM} ${OFFLINE_ASM} ${JavaScriptCore_DERIVED_SOURCES_DIR}/InitBytecodes.asm ${JavaScriptCore_DERIVED_SOURCES_DIR}/AirOpcode.h ${JavaScriptCore_DERIVED_SOURCES_DIR}/WasmOps.h
+-    COMMAND ${Ruby_EXECUTABLE} ${JAVASCRIPTCORE_DIR}/offlineasm/generate_offset_extractor.rb -I${JavaScriptCore_DERIVED_SOURCES_DIR}/ ${JAVASCRIPTCORE_DIR}/llint/LowLevelInterpreter.asm $<TARGET_FILE:LLIntSettingsExtractor> ${JavaScriptCore_DERIVED_SOURCES_DIR}/LLIntDesiredOffsets.h ${OFFLINE_ASM_BACKEND} ${BUILD_VARIANTS}
++    COMMAND ${Ruby_EXECUTABLE} ${JAVASCRIPTCORE_DIR}/offlineasm/generate_offset_extractor.rb -I${JavaScriptCore_DERIVED_SOURCES_DIR}/ ${JAVASCRIPTCORE_DIR}/llint/LowLevelInterpreter.asm ${LLINT_SETTINGS_BINARY} ${JavaScriptCore_DERIVED_SOURCES_DIR}/LLIntDesiredOffsets.h ${OFFLINE_ASM_BACKEND} ${BUILD_VARIANTS}
+     VERBATIM)
+ 
+ # JSCBuiltins
+@@ -417,6 +425,12 @@ if (NOT USE_SYSTEM_MALLOC)
+     list(APPEND LLIntSettingsExtractor_DEPENDENCIES bmalloc_CopyHeaders)
+ endif ()
+ WEBKIT_EXECUTABLE(LLIntSettingsExtractor)
++if (EMSCRIPTEN)
++    # Link at -O0: Binaryen's memory-packing pass (wasm-opt, run at -O1+)
++    # splits data segments around zero runs, which truncates the
++    # magic-value tables that offlineasm byte-scans in the .wasm binary.
++    target_link_options(LLIntSettingsExtractor PRIVATE "-O0")
++endif ()
+ 
+ # LLIntSettingsExtractor target needs to have a direct or indirect
+ # dependency to Bytecodes target for CMake Visual Studio generator to
+@@ -446,6 +460,10 @@ if (NOT USE_SYSTEM_MALLOC)
+     list(APPEND LLIntOffsetsExtractor_DEPENDENCIES bmalloc_CopyHeaders)
+ endif ()
+ WEBKIT_EXECUTABLE(LLIntOffsetsExtractor)
++if (EMSCRIPTEN)
++    # Same memory-packing issue as LLIntSettingsExtractor above.
++    target_link_options(LLIntOffsetsExtractor PRIVATE "-O0")
++endif ()
+ 
+ # The build system will execute asm.rb every time LLIntOffsetsExtractor's mtime is newer than
+ # LLIntAssembly.h's mtime. The problem we have here is: asm.rb has some built-in optimization
+@@ -463,11 +481,18 @@ if (MSVC AND NOT ENABLE_C_LOOP)
+     set(OFFLINE_ASM_ARGS --platform=Windows)
+ endif ()
+ 
++# Same .js-stub vs .wasm-binary distinction as LLIntSettingsExtractor above.
++if (EMSCRIPTEN)
++    set(LLINT_OFFSETS_BINARY $<TARGET_FILE_DIR:LLIntOffsetsExtractor>/LLIntOffsetsExtractor.wasm)
++else ()
++    set(LLINT_OFFSETS_BINARY $<TARGET_FILE:LLIntOffsetsExtractor>)
++endif ()
++
+ add_custom_command(
+     OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/${LLIntOutput}
+     MAIN_DEPENDENCY ${JAVASCRIPTCORE_DIR}/offlineasm/asm.rb
+     DEPENDS LLIntOffsetsExtractor ${LLINT_ASM} ${OFFLINE_ASM} ${JavaScriptCore_DERIVED_SOURCES_DIR}/InitBytecodes.asm
+-    COMMAND ${CMAKE_COMMAND} -E env CMAKE_CXX_COMPILER_ID=${CMAKE_CXX_COMPILER_ID} GCC_OFFLINEASM_SOURCE_MAP=${GCC_OFFLINEASM_SOURCE_MAP} ${Ruby_EXECUTABLE} ${JAVASCRIPTCORE_DIR}/offlineasm/asm.rb -I${JavaScriptCore_DERIVED_SOURCES_DIR}/ ${JAVASCRIPTCORE_DIR}/llint/LowLevelInterpreter.asm $<TARGET_FILE:LLIntOffsetsExtractor> ${JavaScriptCore_DERIVED_SOURCES_DIR}/${LLIntOutput} ${BUILD_VARIANTS} ${OFFLINE_ASM_ARGS}
++    COMMAND ${CMAKE_COMMAND} -E env CMAKE_CXX_COMPILER_ID=${CMAKE_CXX_COMPILER_ID} GCC_OFFLINEASM_SOURCE_MAP=${GCC_OFFLINEASM_SOURCE_MAP} ${Ruby_EXECUTABLE} ${JAVASCRIPTCORE_DIR}/offlineasm/asm.rb -I${JavaScriptCore_DERIVED_SOURCES_DIR}/ ${JAVASCRIPTCORE_DIR}/llint/LowLevelInterpreter.asm ${LLINT_OFFSETS_BINARY} ${JavaScriptCore_DERIVED_SOURCES_DIR}/${LLIntOutput} ${BUILD_VARIANTS} ${OFFLINE_ASM_ARGS}
+     COMMAND ${CMAKE_COMMAND} -E touch_nocreate ${JavaScriptCore_DERIVED_SOURCES_DIR}/${LLIntOutput}
+     WORKING_DIRECTORY ${JavaScriptCore_DERIVED_SOURCES_DIR}
+     VERBATIM)
+diff --git a/Source/JavaScriptCore/PlatformEmscripten.cmake b/Source/JavaScriptCore/PlatformEmscripten.cmake
+new file mode 100644
+index 00000000000..0e550c8e67f
+--- /dev/null
++++ b/Source/JavaScriptCore/PlatformEmscripten.cmake
+@@ -0,0 +1,6 @@
++# JavaScriptCore platform file for PORT=Emscripten.
++# ENABLE_REMOTE_INSPECTOR defaults OFF for this port; if it is ever enabled,
++# use the socket-based remote inspector like JSCOnly/PlayStation (no GLib).
++if (ENABLE_REMOTE_INSPECTOR)
++    include(inspector/remote/Socket.cmake)
++endif ()
+diff --git a/Source/JavaScriptCore/runtime/JSCBytecodeCacheVersion.cpp b/Source/JavaScriptCore/runtime/JSCBytecodeCacheVersion.cpp
+index 26e825ace46..fbb5c47baf4 100644
+--- a/Source/JavaScriptCore/runtime/JSCBytecodeCacheVersion.cpp
++++ b/Source/JavaScriptCore/runtime/JSCBytecodeCacheVersion.cpp
+@@ -68,7 +68,7 @@ uint32_t computeJSCBytecodeCacheVersion()
+         }
+         cacheVersion.construct(0);
+         dataLogLnIf(JSCBytecodeCacheVersionInternal::verbose, "Failed to get UUID for JavaScriptCore framework");
+-#elif OS(UNIX) && !PLATFORM(PLAYSTATION) && !OS(HAIKU) && !OS(QNX)
++#elif OS(UNIX) && !PLATFORM(PLAYSTATION) && !OS(HAIKU) && !OS(QNX) && !defined(__EMSCRIPTEN__)
+         auto result = ([&] -> std::optional<uint32_t> {
+             Dl_info info { };
+             if (!dladdr(jsFunctionAddr, &info))
+diff --git a/Source/JavaScriptCore/runtime/JSCell.cpp b/Source/JavaScriptCore/runtime/JSCell.cpp
+index 1e8be796f4b..7ee4da53034 100644
+--- a/Source/JavaScriptCore/runtime/JSCell.cpp
++++ b/Source/JavaScriptCore/runtime/JSCell.cpp
+@@ -177,6 +177,35 @@ JSObject* JSCell::toObjectSlow(JSGlobalObject* globalObject) const
+         return string->toObject(globalObject);
+     if (const auto* bigInt = jsDynamicCast<const JSBigInt*>(this))
+         return bigInt->toObject(globalObject);
++#if defined(__EMSCRIPTEN__)
++    // BIB (task #57): a for...in base INTERMITTENTLY reaches toObjectSlow
++    // with type() reading 0 (CellType) even though classInfo says it IS a
++    // JSObject — observed on authenticated discord.com (channel load); some
++    // loads dodge it, some hit it. The structure audit above passed (header
++    // intact) and classInfo-based casts don't consult the stale type byte,
++    // so jsDynamicCast<JSObject> still resolves it. toObject() of an object
++    // is the object itself, so RECOVER here instead of letting the
++    // secure-cast-to-Symbol abort the WHOLE engine over one bad enumeration.
++    // Only a cell that is genuinely neither object nor Symbol falls through
++    // to the original (aborting) path.
++    if (auto* object = jsDynamicCast<const JSObject*>(this)) {
++        // Log ONCE: if the flake is frequent (Discord's Flux/React enumerate
++        // constantly), a WTFLogAlways per recovery is a cross-thread console
++        // storm that would itself freeze the app. Recovery is silent after
++        // the first. (JSC is single-threaded — a plain static is safe.)
++        static bool loggedRecovery = false;
++        if (!loggedRecovery) {
++            loggedRecovery = true;
++            WTFLogAlways("BIB: toObjectSlow recovered object cell (JSType=%u classInfo=%s) — silenced after first", static_cast<unsigned>(type()), classInfo()->className.characters());
++        }
++        return const_cast<JSObject*>(object);
++    }
++    static bool loggedUnexpected = false;
++    if (!loggedUnexpected && !jsDynamicCast<const Symbol*>(this)) {
++        loggedUnexpected = true;
++        WTFLogAlways("BIB: toObjectSlow on unexpected non-object cell: JSType=%u classInfo=%s", static_cast<unsigned>(type()), classInfo()->className.characters());
++    }
++#endif
+     return jsSecureCast<const Symbol*>(this)->toObject(globalObject);
+ }
+ 
+diff --git a/Source/JavaScriptCore/runtime/MathCommon.cpp b/Source/JavaScriptCore/runtime/MathCommon.cpp
+index 71b9262c4f4..c5f8543491e 100644
+--- a/Source/JavaScriptCore/runtime/MathCommon.cpp
++++ b/Source/JavaScriptCore/runtime/MathCommon.cpp
+@@ -604,7 +604,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(f64_nearest, double, (double operand))
+     return std::nearbyint(operand);
+ }
+ 
+-#if (OS(LINUX) && !defined(__GLIBC__)) || OS(HAIKU)
++#if (OS(LINUX) && !defined(__GLIBC__)) || OS(HAIKU) || defined(__EMSCRIPTEN__)
+ static inline float roundevenf(float operand)
+ {
+     float rounded = roundf(operand);
+diff --git a/Source/JavaScriptCore/runtime/Options.cpp b/Source/JavaScriptCore/runtime/Options.cpp
+index 964e9a4d81c..3f77fd785d5 100644
+--- a/Source/JavaScriptCore/runtime/Options.cpp
++++ b/Source/JavaScriptCore/runtime/Options.cpp
+@@ -233,7 +233,9 @@ std::optional<OptionsStorage::Unsigned> parse(const char* string)
+     return std::nullopt;
+ }
+ 
+-#if CPU(ADDRESS64) || OS(DARWIN) || OS(HAIKU)
++#if CPU(ADDRESS64) || OS(DARWIN) || OS(HAIKU) || defined(__EMSCRIPTEN__)
++// Like Darwin, Emscripten/wasm32 has size_t = unsigned long, distinct from
++// unsigned int, so the OptionsStorage::Size specialization is required.
+ template<>
+ std::optional<OptionsStorage::Size> parse(const char* string)
+ {
+@@ -242,7 +244,7 @@ std::optional<OptionsStorage::Size> parse(const char* string)
+         return value;
+     return std::nullopt;
+ }
+-#endif // CPU(ADDRESS64) || OS(DARWIN) || OS(HAIKU)
++#endif // CPU(ADDRESS64) || OS(DARWIN) || OS(HAIKU) || defined(__EMSCRIPTEN__)
+ 
+ template<>
+ std::optional<OptionsStorage::Double> parse(const char* string)
+diff --git a/Source/JavaScriptCore/shell/CMakeLists.txt b/Source/JavaScriptCore/shell/CMakeLists.txt
+index 3b1c4e8f3c4..d19b4de4f88 100644
+--- a/Source/JavaScriptCore/shell/CMakeLists.txt
++++ b/Source/JavaScriptCore/shell/CMakeLists.txt
+@@ -123,6 +123,26 @@ WEBKIT_INCLUDE_CONFIG_FILES_IF_EXISTS()
+ 
+ WEBKIT_EXECUTABLE(jsc)
+ 
++if (EMSCRIPTEN)
++    # Emscripten defaults are a 64KB C stack and a fixed 16MB heap. JSC's
++    # stack reserve zones alone exceed 64KB, making every operation throw
++    # StackOverflowError immediately. Give the engine a real stack and a
++    # growable heap.
++    target_link_options(jsc PRIVATE
++        "SHELL:-sSTACK_SIZE=8MB"
++        "SHELL:-sDEFAULT_PTHREAD_STACK_SIZE=2MB"
++        "SHELL:-sINITIAL_MEMORY=128MB"
++        "SHELL:-sALLOW_MEMORY_GROWTH=1"
++        "SHELL:-sMAXIMUM_MEMORY=4GB")
++endif ()
++
++if (EMSCRIPTEN AND JSC_EMBED_ICU_DATA_FILE)
++    # Embed the ICU data archive into the wasm FS at the same absolute path
++    # ICU compiled in as its default data directory, so udata finds it with
++    # no environment configuration in both node and browser environments.
++    target_link_options(jsc PRIVATE "SHELL:--embed-file ${JSC_EMBED_ICU_DATA_FILE}@${JSC_EMBED_ICU_DATA_FILE}")
++endif ()
++
+ if (SHOULD_INSTALL_JS_SHELL)
+     install(TARGETS jsc DESTINATION "${LIBEXEC_INSTALL_DIR}")
+ endif ()
+diff --git a/Source/WTF/wtf/FileHandle.h b/Source/WTF/wtf/FileHandle.h
+index fd0e22ccea1..b3675206dbc 100644
+--- a/Source/WTF/wtf/FileHandle.h
++++ b/Source/WTF/wtf/FileHandle.h
+@@ -33,7 +33,7 @@
+ 
+ #if OS(WINDOWS)
+ #include <wtf/win/Win32Handle.h>
+-#elif OS(LINUX)
++#elif OS(UNIX)
+ #include <sys/types.h>
+ #endif
+ 
+diff --git a/Source/WTF/wtf/PlatformEmscripten.cmake b/Source/WTF/wtf/PlatformEmscripten.cmake
+new file mode 100644
+index 00000000000..3362ec0b21a
+--- /dev/null
++++ b/Source/WTF/wtf/PlatformEmscripten.cmake
+@@ -0,0 +1,33 @@
++# WTF platform sources for PORT=Emscripten. This is exactly the set the
++# Phase 1 JSCOnly wasm build compiled (PlatformJSCOnly.cmake, unix branch,
++# generic event loop, CMAKE_SYSTEM_NAME=Emscripten -> generic memory paths),
++# plus the generic RunLoop/WorkQueue pair the PlayStation port uses.
++
++list(APPEND WTF_SOURCES
++    generic/MainThreadGeneric.cpp
++    generic/MemoryFootprintGeneric.cpp
++    generic/MemoryPressureHandlerGeneric.cpp
++    generic/RunLoopGeneric.cpp
++    generic/WorkQueueGeneric.cpp
++
++    posix/CPUTimePOSIX.cpp
++    posix/FileHandlePOSIX.cpp
++    posix/FileSystemPOSIX.cpp
++    posix/MappedFileDataPOSIX.cpp
++    posix/OSAllocatorPOSIX.cpp
++    posix/ThreadingPOSIX.cpp
++
++    text/unix/TextBreakIteratorInternalICUUnix.cpp
++
++    unix/LanguageUnix.cpp
++    unix/LoggingUnix.cpp
++    unix/UniStdExtrasUnix.cpp
++)
++
++list(APPEND WTF_PUBLIC_HEADERS
++    unix/UnixFileDescriptor.h
++)
++
++list(APPEND WTF_LIBRARIES
++    Threads::Threads
++)
+diff --git a/Source/WTF/wtf/RawHex.h b/Source/WTF/wtf/RawHex.h
+index 2e375967e2d..0c67eb01545 100644
+--- a/Source/WTF/wtf/RawHex.h
++++ b/Source/WTF/wtf/RawHex.h
+@@ -52,9 +52,11 @@ public:
+         : RawHex(static_cast<uintptr_t>(value))
+     { }
+ 
+-#if CPU(ADDRESS64) || OS(DARWIN) || OS(HAIKU)
++#if CPU(ADDRESS64) || OS(DARWIN) || OS(HAIKU) || defined(__EMSCRIPTEN__)
+     // These causes build errors for CPU(ADDRESS32) on some ports because int32_t
+     // is already handled by intptr_t, and uint32_t is handled by uintptr_t.
++    // Like Darwin, Emscripten/wasm32 needs these: int32_t is int while intptr_t
++    // is long, so int32_t/uint32_t match no other constructor unambiguously.
+     explicit RawHex(int32_t value)
+         : RawHex(static_cast<uint32_t>(value))
+     { }
+diff --git a/Source/WTF/wtf/WorkQueue.cpp b/Source/WTF/wtf/WorkQueue.cpp
+index 887b24ccca9..8ec375212ca 100644
+--- a/Source/WTF/wtf/WorkQueue.cpp
++++ b/Source/WTF/wtf/WorkQueue.cpp
+@@ -63,12 +63,21 @@ void ConcurrentWorkQueue::dispatch(Function<void()>&& function)
+ #if !PLATFORM(COCOA)
+ void WorkQueueBase::dispatchSync(Function<void()>&& function)
+ {
++#if defined(__EMSCRIPTEN__)
++    // Single-threaded port: every queue is backed by the main RunLoop
++    // (WorkQueueGeneric.cpp), so semaphore-waiting here would queue the
++    // task behind the current one and deadlock the only thread. Run the
++    // function inline — same thread either way; only FIFO ordering with
++    // already-queued tasks is sacrificed.
++    function();
++#else
+     BinarySemaphore semaphore;
+     dispatch([&semaphore, function = WTF::move(function)]() mutable {
+         function();
+         semaphore.signal();
+     });
+     semaphore.wait();
++#endif
+ }
+ 
+ void WorkQueueBase::dispatchWithQOS(Function<void()>&& function, QOS)
+@@ -86,6 +95,14 @@ void ConcurrentWorkQueue::apply(size_t iterations, WTF::Function<void(size_t ind
+         return;
+     }
+ 
++#if defined(__EMSCRIPTEN__)
++    // Single-threaded port: the ThreadPool below would Thread::create and
++    // abort. Run every iteration serially on the caller instead.
++    for (size_t i = 0; i < iterations; ++i)
++        function(i);
++    return;
++#endif
++
+     class ThreadPool {
+     public:
+         ThreadPool()
+diff --git a/Source/WTF/wtf/generic/RunLoopGeneric.cpp b/Source/WTF/wtf/generic/RunLoopGeneric.cpp
+index 203d38335a5..a98b0bad494 100644
+--- a/Source/WTF/wtf/generic/RunLoopGeneric.cpp
++++ b/Source/WTF/wtf/generic/RunLoopGeneric.cpp
+@@ -32,6 +32,10 @@
+ #include <wtf/ProcessID.h>
+ #include <wtf/TZoneMallocInlines.h>
+ 
++#if defined(__EMSCRIPTEN__)
++#include <emscripten.h>
++#endif
++
+ namespace WTF {
+ 
+ static constexpr bool report = false;
+@@ -213,8 +217,25 @@ void RunLoop::runImpl(RunMode runMode)
+ 
+     Deque<Ref<TimerBase::ScheduledTask>> firedTimers;
+     while (true) {
+-        if (!populateTasks(runMode, statusOfThisLoop, firedTimers))
++        if (!populateTasks(runMode, statusOfThisLoop, firedTimers)) {
++#if defined(__EMSCRIPTEN__)
++            // BIB: single-threaded port — cycles are driven externally (rAF
++            // + the embedder's wake-up macrotask), so nothing sleeps until
++            // the earliest timer deadline. Arm a host setTimeout for it as
++            // each Iterate cycle ends; this point also sees timers that
++            // repeating tasks rescheduled mid-cycle (which skip wakeUp()).
++            // Without this, every WebCore timer is quantized to the next
++            // external cycle (~one display frame).
++            if (runMode == RunMode::Iterate) {
++                Locker locker { m_loopLock };
++                if (!m_schedules.isEmpty()) {
++                    double delayMs = (m_schedules.first()->scheduledTimePoint() - MonotonicTime::now()).milliseconds();
++                    EM_ASM({ if (Module.bibArmTimer) Module.bibArmTimer($0); }, delayMs < 0 ? 0 : delayMs);
++                }
++            }
++#endif
+             return;
++        }
+ 
+         // Dispatch scheduled timers.
+         while (!firedTimers.isEmpty()) {
+diff --git a/Source/WTF/wtf/generic/WorkQueueGeneric.cpp b/Source/WTF/wtf/generic/WorkQueueGeneric.cpp
+index 97c8e9dd2e9..fe6f954fa46 100644
+--- a/Source/WTF/wtf/generic/WorkQueueGeneric.cpp
++++ b/Source/WTF/wtf/generic/WorkQueueGeneric.cpp
+@@ -42,6 +42,20 @@ WorkQueueBase::WorkQueueBase(RunLoop& runLoop)
+ 
+ void WorkQueueBase::platformInitialize(ASCIILiteral name, Type, QOS qos)
+ {
++#if defined(__EMSCRIPTEN__)
++    // PORT=Emscripten is single-threaded: pthread_create returns ENOTSUP,
++    // so RunLoop::create -> Thread::create would RELEASE_ASSERT (this was
++    // an instant abort() the first time a page contained an <img> —
++    // ImageFrameWorkQueue). Back EVERY WorkQueue with the main RunLoop
++    // instead: dispatch() becomes a deferred main-loop task, the same
++    // single-threading treatment CurlRequestScheduler got. The
++    // BinarySemaphore handshake must be skipped too — waiting on the only
++    // thread can never be signalled.
++    UNUSED_PARAM(name);
++    UNUSED_PARAM(qos);
++    m_runLoop = &RunLoop::mainSingleton();
++    m_threadID = mainThreadID;
++#else
+     m_runLoop = RunLoop::create(name, ThreadType::Unknown, qos);
+     BinarySemaphore semaphore;
+     m_runLoop->dispatch([&] {
+@@ -49,10 +63,15 @@ void WorkQueueBase::platformInitialize(ASCIILiteral name, Type, QOS qos)
+         semaphore.signal();
+     });
+     semaphore.wait();
++#endif
+ }
+ 
+ void WorkQueueBase::platformInvalidate()
+ {
++#if defined(__EMSCRIPTEN__)
++    // The queue only borrows the main RunLoop — never stop it.
++    m_runLoop = nullptr;
++#else
+     if (m_runLoop) {
+         Ref<RunLoop> protector = m_runLoop.releaseNonNull();
+         protector->stop();
+@@ -60,6 +79,7 @@ void WorkQueueBase::platformInvalidate()
+             RunLoop::currentSingleton().stop();
+         });
+     }
++#endif
+ }
+ 
+ void WorkQueueBase::dispatch(Function<void()>&& function)
+diff --git a/Source/WTF/wtf/posix/ThreadingPOSIX.cpp b/Source/WTF/wtf/posix/ThreadingPOSIX.cpp
+index a3e0d45073e..492395e879e 100644
+--- a/Source/WTF/wtf/posix/ThreadingPOSIX.cpp
++++ b/Source/WTF/wtf/posix/ThreadingPOSIX.cpp
+@@ -163,10 +163,17 @@ void Thread::signalHandlerSuspendResume(int, siginfo_t*, void* ucontext)
+ 
+     // Reaching here, sigThreadSuspendResume is blocked in this handler (this is configured by sigaction's sa_mask).
+     // So before calling sigsuspend, sigThreadSuspendResume to this thread is deferred. This ensures that the handler is not executed recursively.
++#if defined(__EMSCRIPTEN__)
++    // Emscripten has no sigsuspend; signal-based thread suspension cannot
++    // work under wasm. Nothing must ever suspend a thread in this build —
++    // trap loudly if something tries.
++    RELEASE_ASSERT_NOT_REACHED();
++#else
+     sigset_t blockedSignalSet;
+     sigfillset(&blockedSignalSet);
+     sigdelset(&blockedSignalSet, g_wtfConfig.sigThreadSuspendResume);
+     sigsuspend(&blockedSignalSet);
++#endif
+ 
+     thread->m_platformRegisters = nullptr;
+ 
+@@ -457,6 +464,14 @@ bool Thread::signal(int signalNumber)
+ auto Thread::suspend(const ThreadSuspendLocker&) -> Expected<void, PlatformSuspendError>
+ {
+     RELEASE_ASSERT_WITH_MESSAGE(this != &Thread::currentSingleton(), "We do not support suspending the current thread itself.");
++#if defined(__EMSCRIPTEN__)
++    // Signal-based thread suspension cannot work under wasm: pthread_kill
++    // may not deliver, and the semaphore wait below would deadlock instead
++    // of failing. This build supports exactly one mutator thread per VM
++    // (conservative GC then never scans other threads). Trap deterministically
++    // at the entry point rather than deadlocking or trapping in the handler.
++    RELEASE_ASSERT_WITH_MESSAGE(false, "Thread::suspend is unsupported under Emscripten (one mutator thread per VM)");
++#endif
+ #if OS(DARWIN)
+     kern_return_t result = thread_suspend(m_platformThread);
+     if (result != KERN_SUCCESS)
+diff --git a/Source/WebCore/Modules/indexeddb/server/IDBBackingStore.h b/Source/WebCore/Modules/indexeddb/server/IDBBackingStore.h
+index f90708bddce..6f88c5a831b 100644
+--- a/Source/WebCore/Modules/indexeddb/server/IDBBackingStore.h
++++ b/Source/WebCore/Modules/indexeddb/server/IDBBackingStore.h
+@@ -63,7 +63,14 @@ class IDBBackingStore : public CanMakeThreadSafeCheckedPtr<IDBBackingStore> {
+     WTF_MAKE_TZONE_ALLOCATED(IDBBackingStore);
+     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(IDBBackingStore);
+ public:
++#if defined(__EMSCRIPTEN__)
++    // PORT=Emscripten is single-threaded: the IDB server "queue" is the main
++    // RunLoop, so everything legitimately runs on the main thread and this
++    // not-on-main-thread guard can never hold.
++    virtual ~IDBBackingStore() = default;
++#else
+     virtual ~IDBBackingStore() { RELEASE_ASSERT(!isMainThread()); }
++#endif
+ 
+     virtual IDBError getOrEstablishDatabaseInfo(IDBDatabaseInfo&) = 0;
+     virtual uint64_t databaseVersion() = 0;
+@@ -115,7 +122,11 @@ public:
+     virtual void handleLowMemoryWarning() = 0;
+ 
+ protected:
++#if defined(__EMSCRIPTEN__)
++    IDBBackingStore() = default; // see dtor note: single-threaded port
++#else
+     IDBBackingStore() { RELEASE_ASSERT(!isMainThread()); }
++#endif
+ };
+ 
+ } // namespace IDBServer
+diff --git a/Source/WebCore/Modules/websockets/WebSocket.cpp b/Source/WebCore/Modules/websockets/WebSocket.cpp
+index d6483e73d39..940aed93756 100644
+--- a/Source/WebCore/Modules/websockets/WebSocket.cpp
++++ b/Source/WebCore/Modules/websockets/WebSocket.cpp
+@@ -177,6 +177,20 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
+     if (url.isNull())
+         return Exception { ExceptionCode::SyntaxError };
+ 
++#if defined(__EMSCRIPTEN__)
++    // PORT=Emscripten Phase W-A (decision-004): workers share the main
++    // thread, and WorkerThreadableWebSocketChannel::Bridge::initialize
++    // posts to the loader then BinarySemaphore-waits — a same-thread
++    // deadlock now that workers actually construct (Codex review
++    // 2026-06-11). Deferring the peer instead would leave sockets silently
++    // CONNECTING forever (connect() no-ops without a peer). Fail the
++    // constructor catchably; page-level WebSockets keep their existing
++    // clean-error behavior (CurlStream stub). Real worker WebSockets come
++    // with Phase W-B threads, where the semaphore wait is legal.
++    if (is<WorkerGlobalScope>(context))
++        return Exception { ExceptionCode::NotSupportedError, "WebSocket inside workers is not supported in this single-threaded engine"_s };
++#endif
++
+     auto socket = adoptRef(*new WebSocket(context));
+     socket->suspendIfNeeded();
+ 
+diff --git a/Source/WebCore/PAL/pal/PlatformEmscripten.cmake b/Source/WebCore/PAL/pal/PlatformEmscripten.cmake
+new file mode 100644
+index 00000000000..0fc6a680f4b
+--- /dev/null
++++ b/Source/WebCore/PAL/pal/PlatformEmscripten.cmake
+@@ -0,0 +1,12 @@
++# PAL platform file for PORT=Emscripten. Mirrors PlatformPlayStation.cmake:
++# OpenSSL-backed crypto digest, generic clock, stub sound, generic kill ring.
++list(APPEND PAL_SOURCES
++    crypto/openssl/CryptoDigestOpenSSL.cpp
++
++    system/ClockGeneric.cpp
++    system/Sound.cpp
++
++    text/KillRing.cpp
++)
++
++list(APPEND PAL_LIBRARIES OpenSSL::Crypto)
+diff --git a/Source/WebCore/PlatformEmscripten.cmake b/Source/WebCore/PlatformEmscripten.cmake
+new file mode 100644
+index 00000000000..5b736678f50
+--- /dev/null
++++ b/Source/WebCore/PlatformEmscripten.cmake
+@@ -0,0 +1,99 @@
++# WebCore platform file for PORT=Emscripten.
++# Structure cribbed from PlatformPlayStation.cmake / PlatformWin.cmake:
++# curl networking + ImageDecoders + OpenSSL crypto, Skia for graphics.
++# No EGL/libwpe/TextureMapper — Phase 2 renders via Skia CPU raster into a
++# memory buffer that the embedder blits to the host <canvas>.
++
++include(platform/Curl.cmake)
++include(platform/ImageDecoders.cmake)
++
++# Static libcurl's transitive deps are not carried by CMake's CURL::libcurl
++# imported target — HTTP/2 (nghttp2) and Content-Encoding: br (brotli) must
++# reach the final link explicitly.
++find_library(NGHTTP2_LIBRARY nghttp2 REQUIRED)
++find_library(BROTLIDEC_LIBRARY brotlidec REQUIRED)
++find_library(BROTLICOMMON_LIBRARY brotlicommon REQUIRED)
++list(APPEND WebCore_LIBRARIES
++    ${NGHTTP2_LIBRARY}
++    ${BROTLIDEC_LIBRARY}
++    ${BROTLICOMMON_LIBRARY}
++)
++# platform/OpenSSL.cmake (the WebCrypto backend) is DEFERRED to Phase 4:
++# in 2.52 those sources are written against BoringSSL (<openssl/hkdf.h>
++# one-shot HKDF(), non-const EVP_PKEY_get0_EC_KEY, case-insensitive
++# "openssl/X509.h") and do not compile against real OpenSSL 3.5 on a
++# case-sensitive FS. First paint needs none of it. Re-adding requires either
++# ~4 file patches (EVP_KDF-based HKDF, x509.h, const casts) or a BoringSSL
++# swap for the whole TLS tier. Until then JSSubtleCrypto bindings may leave
++# undefined CryptoAlgorithm* symbols at EMBEDDER link time (not at archive
++# time) — resolve when wiring the embedder.
++
++if (USE_SKIA)
++    include(platform/Skia.cmake)
++    # GTK/WPE get fontconfig headers from the system include path; our cross
++    # sysroot is not a default include dir, so wire the imported target into
++    # WebCore explicitly — FontCacheSkia.cpp and SkiaSystemFallbackFontCache.cpp
++    # call fontconfig directly on the non-Android/non-Win path.
++    find_package(Fontconfig 2.13.0 REQUIRED)
++    list(APPEND WebCore_LIBRARIES Fontconfig::Fontconfig)
++endif ()
++
++list(APPEND WebCore_PRIVATE_INCLUDE_DIRECTORIES
++    ${WEBCORE_DIR}/platform
++    ${WEBCORE_DIR}/platform/generic
++    ${WEBCORE_DIR}/platform/graphics/egl
++    ${WEBCORE_DIR}/platform/graphics/emscripten
++    ${WEBCORE_DIR}/platform/graphics/opengl
++    ${WEBCORE_DIR}/platform/mediacapabilities
++    ${WEBCORE_DIR}/platform/video-codecs
++)
++
++list(APPEND WebCore_SOURCES
++    accessibility/emscripten/AXObjectCacheEmscripten.cpp
++    accessibility/emscripten/AccessibilityObjectEmscripten.cpp
++
++    crypto/emscripten/CryptoStubsEmscripten.cpp
++
++    editing/emscripten/EditorEmscripten.cpp
++
++    platform/emscripten/MIMETypeRegistryEmscripten.cpp
++    platform/emscripten/PasteboardEmscripten.cpp
++    platform/emscripten/PlatformKeyboardEventEmscripten.cpp
++    platform/emscripten/PlatformScreenEmscripten.cpp
++    platform/emscripten/ScrollbarThemeEmscripten.cpp
++    platform/emscripten/ThemeEmscripten.cpp
++    platform/emscripten/UserAgentEmscripten.cpp
++
++    platform/network/emscripten/CurlSSLHandleEmscripten.cpp
++    platform/network/emscripten/NetworkStateNotifierEmscripten.cpp
++
++    platform/generic/KeyedDecoderGeneric.cpp
++    platform/generic/KeyedEncoderGeneric.cpp
++
++    # Skia GPU (G2): upstream display/EGL machinery compiles as-is over
++    # Emscripten's EGL; the port file owns the boot context + GLContext defs.
++    platform/graphics/PlatformDisplay.cpp
++    platform/graphics/egl/GLDisplay.cpp
++
++    platform/graphics/emscripten/GLStubsEmscripten.cpp
++    platform/graphics/emscripten/PlatformDisplayEmscripten.cpp
++    platform/graphics/emscripten/SystemFontDatabaseEmscripten.cpp
++
++    platform/text/Hyphenation.cpp
++    platform/text/LocaleICU.cpp
++
++    platform/unix/LoggingUnix.cpp
++    platform/unix/SharedMemoryUnix.cpp
++
++    rendering/emscripten/RenderThemeEmscripten.cpp
++)
++
++# Phase 2 embedder: the executable's sources and CMake logic live OUTSIDE the
++# WebKit tree (src/embedder/ in the project repo) so this patch stays minimal.
++# The include is DEFERRED to directory-end so it runs after
++# WEBKIT_FRAMEWORK(WebCore) — the WebCore target and the final
++# WebCore_*_INCLUDE_DIRECTORIES lists exist by then (same consumption pattern
++# as WebCoreTestSupport at the bottom of WebCore/CMakeLists.txt).
++if (EMSCRIPTEN_EMBEDDER_CMAKE)
++    cmake_language(DEFER CALL include "${EMSCRIPTEN_EMBEDDER_CMAKE}")
++endif ()
+diff --git a/Source/WebCore/accessibility/AXCoreObject.h b/Source/WebCore/accessibility/AXCoreObject.h
+index fc373ce9df5..ced9647dab2 100644
+--- a/Source/WebCore/accessibility/AXCoreObject.h
++++ b/Source/WebCore/accessibility/AXCoreObject.h
+@@ -78,7 +78,7 @@ class AccessibilityObjectAtspi;
+ 
+ typedef WebCore::AccessibilityObjectAtspi AccessibilityObjectWrapper;
+ 
+-#elif PLATFORM(PLAYSTATION) || PLATFORM(HAIKU)
++#elif PLATFORM(PLAYSTATION) || PLATFORM(HAIKU) || defined(__EMSCRIPTEN__)
+ class AccessibilityObjectWrapper : public RefCounted<AccessibilityObjectWrapper> { };
+ #else
+ class AccessibilityObjectWrapper;
+@@ -1399,7 +1399,7 @@ private:
+     RetainPtr<WebAccessibilityObjectWrapper> m_wrapper;
+ #elif PLATFORM(WIN)
+     COMPtr<AccessibilityObjectWrapper> m_wrapper;
+-#elif PLATFORM(PLAYSTATION) || PLATFORM(HAIKU)
++#elif PLATFORM(PLAYSTATION) || PLATFORM(HAIKU) || defined(__EMSCRIPTEN__)
+     RefPtr<AccessibilityObjectWrapper> m_wrapper;
+ #elif USE(ATSPI)
+     RefPtr<AccessibilityObjectAtspi> m_wrapper;
+diff --git a/Source/WebCore/accessibility/emscripten/AXObjectCacheEmscripten.cpp b/Source/WebCore/accessibility/emscripten/AXObjectCacheEmscripten.cpp
+new file mode 100644
+index 00000000000..ef4993d56b6
+--- /dev/null
++++ b/Source/WebCore/accessibility/emscripten/AXObjectCacheEmscripten.cpp
+@@ -0,0 +1,52 @@
++/*
++ * PORT=Emscripten AXObjectCache platform half, cribbed (simplified) from
++ * accessibility/playstation/AXObjectCachePlayStation.cpp. Accessibility is
++ * unconditional in WebKit 2.52 — every port must provide these. Notifications
++ * are dropped: the single-process embedder has no assistive-technology bridge
++ * (a JS-side ARIA bridge would land in a much later phase).
++ */
++
++#include "config.h"
++#include "AXObjectCache.h"
++
++#include "AccessibilityObject.h"
++
++namespace WebCore {
++
++void AXObjectCache::attachWrapper(AccessibilityObject& object)
++{
++    // The generic RefCounted AccessibilityObjectWrapper stub (AXCoreObject.h,
++    // PLATFORM(PLAYSTATION) || PLATFORM(HAIKU) || __EMSCRIPTEN__ branch).
++    auto wrapper = adoptRef(*new AccessibilityObjectWrapper());
++    object.setWrapper(wrapper.ptr());
++}
++
++void AXObjectCache::detachWrapper(AXCoreObject*, AccessibilityDetachmentType)
++{
++}
++
++void AXObjectCache::postPlatformNotification(AccessibilityObject&, AXNotification)
++{
++}
++
++void AXObjectCache::nodeTextChangePlatformNotification(AccessibilityObject*, AXTextChange, unsigned, const String&)
++{
++}
++
++void AXObjectCache::frameLoadingEventPlatformNotification(RenderView*, AXLoadingEvent)
++{
++}
++
++void AXObjectCache::handleScrolledToAnchor(const Node&)
++{
++}
++
++void AXObjectCache::platformHandleFocusedUIElementChanged(Element*, Element*)
++{
++}
++
++void AXObjectCache::platformPerformDeferredCacheUpdate()
++{
++}
++
++} // namespace WebCore
+diff --git a/Source/WebCore/accessibility/emscripten/AccessibilityObjectEmscripten.cpp b/Source/WebCore/accessibility/emscripten/AccessibilityObjectEmscripten.cpp
+new file mode 100644
+index 00000000000..928271f2db9
+--- /dev/null
++++ b/Source/WebCore/accessibility/emscripten/AccessibilityObjectEmscripten.cpp
+@@ -0,0 +1,25 @@
++/*
++ * PORT=Emscripten AccessibilityObject platform half, cribbed verbatim from
++ * accessibility/playstation/AccessibilityObjectPlayStation.cpp.
++ */
++
++#include "config.h"
++#include "AccessibilityObject.h"
++
++namespace WebCore {
++
++void AccessibilityObject::detachPlatformWrapper(AccessibilityDetachmentType)
++{
++}
++
++bool AccessibilityObject::accessibilityIgnoreAttachment() const
++{
++    return false;
++}
++
++AccessibilityObjectInclusion AccessibilityObject::accessibilityPlatformIncludesObject() const
++{
++    return AccessibilityObjectInclusion::DefaultBehavior;
++}
++
++} // namespace WebCore
+diff --git a/Source/WebCore/bindings/js/IDBBindingUtilities.cpp b/Source/WebCore/bindings/js/IDBBindingUtilities.cpp
+index c6998bf5ceb..b93e7857f65 100644
+--- a/Source/WebCore/bindings/js/IDBBindingUtilities.cpp
++++ b/Source/WebCore/bindings/js/IDBBindingUtilities.cpp
+@@ -585,6 +585,19 @@ private:
+ 
+ void callOnIDBSerializationThreadAndWait(Function<void(JSC::JSGlobalObject&)>&& function)
+ {
++#if defined(__EMSCRIPTEN__)
++    // PORT=Emscripten is single-threaded: Thread::create RELEASE_ASSERTs
++    // (pthread_create returns ENOTSUP), and even if the thread existed the
++    // BinarySemaphore handshake below could never be signalled from the
++    // only thread — abort, then deadlock. Run the serialization work
++    // inline against a lazily-created context instead; it owns the same
++    // small dedicated VM the thread would have owned, created on first
++    // IndexedDB use. The thread-UID ASSERTs in IDBSerializationContext
++    // hold: every call happens on the main thread.
++    static NeverDestroyed<IDBSerializationContext> serializationContext;
++    AutodrainedPool pool;
++    function(serializationContext->globalObject());
++#else
+     static NeverDestroyed<MessageQueue<Function<void(JSC::JSGlobalObject&)>>> queue;
+     static std::once_flag createThread;
+ 
+@@ -605,6 +618,7 @@ void callOnIDBSerializationThreadAndWait(Function<void(JSC::JSGlobalObject&)>&&
+     };
+     queue->append(makeUnique<Function<void(JSC::JSGlobalObject&)>>(WTF::move(newFuntion)));
+     semaphore.wait();
++#endif
+ }
+ 
+ } // namespace WebCore
+diff --git a/Source/WebCore/crypto/emscripten/CryptoStubsEmscripten.cpp b/Source/WebCore/crypto/emscripten/CryptoStubsEmscripten.cpp
+new file mode 100644
+index 00000000000..a448e8a75e8
+--- /dev/null
++++ b/Source/WebCore/crypto/emscripten/CryptoStubsEmscripten.cpp
+@@ -0,0 +1,42 @@
++/*
++ * PORT=Emscripten WebCrypto link stubs. The OpenSSL WebCrypto backend
++ * (crypto/openssl/*) is DEFERRED to Phase 4 — those sources are written
++ * against BoringSSL and do not compile vs real OpenSSL 3.5 (see
++ * PlatformEmscripten.cmake). The cross-platform WebCrypto core still
++ * references these platform hooks, so satisfy wasm-ld with "not supported"
++ * behavior: no algorithms register, key imports fail cleanly. Remove this
++ * file when the real backend lands.
++ */
++
++#include "config.h"
++#include "CryptoAlgorithmRegistry.h"
++#include "CryptoKeyEC.h"
++#include "CryptoKeyRSA.h"
++
++namespace WebCore {
++
++void CryptoAlgorithmRegistry::platformRegisterAlgorithms()
++{
++}
++
++bool CryptoKeyEC::platformSupportedCurve(NamedCurve)
++{
++    return false;
++}
++
++RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportRaw(CryptoAlgorithmIdentifier, NamedCurve, Vector<uint8_t>&&, bool, CryptoKeyUsageBitmap)
++{
++    return nullptr;
++}
++
++RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportPkcs8(CryptoAlgorithmIdentifier, NamedCurve, Vector<uint8_t>&&, bool, CryptoKeyUsageBitmap)
++{
++    return nullptr;
++}
++
++RefPtr<CryptoKeyRSA> CryptoKeyRSA::create(CryptoAlgorithmIdentifier, CryptoAlgorithmIdentifier, bool, const CryptoKeyRSAComponents&, bool, CryptoKeyUsageBitmap)
++{
++    return nullptr;
++}
++
++} // namespace WebCore
+diff --git a/Source/WebCore/editing/emscripten/EditorEmscripten.cpp b/Source/WebCore/editing/emscripten/EditorEmscripten.cpp
+new file mode 100644
+index 00000000000..731d4ca29be
+--- /dev/null
++++ b/Source/WebCore/editing/emscripten/EditorEmscripten.cpp
+@@ -0,0 +1,83 @@
++/*
++ * PORT=Emscripten Editor pasteboard glue, cribbed from
++ * editing/libwpe/EditorLibWPE.cpp. The pasteboard stub returns no data, so
++ * the fragment path is dead code at runtime — kept structurally identical so
++ * a real clipboard bridge later only has to fix PasteboardEmscripten.
++ */
++
++#include "config.h"
++#include "Editor.h"
++
++#include "DocumentFragment.h"
++#include "FrameDestructionObserverInlines.h"
++#include "LocalFrameInlines.h"
++#include "NotImplemented.h"
++#include "Pasteboard.h"
++#include "Settings.h"
++#include "SimpleRange.h"
++#include "markup.h"
++
++namespace WebCore {
++
++static RefPtr<DocumentFragment> createFragmentFromPasteboardData(Pasteboard& pasteboard, LocalFrame& frame, const SimpleRange& range, bool allowPlainText, bool& chosePlainText)
++{
++    chosePlainText = false;
++
++    Vector<String> types = pasteboard.typesForLegacyUnsafeBindings();
++    if (types.isEmpty())
++        return nullptr;
++
++    if (types.contains("text/html"_s) && frame.document()) {
++        String markup = pasteboard.readString("text/html"_s);
++        return createFragmentFromMarkup(*frame.document(), markup, emptyString(), { });
++    }
++
++    if (!allowPlainText)
++        return nullptr;
++
++    if (types.contains("text/plain;charset=utf-8"_s)) {
++        chosePlainText = true;
++        return createFragmentFromText(range, pasteboard.readString("text/plain;charset=utf-8"_s));
++    }
++
++    return nullptr;
++}
++
++void Editor::writeSelectionToPasteboard(Pasteboard& pasteboard)
++{
++    PasteboardWebContent pasteboardContent;
++    pasteboardContent.text = selectedTextForDataTransfer();
++    pasteboardContent.markup = serializePreservingVisualAppearance(document().selection().selection(), ResolveURLs::YesExcludingURLsForPrivacy, SerializeComposedTree::Yes, IgnoreUserSelectNone::Yes);
++    pasteboard.write(pasteboardContent);
++}
++
++void Editor::writeImageToPasteboard(Pasteboard&, Element&, const URL&, const String&)
++{
++    notImplemented();
++}
++
++void Editor::pasteWithPasteboard(Pasteboard* pasteboard, OptionSet<PasteOption> options)
++{
++    auto range = selectedRange();
++    if (!range)
++        return;
++
++    bool chosePlainText;
++    auto fragment = createFragmentFromPasteboardData(*pasteboard, *document().frame(), *range, options.contains(PasteOption::AllowPlainText), chosePlainText);
++
++    if (fragment && options.contains(PasteOption::AsQuotation))
++        quoteFragmentForPasting(*fragment);
++
++    if (fragment && shouldInsertFragment(*fragment, *range, EditorInsertAction::Pasted))
++        pasteAsFragment(*fragment, canSmartReplaceWithPasteboard(*pasteboard), chosePlainText, options.contains(PasteOption::IgnoreMailBlockquote) ? MailBlockquoteHandling::IgnoreBlockquote : MailBlockquoteHandling::RespectBlockquote);
++}
++
++void Editor::platformCopyFont()
++{
++}
++
++void Editor::platformPasteFont()
++{
++}
++
++} // namespace WebCore
+diff --git a/Source/WebCore/fileapi/AsyncFileStream.cpp b/Source/WebCore/fileapi/AsyncFileStream.cpp
+index b9df166312a..cd09004fb69 100644
+--- a/Source/WebCore/fileapi/AsyncFileStream.cpp
++++ b/Source/WebCore/fileapi/AsyncFileStream.cpp
+@@ -40,6 +40,7 @@
+ #include <wtf/MainThread.h>
+ #include <wtf/MessageQueue.h>
+ #include <wtf/NeverDestroyed.h>
++#include <wtf/RunLoop.h>
+ #include <wtf/TZoneMallocInlines.h>
+ #include <wtf/Threading.h>
+ #include <wtf/URL.h>
+@@ -70,6 +71,19 @@ static void callOnFileThread(Function<void ()>&& function)
+     ASSERT(isMainThread());
+     ASSERT(function);
+ 
++#if defined(__EMSCRIPTEN__)
++    // PORT=Emscripten is single-threaded: pthread_create returns ENOTSUP,
++    // so Thread::create RELEASE_ASSERTs — the first blob load that touched
++    // a file stream aborted the engine right here (BlobResourceHandle dtor
++    // -> ~AsyncFileStream -> call_once -> Thread::create). Run "file
++    // thread" work as a deferred main-RunLoop task instead — the same
++    // single-threading treatment WorkQueueGeneric got. FIFO order is
++    // preserved (RunLoop dispatch is a FIFO queue), the nested
++    // callOnMainThread() in perform()/~AsyncFileStream just queues another
++    // main-loop task, and FileStream I/O is synchronous MEMFS — instant
++    // and safe on the main thread.
++    RunLoop::mainSingleton().dispatch(WTF::move(function));
++#else
+     static NeverDestroyed<MessageQueue<Function<void ()>>> queue;
+ 
+     static std::once_flag createFileThreadOnce;
+@@ -92,6 +106,7 @@ static void callOnFileThread(Function<void ()>&& function)
+     });
+ 
+     queue.get().append(makeUnique<Function<void ()>>(WTF::move(function)));
++#endif
+ }
+ 
+ AsyncFileStream::AsyncFileStream(FileStreamClient& client)
+diff --git a/Source/WebCore/loader/DocumentLoader.cpp b/Source/WebCore/loader/DocumentLoader.cpp
+index 2c9b359bdf6..9e44b75c10a 100644
+--- a/Source/WebCore/loader/DocumentLoader.cpp
++++ b/Source/WebCore/loader/DocumentLoader.cpp
+@@ -53,6 +53,7 @@
+ #include "DocumentWriter.h"
+ #include "ElementChildIteratorInlines.h"
+ #include "Event.h"
++#include "EventLoop.h"
+ #include "EventNames.h"
+ #include "ExtensionStyleSheets.h"
+ #include "FormSubmission.h"
+diff --git a/Source/WebCore/loader/EmptyClients.h b/Source/WebCore/loader/EmptyClients.h
+index 09a23e649b2..b196b347dd7 100644
+--- a/Source/WebCore/loader/EmptyClients.h
++++ b/Source/WebCore/loader/EmptyClients.h
+@@ -88,7 +88,7 @@ class EmptyChromeClient : public ChromeClient {
+ 
+     void setResizable(bool) final { }
+ 
+-    void addMessageToConsole(JSC::MessageSource, JSC::MessageLevel, const String&, unsigned, unsigned, const String&) final { }
++    void addMessageToConsole(JSC::MessageSource, JSC::MessageLevel, const String&, unsigned, unsigned, const String&) override { }
+ 
+     bool canRunBeforeUnloadConfirmPanel() final { return false; }
+     bool runBeforeUnloadConfirmPanel(String&&, LocalFrame&) final { return true; }
+@@ -115,10 +115,12 @@ class EmptyChromeClient : public ChromeClient {
+     std::optional<PointerCharacteristics> pointerCharacteristicsOfPrimaryPointingDevice() const final { return std::nullopt; };
+     OptionSet<PointerCharacteristics> pointerCharacteristicsOfAllAvailablePointingDevices() const final { return { }; }
+ 
+-    void invalidateRootView(const IntRect&) final { }
++    // PORT=Emscripten: the embedder's ChromeClient (BibChromeClient) needs
++    // the scroll-damage callbacks too, not just invalidateContentsAndRootView.
++    void invalidateRootView(const IntRect&) override { }
+     void invalidateContentsAndRootView(const IntRect&) override { }
+-    void invalidateContentsForSlowScroll(const IntRect&) final { }
+-    void scroll(const IntSize&, const IntRect&, const IntRect&) final { }
++    void invalidateContentsForSlowScroll(const IntRect&) override { }
++    void scroll(const IntSize&, const IntRect&, const IntRect&) override { }
+ 
+     IntPoint screenToRootView(const IntPoint& p) const final { return p; }
+     IntPoint rootViewToScreen(const IntPoint& p) const final { return p; }
+diff --git a/Source/WebCore/loader/EmptyFrameLoaderClient.h b/Source/WebCore/loader/EmptyFrameLoaderClient.h
+index 5ebee25c414..46caa5e7c76 100644
+--- a/Source/WebCore/loader/EmptyFrameLoaderClient.h
++++ b/Source/WebCore/loader/EmptyFrameLoaderClient.h
+@@ -81,27 +81,32 @@ private:
+     void dispatchDidReceiveServerRedirectForProvisionalLoad() final;
+     void dispatchDidCancelClientRedirect() final;
+     void dispatchWillPerformClientRedirect(const URL&, double, WallTime, LockBackForwardList) final;
+-    void dispatchDidChangeLocationWithinPage() final;
+-    void dispatchDidPushStateWithinPage() final;
+-    void dispatchDidReplaceStateWithinPage() final;
+-    void dispatchDidPopStateWithinPage() final;
++    void dispatchDidChangeLocationWithinPage() override;
++    void dispatchDidPushStateWithinPage() override;
++    void dispatchDidReplaceStateWithinPage() override;
++    void dispatchDidPopStateWithinPage() override;
+     void dispatchWillClose() final;
+     void dispatchDidStartProvisionalLoad() final;
+-    void dispatchDidReceiveTitle(const StringWithDirection&) final;
+-    void dispatchDidCommitLoad(std::optional<HasInsecureContent>, std::optional<UsedLegacyTLS>, std::optional<WasPrivateRelayed>) final;
++    void dispatchDidReceiveTitle(const StringWithDirection&) override;
++    void dispatchDidCommitLoad(std::optional<HasInsecureContent>, std::optional<UsedLegacyTLS>, std::optional<WasPrivateRelayed>) override;
+     void dispatchDidFailProvisionalLoad(const ResourceError&, WillContinueLoading, WillInternallyHandleFailure) final;
+     void dispatchDidFailLoad(const ResourceError&) final;
+     void dispatchDidFinishDocumentLoad() final;
+-    void dispatchDidFinishLoad() final;
++    void dispatchDidFinishLoad() override;
+     void dispatchDidReachLayoutMilestone(OptionSet<LayoutMilestone>) final;
+     void dispatchDidReachVisuallyNonEmptyState() final;
+ 
+     LocalFrame* dispatchCreatePage(const NavigationAction&, NewFrameOpenerPolicy) final;
+     void dispatchShow() final;
+ 
+-    void dispatchDecidePolicyForResponse(const ResourceResponse&, const ResourceRequest&, const String&, FramePolicyFunction&&) final;
+-    void dispatchDecidePolicyForNewWindowAction(const NavigationAction&, const ResourceRequest&, FormState*, const String&, std::optional<HitTestResult>&&, FramePolicyFunction&&) final;
+-    void dispatchDecidePolicyForNavigationAction(const NavigationAction&, const ResourceRequest&, const ResourceResponse& redirectResponse, FormState*, const String&, std::optional<NavigationIdentifier>, std::optional<HitTestResult>&&, bool, NavigationUpgradeToHTTPSBehavior, SandboxFlags, PolicyDecisionMode, FramePolicyFunction&&) final;
++    // PORT=Emscripten: policy + content-delivery callbacks are `override`,
++    // not `final` — the embedder's frame client must answer policy checks
++    // (the empty bodies drop the completion handler: navigations stall),
++    // deliver bytes to the parser (committedLoad), and admit showable MIME
++    // types. Everything else stays final.
++    void dispatchDecidePolicyForResponse(const ResourceResponse&, const ResourceRequest&, const String&, FramePolicyFunction&&) override;
++    void dispatchDecidePolicyForNewWindowAction(const NavigationAction&, const ResourceRequest&, FormState*, const String&, std::optional<HitTestResult>&&, FramePolicyFunction&&) override;
++    void dispatchDecidePolicyForNavigationAction(const NavigationAction&, const ResourceRequest&, const ResourceResponse& redirectResponse, FormState*, const String&, std::optional<NavigationIdentifier>, std::optional<HitTestResult>&&, bool, NavigationUpgradeToHTTPSBehavior, SandboxFlags, PolicyDecisionMode, FramePolicyFunction&&) override;
+     void updateSandboxFlags(SandboxFlags) final;
+     void updateOpener(std::optional<FrameIdentifier>) final;
+     void setPrinting(bool, FloatSize, FloatSize, float, AdjustViewSize) final;
+@@ -125,15 +130,15 @@ private:
+     void willReplaceMultipartContent() final;
+     void didReplaceMultipartContent() final;
+ 
+-    void committedLoad(DocumentLoader*, const SharedBuffer&) final;
++    void committedLoad(DocumentLoader*, const SharedBuffer&) override; // PORT=Emscripten (see above)
+     void finishedLoading(DocumentLoader*) final;
+ 
+     void loadStorageAccessQuirksIfNeeded() final;
+ 
+     bool shouldFallBack(const ResourceError&) const final;
+ 
+-    bool canHandleRequest(const ResourceRequest&) const final;
+-    bool canShowMIMEType(const String&) const final;
++    bool canHandleRequest(const ResourceRequest&) const override; // PORT=Emscripten (see above)
++    bool canShowMIMEType(const String&) const override; // PORT=Emscripten (see above)
+     bool canShowMIMETypeAsHTML(const String&) const final;
+     bool representationExistsForURLScheme(StringView) const final;
+     String generatedMIMETypeForURLScheme(StringView) const final;
+@@ -154,26 +159,26 @@ private:
+ #if PLATFORM(IOS_FAMILY)
+     void didRestoreFrameHierarchyForCachedFrame() final;
+ #endif
+-    void transitionToCommittedForNewPage(InitializingIframe) final;
++    void transitionToCommittedForNewPage(InitializingIframe) override;
+ 
+     void didRestoreFromBackForwardCache() final;
+ 
+     void updateGlobalHistory() final;
+     void updateGlobalHistoryRedirectLinks() final;
+-    ShouldGoToHistoryItem shouldGoToHistoryItem(HistoryItem&, IsSameDocumentNavigation, ProcessSwapDisposition) const final;
++    ShouldGoToHistoryItem shouldGoToHistoryItem(HistoryItem&, IsSameDocumentNavigation, ProcessSwapDisposition) const override;
+     bool supportsAsyncShouldGoToHistoryItem() const final;
+     void shouldGoToHistoryItemAsync(HistoryItem&, CompletionHandler<void(ShouldGoToHistoryItem)>&&) const final;
+ 
+     void saveViewStateToItem(HistoryItem&) final;
+     bool canCachePage() const final;
+-    RefPtr<LocalFrame> createFrame(const AtomString&, HTMLFrameOwnerElement&) final;
++    RefPtr<LocalFrame> createFrame(const AtomString&, HTMLFrameOwnerElement&) override;
+     RefPtr<Widget> createPlugin(HTMLPlugInElement&, const URL&, const Vector<AtomString>&, const Vector<AtomString>&, const String&, bool) final;
+ 
+     ObjectContentType objectContentType(const URL&, const String&) final;
+     AtomString overrideMediaType() const final;
+ 
+     void redirectDataToPlugin(Widget&) final;
+-    void dispatchDidClearWindowObjectInWorld(DOMWrapperWorld&) final;
++    void dispatchDidClearWindowObjectInWorld(DOMWrapperWorld&) override;
+ 
+ #if PLATFORM(COCOA)
+     RemoteAXObjectRef accessibilityRemoteObject() final;
+@@ -200,7 +205,7 @@ private:
+ 
+     void dispatchLoadEventToOwnerElementInAnotherProcess() final;
+ 
+-    RefPtr<HistoryItem> createHistoryItemTree(bool, BackForwardItemIdentifier) const final;
++    RefPtr<HistoryItem> createHistoryItemTree(bool, BackForwardItemIdentifier) const override;
+ };
+ 
+ } // namespace WebCore
+diff --git a/Source/WebCore/loader/WorkerThreadableLoader.cpp b/Source/WebCore/loader/WorkerThreadableLoader.cpp
+index 34cce582179..716a0c34720 100644
+--- a/Source/WebCore/loader/WorkerThreadableLoader.cpp
++++ b/Source/WebCore/loader/WorkerThreadableLoader.cpp
+@@ -72,6 +72,19 @@ WorkerThreadableLoader::~WorkerThreadableLoader()
+ 
+ void WorkerThreadableLoader::loadResourceSynchronously(WorkerOrWorkletGlobalScope& workerOrWorkletGlobalScope, ResourceRequest&& request, ThreadableLoaderClient& client, const ThreadableLoaderOptions& options)
+ {
++#if defined(__EMSCRIPTEN__)
++    // PORT=Emscripten Phase W-A (decision-004): workers share the main
++    // thread (WorkerThreadMode::UseMainThread), where the wait loop below
++    // becomes WorkerMainRunLoop::runInMode -> RunLoop::cycle() spinning —
++    // but response bytes arrive via host JS WebSocket events that can never
++    // fire while wasm spins. Guaranteed hang (same root as the port-wide
++    // sync-XHR limitation). Fail fast and catchably: importScripts() gets
++    // a NetworkError, sync XHR in a worker errors out.
++    UNUSED_PARAM(workerOrWorkletGlobalScope);
++    client.didFail(std::nullopt, ResourceError { errorDomainWebKitInternal, 0, request.url(),
++        "Synchronous loads inside workers are unsupported in this single-threaded engine"_s });
++    return;
++#else
+     WorkerRunLoop& runLoop = workerOrWorkletGlobalScope.workerOrWorkletThread()->runLoop();
+ 
+     // Create a unique mode just for this synchronous resource load.
+@@ -84,6 +97,7 @@ void WorkerThreadableLoader::loadResourceSynchronously(WorkerOrWorkletGlobalScop
+ 
+     if (!loader->done() && !success)
+         loader->cancel();
++#endif
+ }
+ 
+ void WorkerThreadableLoader::cancel()
+diff --git a/Source/WebCore/platform/Pasteboard.h b/Source/WebCore/platform/Pasteboard.h
+index 11cef75ac77..07c2bf511fa 100644
+--- a/Source/WebCore/platform/Pasteboard.h
++++ b/Source/WebCore/platform/Pasteboard.h
+@@ -107,7 +107,7 @@ struct PasteboardWebContent {
+     bool canSmartCopyOrDelete;
+     String text;
+     String markup;
+-#elif USE(LIBWPE)
++#elif USE(LIBWPE) || defined(__EMSCRIPTEN__)
+     String text;
+     String markup;
+ #endif
+diff --git a/Source/WebCore/platform/ScrollAnimator.cpp b/Source/WebCore/platform/ScrollAnimator.cpp
+index 618fea80228..2a1399a5cc6 100644
+--- a/Source/WebCore/platform/ScrollAnimator.cpp
++++ b/Source/WebCore/platform/ScrollAnimator.cpp
+@@ -419,7 +419,7 @@ void ScrollAnimator::removeWheelEventTestCompletionDeferralForReason(ScrollingNo
+         monitor->removeDeferralForReason(identifier, reason);
+ }
+ 
+-#if USE(COORDINATED_GRAPHICS)
++#if USE(COORDINATED_GRAPHICS) || defined(__EMSCRIPTEN__)
+ bool ScrollAnimator::scrollAnimationEnabled() const
+ {
+     return checkedScrollableArea()->scrollAnimatorEnabled();
+diff --git a/Source/WebCore/platform/ScrollAnimator.h b/Source/WebCore/platform/ScrollAnimator.h
+index 9ec21f04c12..88e3db3f761 100644
+--- a/Source/WebCore/platform/ScrollAnimator.h
++++ b/Source/WebCore/platform/ScrollAnimator.h
+@@ -166,7 +166,11 @@ private:
+     void removeWheelEventTestCompletionDeferralForReason(ScrollingNodeID, WheelEventTestMonitor::DeferReason) const final;
+     ScrollingNodeID scrollingNodeIDForTesting() const final;
+ 
+-#if USE(COORDINATED_GRAPHICS)
++#if USE(COORDINATED_GRAPHICS) || defined(__EMSCRIPTEN__)
++    // PORT=Emscripten joins this guard: without it the base
++    // ScrollingEffectsControllerClient default (always animate) applies, and
++    // this port has no display-refresh driver to service scroll animations —
++    // every wheel scroll would be swallowed by a never-ticking animation.
+     bool scrollAnimationEnabled() const final;
+ #endif
+ 
+diff --git a/Source/WebCore/platform/WebCorePersistentCoders.cpp b/Source/WebCore/platform/WebCorePersistentCoders.cpp
+index bc608e04f78..4abc58def6d 100644
+--- a/Source/WebCore/platform/WebCorePersistentCoders.cpp
++++ b/Source/WebCore/platform/WebCorePersistentCoders.cpp
+@@ -405,7 +405,9 @@ void Coder<WebCore::CertificateInfo>::encodeForPersistence(Encoder& encoder, con
+     auto& certificateChain = certificateInfo.certificateChain();
+ 
+     encoder << certificateInfo.verificationError();
+-    encoder << certificateChain.size();
++    // wasm32: size_t is unsigned long, which matches no fixed-width Encoder
++    // overload (on LP64 it IS uint64_t, so this cast preserves the format).
++    encoder << static_cast<uint64_t>(certificateChain.size());
+     for (auto& certificate : certificateChain)
+         encoder << certificate;
+ }
+@@ -417,9 +419,9 @@ std::optional<WebCore::CertificateInfo> Coder<WebCore::CertificateInfo>::decodeF
+     if (!verificationError)
+         return std::nullopt;
+ 
+-    std::optional<size_t> numOfCerts;
++    std::optional<uint64_t> numOfCerts;
+     decoder >> numOfCerts;
+-    if (!numOfCerts)
++    if (!numOfCerts || *numOfCerts > std::numeric_limits<size_t>::max())
+         return std::nullopt;
+ 
+     WebCore::CertificateInfo::CertificateChain certificateChain;
+diff --git a/Source/WebCore/platform/emscripten/MIMETypeRegistryEmscripten.cpp b/Source/WebCore/platform/emscripten/MIMETypeRegistryEmscripten.cpp
+new file mode 100644
+index 00000000000..632053bdffa
+--- /dev/null
++++ b/Source/WebCore/platform/emscripten/MIMETypeRegistryEmscripten.cpp
+@@ -0,0 +1,71 @@
++/*
++ * PORT=Emscripten MIME type table, cribbed from
++ * platform/playstation/MIMETypeRegistryPlayStation.cpp.
++ */
++
++#include "config.h"
++#include "MIMETypeRegistry.h"
++
++namespace WebCore {
++
++static const std::initializer_list<TypeExtensionPair>& platformMediaTypes()
++{
++    static std::initializer_list<TypeExtensionPair> platformMediaTypes = {
++        { "image/bmp"_s, "bmp"_s },
++        { "text/css"_s, "css"_s },
++        { "image/gif"_s, "gif"_s },
++        { "text/html"_s, "htm"_s },
++        { "text/html"_s, "html"_s },
++        { "image/x-icon"_s, "ico"_s },
++        { "image/jpeg"_s, "jpeg"_s },
++        { "image/jpeg"_s, "jpg"_s },
++        { "application/x-javascript"_s, "js"_s },
++        { "application/pdf"_s, "pdf"_s },
++        { "image/png"_s, "png"_s },
++        { "application/rss+xml"_s, "rss"_s },
++        { "image/svg+xml"_s, "svg"_s },
++        { "text/plain"_s, "text"_s },
++        { "text/plain"_s, "txt"_s },
++        { "image/x-xbitmap"_s, "xbm"_s },
++        { "application/xhtml+xml"_s, "xhtml"_s },
++        { "text/xml"_s, "xml"_s },
++        { "text/xsl"_s, "xsl"_s },
++        { "image/webp"_s, "webp"_s },
++    };
++    return platformMediaTypes;
++}
++
++String MIMETypeRegistry::mimeTypeForExtension(StringView extension)
++{
++    for (auto& entry : platformMediaTypes()) {
++        if (equalIgnoringASCIICase(extension, entry.extension))
++            return entry.type;
++    }
++    return emptyString();
++}
++
++bool MIMETypeRegistry::isApplicationPluginMIMEType(const String&)
++{
++    return false;
++}
++
++String MIMETypeRegistry::preferredExtensionForMIMEType(const String& mimeType)
++{
++    for (auto& entry : platformMediaTypes()) {
++        if (equalIgnoringASCIICase(mimeType, entry.type))
++            return entry.extension;
++    }
++    return emptyString();
++}
++
++Vector<String> MIMETypeRegistry::extensionsForMIMEType(const String& mimeType)
++{
++    Vector<String> extensions;
++    for (auto& entry : platformMediaTypes()) {
++        if (equalIgnoringASCIICase(mimeType, entry.type))
++            extensions.append(entry.extension);
++    }
++    return extensions;
++}
++
++} // namespace WebCore
+diff --git a/Source/WebCore/platform/emscripten/PasteboardEmscripten.cpp b/Source/WebCore/platform/emscripten/PasteboardEmscripten.cpp
+new file mode 100644
+index 00000000000..e2f6c761dc8
+--- /dev/null
++++ b/Source/WebCore/platform/emscripten/PasteboardEmscripten.cpp
+@@ -0,0 +1,131 @@
++/*
++ * PORT=Emscripten pasteboard, cribbed from
++ * platform/libwpe/PasteboardLibWPE.cpp with the PlatformStrategies plumbing
++ * removed: the single-process embedder installs no pasteboard strategy, so
++ * every read returns empty and every write is dropped. A real clipboard
++ * bridge (navigator.clipboard on the host page) is a later phase.
++ */
++
++#include "config.h"
++#include "Pasteboard.h"
++
++#include "NotImplemented.h"
++
++namespace WebCore {
++
++std::unique_ptr<Pasteboard> Pasteboard::createForCopyAndPaste(std::unique_ptr<PasteboardContext>&& context)
++{
++    return makeUnique<Pasteboard>(WTF::move(context));
++}
++
++Pasteboard::Pasteboard(std::unique_ptr<PasteboardContext>&& context)
++    : m_context(WTF::move(context))
++{
++}
++
++bool Pasteboard::hasData()
++{
++    return false;
++}
++
++Vector<String> Pasteboard::typesSafeForBindings(const String&)
++{
++    notImplemented();
++    return { };
++}
++
++Vector<String> Pasteboard::typesForLegacyUnsafeBindings()
++{
++    return { };
++}
++
++String Pasteboard::readOrigin()
++{
++    notImplemented();
++    return { };
++}
++
++String Pasteboard::readString(const String&)
++{
++    return { };
++}
++
++String Pasteboard::readStringInCustomData(const String&)
++{
++    notImplemented();
++    return { };
++}
++
++void Pasteboard::writeString(const String&, const String&)
++{
++}
++
++void Pasteboard::clear()
++{
++}
++
++void Pasteboard::clear(const String&)
++{
++}
++
++void Pasteboard::read(PasteboardPlainText&, PlainTextURLReadingPolicy, std::optional<size_t>)
++{
++}
++
++void Pasteboard::read(PasteboardWebContentReader&, WebContentReadingPolicy, std::optional<size_t>)
++{
++    notImplemented();
++}
++
++void Pasteboard::read(PasteboardFileReader&, std::optional<size_t>)
++{
++}
++
++void Pasteboard::write(const PasteboardURL&)
++{
++}
++
++void Pasteboard::writeTrustworthyWebURLsPboardType(const PasteboardURL&)
++{
++    notImplemented();
++}
++
++void Pasteboard::write(const PasteboardImage&)
++{
++}
++
++void Pasteboard::write(const PasteboardBuffer&)
++{
++}
++
++void Pasteboard::write(const PasteboardWebContent&)
++{
++}
++
++Pasteboard::FileContentState Pasteboard::fileContentState()
++{
++    return FileContentState::NoFileOrImageData;
++}
++
++bool Pasteboard::canSmartReplace()
++{
++    return false;
++}
++
++void Pasteboard::writeMarkup(const String&)
++{
++}
++
++void Pasteboard::writePlainText(const String&, SmartReplaceOption)
++{
++}
++
++void Pasteboard::writeCustomData(const Vector<PasteboardCustomData>&)
++{
++}
++
++void Pasteboard::write(const Color&)
++{
++}
++
++} // namespace WebCore
+diff --git a/Source/WebCore/platform/emscripten/PlatformKeyboardEventEmscripten.cpp b/Source/WebCore/platform/emscripten/PlatformKeyboardEventEmscripten.cpp
+new file mode 100644
+index 00000000000..edef4ba355a
+--- /dev/null
++++ b/Source/WebCore/platform/emscripten/PlatformKeyboardEventEmscripten.cpp
+@@ -0,0 +1,35 @@
++/*
++ * PORT=Emscripten keyboard platform half.
++ * The embedder sends RawKeyDown/Char/KeyUp (never combined KeyDown), so
++ * disambiguateKeyDownEvent is only here to satisfy the link and to behave
++ * correctly if anything synthesizes a KeyDown; logic cribbed from
++ * platform/libwpe/PlatformKeyboardEventLibWPE.cpp.
++ */
++
++#include "config.h"
++#include "PlatformKeyboardEvent.h"
++
++namespace WebCore {
++
++OptionSet<PlatformEvent::Modifier> PlatformKeyboardEvent::currentStateOfModifierKeys()
++{
++    return { };
++}
++
++void PlatformKeyboardEvent::disambiguateKeyDownEvent(Type type, bool backwardsCompatibility)
++{
++    ASSERT(m_type == PlatformEvent::Type::KeyDown);
++    m_type = type;
++    // No m_handledByInputMethod check: that member is guarded to IME-capable
++    // ports (GTK/LIBWPE/APPKIT) and this port has no input method.
++    if (backwardsCompatibility)
++        return;
++
++    if (type == PlatformEvent::Type::RawKeyDown) {
++        m_text = String();
++        m_unmodifiedText = String();
++    } else
++        m_keyIdentifier = String();
++}
++
++} // namespace WebCore
+diff --git a/Source/WebCore/platform/emscripten/PlatformScreenEmscripten.cpp b/Source/WebCore/platform/emscripten/PlatformScreenEmscripten.cpp
+new file mode 100644
+index 00000000000..6324d2fe7e1
+--- /dev/null
++++ b/Source/WebCore/platform/emscripten/PlatformScreenEmscripten.cpp
+@@ -0,0 +1,59 @@
++/*
++ * PORT=Emscripten platform screen stub, cribbed from
++ * platform/playstation/PlatformScreenPlayStation.cpp. The "screen" is the
++ * host <canvas>; static metrics are fine until the embedder forwards real
++ * ones (Phase 3).
++ */
++
++#include "config.h"
++#include "PlatformScreen.h"
++
++#include "DestinationColorSpace.h"
++#include "FloatRect.h"
++#include "NotImplemented.h"
++
++namespace WebCore {
++
++int screenDepth(Widget*)
++{
++    return 24;
++}
++
++int screenDepthPerComponent(Widget*)
++{
++    return 8;
++}
++
++bool screenIsMonochrome(Widget*)
++{
++    return false;
++}
++
++bool screenHasInvertedColors()
++{
++    return false;
++}
++
++FloatRect screenRect(Widget*)
++{
++    notImplemented();
++    return { 0, 0, 1920, 1080 };
++}
++
++FloatRect screenAvailableRect(Widget*)
++{
++    notImplemented();
++    return { 0, 0, 1920, 1080 };
++}
++
++bool screenSupportsExtendedColor(Widget*)
++{
++    return false;
++}
++
++DestinationColorSpace screenColorSpace(Widget*)
++{
++    return DestinationColorSpace::SRGB();
++}
++
++} // namespace WebCore
+diff --git a/Source/WebCore/platform/emscripten/ScrollbarThemeEmscripten.cpp b/Source/WebCore/platform/emscripten/ScrollbarThemeEmscripten.cpp
+new file mode 100644
+index 00000000000..90181709db1
+--- /dev/null
++++ b/Source/WebCore/platform/emscripten/ScrollbarThemeEmscripten.cpp
+@@ -0,0 +1,54 @@
++/*
++ * PORT=Emscripten scrollbar theme, cribbed from
++ * platform/playstation/ScrollbarThemePlayStation.cpp (class folded into the
++ * .cpp — no other TU needs the type). Flat-color composite scrollbars.
++ */
++
++#include "config.h"
++#include "ScrollbarThemeComposite.h"
++
++#include "GraphicsContext.h"
++#include "NotImplemented.h"
++#include "ScrollView.h"
++#include "Scrollbar.h"
++
++namespace WebCore {
++
++class ScrollbarThemeEmscripten final : public ScrollbarThemeComposite {
++public:
++    ScrollbarThemeEmscripten() = default;
++    virtual ~ScrollbarThemeEmscripten() = default;
++
++    int scrollbarThickness(ScrollbarWidth scrollbarWidth = ScrollbarWidth::Auto, OverlayScrollbarSizeRelevancy = OverlayScrollbarSizeRelevancy::IncludeOverlayScrollbarSize) override
++    {
++        if (scrollbarWidth == ScrollbarWidth::None)
++            return 0;
++        return 7;
++    }
++
++    bool hasButtons(Scrollbar&) override { return false; }
++    bool hasThumb(Scrollbar&) override { return true; }
++
++    IntRect backButtonRect(Scrollbar&, ScrollbarPart, bool = false) override { return { }; }
++    IntRect forwardButtonRect(Scrollbar&, ScrollbarPart, bool = false) override { return { }; }
++    IntRect trackRect(Scrollbar& scrollbar, bool = false) override { return scrollbar.frameRect(); }
++
++    void paintTrackBackground(GraphicsContext& context, Scrollbar& scrollbar, const IntRect& trackRect) override
++    {
++        context.fillRect(trackRect, scrollbar.enabled() ? Color::lightGray : SRGBA<uint8_t> { 224, 224, 224 });
++    }
++
++    void paintThumb(GraphicsContext& context, Scrollbar& scrollbar, const IntRect& thumbRect) override
++    {
++        if (scrollbar.enabled())
++            context.fillRect(thumbRect, Color::darkGray);
++    }
++};
++
++ScrollbarTheme& ScrollbarTheme::nativeTheme()
++{
++    static ScrollbarThemeEmscripten theme;
++    return theme;
++}
++
++} // namespace WebCore
+diff --git a/Source/WebCore/platform/emscripten/ThemeEmscripten.cpp b/Source/WebCore/platform/emscripten/ThemeEmscripten.cpp
+new file mode 100644
+index 00000000000..4cb702e1228
+--- /dev/null
++++ b/Source/WebCore/platform/emscripten/ThemeEmscripten.cpp
+@@ -0,0 +1,25 @@
++/*
++ * PORT=Emscripten Theme, cribbed from platform/playstation/ThemePlayStation —
++ * the base Theme's generic form-control metrics are sufficient; the class
++ * lives in this .cpp because nothing else needs the type.
++ */
++
++#include "config.h"
++#include "Theme.h"
++
++#include <wtf/NeverDestroyed.h>
++
++namespace WebCore {
++
++class ThemeEmscripten final : public Theme {
++private:
++    friend NeverDestroyed<ThemeEmscripten>;
++};
++
++Theme& Theme::singleton()
++{
++    static NeverDestroyed<ThemeEmscripten> theme;
++    return theme;
++}
++
++} // namespace WebCore
+diff --git a/Source/WebCore/platform/emscripten/UserAgentEmscripten.cpp b/Source/WebCore/platform/emscripten/UserAgentEmscripten.cpp
+new file mode 100644
+index 00000000000..863d2603a09
+--- /dev/null
++++ b/Source/WebCore/platform/emscripten/UserAgentEmscripten.cpp
+@@ -0,0 +1,43 @@
++/*
++ * PORT=Emscripten user agent, cribbed from
++ * platform/playstation/UserAgentPlayStation.cpp. Claims a generic
++ * Linux/Safari UA — sites sniff aggressively and "Emscripten" in the UA
++ * would put us on every unknown-browser fallback path.
++ */
++
++#include "config.h"
++#include "UserAgent.h"
++
++#include <wtf/NeverDestroyed.h>
++#include <wtf/text/MakeString.h>
++
++namespace WebCore {
++
++static constexpr ASCIILiteral versionForUAString()
++{
++    // https://bugs.webkit.org/show_bug.cgi?id=180365
++    return "605.1.15"_s;
++}
++
++static String standardUserAgentStatic()
++{
++    // Version/X is mandatory *before* Safari/X to be a valid Safari UA. See
++    // https://bugs.webkit.org/show_bug.cgi?id=133403 for details.
++    static NeverDestroyed<String> uaStatic(makeString("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/"_s, versionForUAString(), " (KHTML, like Gecko) Version/17.0 Safari/"_s, versionForUAString()));
++    return uaStatic;
++}
++
++String standardUserAgent(const String& applicationName, const String& applicationVersion)
++{
++    if (applicationName.isEmpty())
++        return standardUserAgentStatic();
++
++    return makeString(standardUserAgentStatic(), ' ', applicationName, '/', applicationVersion.isEmpty() ? versionForUAString() : applicationVersion);
++}
++
++String standardUserAgentForURL(const URL&)
++{
++    return standardUserAgentStatic();
++}
++
++} // namespace WebCore
+diff --git a/Source/WebCore/platform/generic/KeyedDecoderGeneric.cpp b/Source/WebCore/platform/generic/KeyedDecoderGeneric.cpp
+index e4484b487fc..a45573e1e57 100644
+--- a/Source/WebCore/platform/generic/KeyedDecoderGeneric.cpp
++++ b/Source/WebCore/platform/generic/KeyedDecoderGeneric.cpp
+@@ -51,16 +51,20 @@ private:
+ 
+ static std::optional<String> readString(WTF::Persistence::Decoder& decoder)
+ {
+-    std::optional<size_t> size;
++    // Sizes are encoded as uint64_t (see KeyedEncoderGeneric); on wasm32
++    // size_t is 32-bit, so range-check before narrowing.
++    std::optional<uint64_t> size;
+     decoder >> size;
+     if (!size)
+         return std::nullopt;
+     if (!size.value())
+         return emptyString();
+ 
+-    if (!decoder.bufferIsLargeEnoughToContain<uint8_t>(*size))
++    if (*size > std::numeric_limits<size_t>::max())
+         return std::nullopt;
+-    Vector<uint8_t> buffer(size.value());
++    if (!decoder.bufferIsLargeEnoughToContain<uint8_t>(static_cast<size_t>(*size)))
++        return std::nullopt;
++    Vector<uint8_t> buffer(static_cast<size_t>(size.value()));
+     if (!decoder.decodeFixedLengthData(buffer.mutableSpan()))
+         return std::nullopt;
+     auto result = String::fromUTF8(buffer.span());
+@@ -110,16 +114,17 @@ KeyedDecoderGeneric::KeyedDecoderGeneric(std::span<const uint8_t> data)
+                 ok = false;
+             if (!ok)
+                 break;
+-            std::optional<size_t> size;
++            std::optional<uint64_t> size;
+             decoder >> size;
+             if (!size)
+                 ok = false;
+             if (!ok)
+                 break;
+-            ok = decoder.bufferIsLargeEnoughToContain<uint8_t>(*size);
++            ok = *size <= std::numeric_limits<size_t>::max()
++                && decoder.bufferIsLargeEnoughToContain<uint8_t>(static_cast<size_t>(*size));
+             if (!ok)
+                 break;
+-            Vector<uint8_t> buffer(*size);
++            Vector<uint8_t> buffer(static_cast<size_t>(*size));
+             ok = decoder.decodeFixedLengthData(buffer.mutableSpan());
+             if (!ok)
+                 break;
+diff --git a/Source/WebCore/platform/generic/KeyedEncoderGeneric.cpp b/Source/WebCore/platform/generic/KeyedEncoderGeneric.cpp
+index 9e58feb2252..2b882079a95 100644
+--- a/Source/WebCore/platform/generic/KeyedEncoderGeneric.cpp
++++ b/Source/WebCore/platform/generic/KeyedEncoderGeneric.cpp
+@@ -40,7 +40,10 @@ std::unique_ptr<KeyedEncoder> KeyedEncoder::encoder()
+ void KeyedEncoderGeneric::encodeString(const String& key)
+ {
+     auto result = key.tryGetUTF8([&](std::span<const char8_t> span) -> bool {
+-        m_encoder << span.size();
++        // Encode sizes as a fixed width: on wasm32 size_t is unsigned long,
++        // which matches neither the uint32_t nor the uint64_t Encoder
++        // overload (on LP64 it IS uint64_t, so this cast preserves format).
++        m_encoder << static_cast<uint64_t>(span.size());
+         m_encoder.encodeFixedLengthData(byteCast<uint8_t>(span));
+         return true;
+     });
+@@ -51,7 +54,7 @@ void KeyedEncoderGeneric::encodeBytes(const String& key, std::span<const uint8_t
+ {
+     m_encoder << Type::Bytes;
+     encodeString(key);
+-    m_encoder << bytes.size();
++    m_encoder << static_cast<uint64_t>(bytes.size());
+     m_encoder.encodeFixedLengthData(bytes);
+ }
+ 
+diff --git a/Source/WebCore/platform/graphics/ImageFrameWorkQueue.cpp b/Source/WebCore/platform/graphics/ImageFrameWorkQueue.cpp
+index 1c8e16fe230..479997e2ffb 100644
+--- a/Source/WebCore/platform/graphics/ImageFrameWorkQueue.cpp
++++ b/Source/WebCore/platform/graphics/ImageFrameWorkQueue.cpp
+@@ -114,10 +114,43 @@ void ImageFrameWorkQueue::dispatch(const Request& request)
+ {
+     ASSERT(isMainThread());
+ 
++#if defined(__EMSCRIPTEN__)
++    // PORT=Emscripten is single-threaded: SynchronizedFixedQueue's blocking
++    // enqueue (BufferSize=8 — a page with >8 pending image decodes hits it;
++    // Wikipedia spun the only thread at 100% CPU forever) and the worker's
++    // blocking dequeue can never be satisfied by another thread. Skip the
++    // queue + worker loop entirely: defer the decode one RunLoop cycle via
++    // callOnMainThread, then deliver with upstream's staleness checks
++    // (stop() clears decodeQueue, which voids in-flight requests). The
++    // decode is synchronous on the only thread — jank is inherent here.
++    // m_workQueue stays null, so isDecodingWorkQueueIdle() remains true.
++    // Decoder check BEFORE the append: a request appended with no decoder
++    // has no delivery callback, and a stale head entry blocks every later
++    // first()==request delivery for this source (Codex 2026-06-10).
++    RefPtr decoder = protectedSource()->decoder();
++    if (!decoder)
++        return;
++
++    decodeQueue().append(request);
++
++    callOnMainThread([protectedThis = Ref { *this }, protectedSource = this->protectedSource(), protectedDecoder = decoder.releaseNonNull(), request] () mutable {
++        if (protectedSource.ptr() != protectedThis->m_source.get())
++            return;
++        if (protectedThis->decodeQueue().isEmpty() || protectedThis->decodeQueue().first() != request)
++            return;
++
++        PlatformImagePtr platformImage = protectedDecoder->createFrameImageAtIndex(request.index, request.subsamplingLevel, request.options);
++        RefPtr nativeImage = NativeImage::create(WTF::move(platformImage));
++
++        protectedThis->decodeQueue().removeFirst();
++        protectedSource->imageFrameDecodeAtIndexHasFinished(request.index, request.subsamplingLevel, request.animatingState, request.options, WTF::move(nativeImage));
++    });
++#else
+     requestQueue().enqueue(request);
+     decodeQueue().append(request);
+ 
+     start();
++#endif
+ }
+ 
+ void ImageFrameWorkQueue::stop()
+diff --git a/Source/WebCore/platform/graphics/MediaPlayer.cpp b/Source/WebCore/platform/graphics/MediaPlayer.cpp
+index b5733a12183..bbe18359ba7 100644
+--- a/Source/WebCore/platform/graphics/MediaPlayer.cpp
++++ b/Source/WebCore/platform/graphics/MediaPlayer.cpp
+@@ -106,6 +106,14 @@
+ #include "MediaPlayerPrivateHolePunch.h"
+ #endif
+ 
++#if defined(__EMSCRIPTEN__)
++// BrowserInBrowser embedder media engine — implementation lives outside the
++// WebKit tree (src/embedder/BibMediaPlayer.cpp); see registration below.
++namespace BIB {
++void registerBibMediaEngine(WebCore::MediaEngineRegistrar);
++}
++#endif
++
+ #if ENABLE(WIRELESS_PLAYBACK_MEDIA_PLAYER)
+ #include "MediaDeviceRouteController.h"
+ #include "MediaPlayerPrivateWirelessPlayback.h"
+@@ -366,6 +374,14 @@ static void buildMediaEnginesVector() WTF_REQUIRES_LOCK(mediaEngineVectorLock)
+     MediaPlayerPrivateHolePunch::registerMediaEngine(addMediaEngine);
+ #endif
+ 
++#if defined(__EMSCRIPTEN__)
++    // BrowserInBrowser host-bridge engine (audio-only M-A): defined in the
++    // embedder (src/embedder/BibMediaPlayer.cpp, linked into the final
++    // binary); runtime-gated on Module.bibMedia, so without ?media=1 this
++    // registers nothing and the zero-engine A2 behavior is unchanged.
++    BIB::registerBibMediaEngine(addMediaEngine);
++#endif
++
+ #if ENABLE(WIRELESS_PLAYBACK_MEDIA_PLAYER)
+     if (!hasPlatformStrategies() || platformStrategies()->mediaStrategy()->wirelessPlaybackMediaPlayerEnabled()) {
+         if (registerRemoteEngine && !mockMediaDeviceRouteControllerEnabled())
+diff --git a/Source/WebCore/platform/graphics/emscripten/GLStubsEmscripten.cpp b/Source/WebCore/platform/graphics/emscripten/GLStubsEmscripten.cpp
+new file mode 100644
+index 00000000000..539cdf6a24d
+--- /dev/null
++++ b/Source/WebCore/platform/graphics/emscripten/GLStubsEmscripten.cpp
+@@ -0,0 +1,33 @@
++/*
++ * PORT=Emscripten GL/compositing link stubs. The Skia GPU phase (G2) moved
++ * PlatformDisplay/GLContext to real implementations (upstream
++ * PlatformDisplay.cpp + GLDisplay.cpp + PlatformDisplayEmscripten.cpp);
++ * what remains here is referenced-but-never-run code — wasm static linking
++ * has no lazy binding, so every referenced symbol must resolve.
++ */
++
++#include "config.h"
++#include "GLFence.h"
++#include "GraphicsLayer.h"
++
++namespace WebCore {
++
++// Accelerated-canvas fence sync. WebGL2 has fenceSync (proven in the G1
++// spike) — wire a real GLFence when the accelerated 2D canvas path lands;
++// every caller tolerates a null fence by falling back to a plain flush.
++std::unique_ptr<GLFence> GLFence::create(const GLDisplay&)
++{
++    return nullptr;
++}
++
++bool GLFence::isSupported(const GLDisplay&)
++{
++    return false;
++}
++
++Ref<GraphicsLayer> GraphicsLayer::create(GraphicsLayerFactory*, GraphicsLayerClient&, Type)
++{
++    RELEASE_ASSERT_NOT_REACHED();
++}
++
++} // namespace WebCore
+diff --git a/Source/WebCore/platform/graphics/emscripten/PlatformDisplayEmscripten.cpp b/Source/WebCore/platform/graphics/emscripten/PlatformDisplayEmscripten.cpp
+new file mode 100644
+index 00000000000..c7b1bdfa23c
+--- /dev/null
++++ b/Source/WebCore/platform/graphics/emscripten/PlatformDisplayEmscripten.cpp
+@@ -0,0 +1,323 @@
++/*
++ * PORT=Emscripten PlatformDisplay + GLContext (Skia GPU phase, G2).
++ *
++ * Single-context world: the embedder boots ONE WebGL2 context on the engine
++ * canvas (initializePlatformDisplayEmscripten). Upstream PlatformDisplay.cpp
++ * and egl/GLDisplay.cpp are compiled as-is over Emscripten's EGL; this file
++ * supplies the port subclass, the GLContext member definitions (upstream
++ * GLContext.cpp stays excluded — it drives real EGL surfaces we don't have),
++ * the GLContextWrapper bookkeeping (upstream file hard-includes ANGLE
++ * headers), and the Skia GLES interface assembled over
++ * emscripten_webgl_get_proc_address.
++ *
++ * Two getProc-level shims proven in the G1 spike (src/spike/gpu-spike.cpp,
++ * decision-005 "G1 results") MUST stay in front of Skia:
++ *  1. glGetString(GL_VERSION): Emscripten reports
++ *     "OpenGL ES 3.0 (WebGL 2.0 (...))" and Skia's parser takes the WebGL
++ *     number → ES2 cap → RGBA8 loses renderability. Truncate at first '('.
++ *  2. glGetInternalformativ: Emscripten's symbol is a silent no-op, leaving
++ *     GrGLCaps' per-format sample counts empty → no format is renderable.
++ *     Implement over WebGL2 getInternalformatParameter.
++ */
++
++#include "config.h"
++#include "PlatformDisplayEmscripten.h"
++
++#if USE(SKIA)
++
++#include "GLContext.h"
++
++WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
++#include <skia/gpu/ganesh/gl/GrGLAssembleInterface.h>
++#include <skia/gpu/ganesh/gl/GrGLInterface.h>
++WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
++
++#include <EGL/egl.h>
++#include <GLES3/gl3.h>
++#include <cstring>
++#include <emscripten/em_js.h>
++#include <emscripten/html5_webgl.h>
++
++namespace WebCore {
++
++// ---- GLContextWrapper bookkeeping (upstream GLContextWrapper.cpp is
++// excluded: it hard-includes ANGLE headers; the logic is this trivial). ----
++
++static thread_local GLContextWrapper* s_currentGLContextWrapper = nullptr;
++
++GLContextWrapper::~GLContextWrapper()
++{
++    if (s_currentGLContextWrapper == this)
++        s_currentGLContextWrapper = nullptr;
++}
++
++bool GLContextWrapper::isCurrent() const
++{
++    return s_currentGLContextWrapper == this;
++}
++
++GLContextWrapper* GLContextWrapper::currentContext()
++{
++    return s_currentGLContextWrapper;
++}
++
++void GLContextWrapper::didMakeContextCurrent()
++{
++    s_currentGLContextWrapper = this;
++}
++
++void GLContextWrapper::didUnmakeContextCurrent()
++{
++    s_currentGLContextWrapper = nullptr;
++}
++
++// ---- The boot WebGL2 context. ----
++
++static EMSCRIPTEN_WEBGL_CONTEXT_HANDLE s_webglContext = 0;
++
++EMSCRIPTEN_WEBGL_CONTEXT_HANDLE emscriptenSkiaWebGLContext()
++{
++    return s_webglContext;
++}
++
++// ---- GLContext: facades over the boot context. ----
++
++GLContext::GLContext(GLDisplay& display, EGLContext context, EGLSurface surface, EGLConfig config)
++    : m_display(display)
++    , m_context(context)
++    , m_surface(surface)
++    , m_config(config)
++{
++    m_version = 300;
++}
++
++GLContext::~GLContext() = default;
++
++std::unique_ptr<GLContext> GLContext::createOffscreen(PlatformDisplay& platformDisplay)
++{
++    if (!s_webglContext)
++        return nullptr;
++    return std::unique_ptr<GLContext>(new GLContext(platformDisplay.glDisplay(), reinterpret_cast<EGLContext>(s_webglContext), nullptr, nullptr));
++}
++
++std::unique_ptr<GLContext> GLContext::createSharing(PlatformDisplay&)
++{
++    // WebGL has no share groups; nothing on this port consumes a sharing
++    // context (referenced by PlatformDisplay::sharingGLContext()).
++    return nullptr;
++}
++
++GLContext* GLContext::current()
++{
++    auto* wrapper = GLContextWrapper::currentContext();
++    if (wrapper && wrapper->type() == GLContextWrapper::Type::Native)
++        return static_cast<GLContext*>(wrapper);
++    return nullptr;
++}
++
++bool GLContext::makeCurrentImpl()
++{
++    return emscripten_webgl_make_context_current(reinterpret_cast<EMSCRIPTEN_WEBGL_CONTEXT_HANDLE>(m_context)) == EMSCRIPTEN_RESULT_SUCCESS;
++}
++
++bool GLContext::unmakeCurrentImpl()
++{
++    return emscripten_webgl_make_context_current(0) == EMSCRIPTEN_RESULT_SUCCESS;
++}
++
++bool GLContext::makeContextCurrent()
++{
++    if (!makeCurrentImpl())
++        return false;
++    didMakeContextCurrent();
++    return true;
++}
++
++bool GLContext::unmakeContextCurrent()
++{
++    if (!unmakeCurrentImpl())
++        return false;
++    didUnmakeContextCurrent();
++    return true;
++}
++
++unsigned GLContext::version() const
++{
++    return m_version;
++}
++
++unsigned GLContext::glVersion() const
++{
++    return m_version;
++}
++
++RefPtr<GLDisplay> GLContext::display() const
++{
++    return m_display.get();
++}
++
++void GLContext::swapBuffers()
++{
++    // WebGL presents implicitly when control returns to the event loop.
++}
++
++GCGLContext GLContext::platformContext() const
++{
++    return m_context;
++}
++
++// ---- Skia GLES interface with the two WebGL2 shims (G1-proven). ----
++
++static const GLubyte* bibGetString(GLenum name)
++{
++    const GLubyte* string = glGetString(name);
++    if (name == GL_VERSION && string) {
++        // "OpenGL ES 3.0 (WebGL 2.0 (...))" → "OpenGL ES 3.0 " so Skia's
++        // GLES parser wins over its WebGL parser (which would cap us at 2.0).
++        static char fixed[64];
++        if (!fixed[0]) {
++            const char* src = reinterpret_cast<const char*>(string);
++            size_t i = 0;
++            for (; src[i] && src[i] != '(' && i < sizeof(fixed) - 1; ++i)
++                fixed[i] = src[i];
++            fixed[i] = '\0';
++        }
++        return reinterpret_cast<const GLubyte*>(fixed);
++    }
++    return string;
++}
++
++EM_JS(void, bibQueryInternalformat, (uint32_t ifmt, uint32_t pname, int bufSize, uintptr_t outPtr), {
++    var ctx = GL.currentContext.GLctx;
++    var arr = ctx.getInternalformatParameter(0x8D41 /* RENDERBUFFER */, ifmt, 0x80A9 /* SAMPLES */);
++    if (!arr) {
++        if (bufSize >= 1)
++            HEAP32[outPtr >> 2] = 0; // never leave the out-param unwritten
++        return;
++    }
++    if (pname == 0x9380 /* NUM_SAMPLE_COUNTS */) {
++        if (bufSize >= 1)
++            HEAP32[outPtr >> 2] = arr.length;
++    } else if (pname == 0x80A9 /* SAMPLES */) {
++        for (var i = 0; i < Math.min(bufSize, arr.length); i++)
++            HEAP32[(outPtr >> 2) + i] = arr[i];
++    }
++});
++
++static void bibGetInternalformativ(GLenum target, GLenum internalformat, GLenum pname, GLsizei bufSize, GLint* params)
++{
++    UNUSED_PARAM(target); // GrGLCaps only ever queries GL_RENDERBUFFER
++    bibQueryInternalformat(internalformat, pname, bufSize, reinterpret_cast<uintptr_t>(params));
++}
++
++// enableExtensionsByDefault only enables the extensions Emscripten's GL
++// library KNOWS; glGetStringi still advertises everything the browser
++// returned from getSupportedExtensions (GL.stringiCache). Skia trusts the
++// advertised list and emits #extension directives that ANGLE rejects
++// unless getExtension() actually enabled them — first seen as
++// GL_NV_shader_noperspective_interpolation shader-compile failures on
++// worker OffscreenCanvas contexts (W-B2; main-thread contexts never
++// exposed that extension). Enable everything so advertised == enabled.
++EM_JS(void, bibEnableAllWebGLExtensions, (), {
++    var ctx = GL.currentContext && GL.currentContext.GLctx;
++    if (!ctx || !ctx.getSupportedExtensions)
++        return;
++    ctx.getSupportedExtensions().forEach(function(name) { ctx.getExtension(name); });
++});
++
++static GrGLFuncPtr bibGetProc(void*, const char name[])
++{
++    if (!strcmp(name, "glGetString"))
++        return reinterpret_cast<GrGLFuncPtr>(bibGetString);
++    if (!strcmp(name, "glGetInternalformativ"))
++        return reinterpret_cast<GrGLFuncPtr>(bibGetInternalformativ);
++    void* proc = emscripten_webgl_get_proc_address(name);
++    if (!proc)
++        WTFLogAlways("PlatformDisplayEmscripten: getProc MISS %s", name);
++    return reinterpret_cast<GrGLFuncPtr>(proc);
++}
++
++sk_sp<const GrGLInterface> createSkiaGLInterfaceEmscripten()
++{
++    return GrGLMakeAssembledGLESInterface(nullptr, bibGetProc);
++}
++
++// ---- The port display + boot init. ----
++
++std::unique_ptr<PlatformDisplayEmscripten> PlatformDisplayEmscripten::create()
++{
++    auto glDisplay = GLDisplay::create(eglGetDisplay(EGL_DEFAULT_DISPLAY));
++    if (!glDisplay)
++        return nullptr;
++    return std::unique_ptr<PlatformDisplayEmscripten>(new PlatformDisplayEmscripten(glDisplay.releaseNonNull()));
++}
++
++PlatformDisplayEmscripten::PlatformDisplayEmscripten(Ref<GLDisplay>&& glDisplay)
++    : PlatformDisplay(WTF::move(glDisplay))
++{
++}
++
++bool initializePlatformDisplayEmscripten(const char* canvasSelector)
++{
++    if (s_webglContext)
++        return true;
++
++    // G1 attributes, minus preserveDrawingBuffer (spike-only — the engine
++    // redraws every presented frame, and preserve has a real cost in Chrome).
++    EmscriptenWebGLContextAttributes attributes;
++    emscripten_webgl_init_context_attributes(&attributes);
++    attributes.majorVersion = 2;
++    attributes.minorVersion = 0;
++    attributes.alpha = false;
++    attributes.depth = false;
++    attributes.stencil = true;
++    attributes.antialias = false;
++    attributes.preserveDrawingBuffer = false;
++    attributes.enableExtensionsByDefault = true;
++#if defined(__EMSCRIPTEN_PTHREADS__) && defined(BIB_GPU_READBACK_PRESENT)
++    // LEGACY (Approach R, GPU→CPU readback present) ONLY — off by default.
++    // renderViaOffscreenBackBuffer (needs -sOFFSCREEN_FRAMEBUFFER in
++    // embedder.cmake) forces preserveDrawingBuffer=true and routes rendering
++    // through an offscreen FBO so a per-frame readback didn't capture stale
++    // pixels. The current zero-copy present (transferToImageBitmap → page
++    // bitmaprenderer) deliberately does NOT enable these: an offscreen
++    // backbuffer would make GL FBO 0 an intermediate buffer, and the
++    // OffscreenCanvas' transferToImageBitmap captures the REAL default
++    // framebuffer — so the indirection produces blank/stale ImageBitmaps.
++    // Define BIB_GPU_READBACK_PRESENT (+ keep -sOFFSCREEN_FRAMEBUFFER) only to
++    // resurrect the old readback path for debugging. See
++    // handoff-2026-06-13-gpu-present-rearchitecture.md.
++    attributes.explicitSwapControl = true;
++    attributes.renderViaOffscreenBackBuffer = true;
++#endif
++
++    auto context = emscripten_webgl_create_context(canvasSelector, &attributes);
++    if (!context) {
++        WTFLogAlways("PlatformDisplayEmscripten: emscripten_webgl_create_context(%s) failed", canvasSelector);
++        return false;
++    }
++
++    if (emscripten_webgl_make_context_current(context) != EMSCRIPTEN_RESULT_SUCCESS) {
++        WTFLogAlways("PlatformDisplayEmscripten: make_context_current failed");
++        emscripten_webgl_destroy_context(context);
++        return false;
++    }
++
++    bibEnableAllWebGLExtensions();
++
++    auto display = PlatformDisplayEmscripten::create();
++    if (!display) {
++        WTFLogAlways("PlatformDisplayEmscripten: GLDisplay::create failed");
++        emscripten_webgl_make_context_current(0);
++        emscripten_webgl_destroy_context(context);
++        return false;
++    }
++
++    s_webglContext = context;
++    PlatformDisplay::setSharedDisplay(WTF::move(display));
++    return true;
++}
++
++} // namespace WebCore
++
++#endif // USE(SKIA)
+diff --git a/Source/WebCore/platform/graphics/emscripten/PlatformDisplayEmscripten.h b/Source/WebCore/platform/graphics/emscripten/PlatformDisplayEmscripten.h
+new file mode 100644
+index 00000000000..654dad6569a
+--- /dev/null
++++ b/Source/WebCore/platform/graphics/emscripten/PlatformDisplayEmscripten.h
+@@ -0,0 +1,52 @@
++/*
++ * PORT=Emscripten PlatformDisplay: the Skia-GPU (Ganesh over WebGL2)
++ * provider. One WebGL2 context is created on the engine canvas at boot;
++ * every WebCore GLContext is a facade over it (single-context world).
++ */
++
++#pragma once
++
++#include "PlatformDisplay.h"
++#include <emscripten/html5_webgl.h>
++
++#if USE(SKIA)
++#include <skia/core/SkRefCnt.h>
++struct GrGLInterface;
++#endif
++
++namespace WebCore {
++
++class PlatformDisplayEmscripten final : public PlatformDisplay {
++public:
++    static std::unique_ptr<PlatformDisplayEmscripten> create();
++
++    virtual ~PlatformDisplayEmscripten() = default;
++
++private:
++    explicit PlatformDisplayEmscripten(Ref<GLDisplay>&&);
++
++    Type type() const override { return PlatformDisplay::Type::Surfaceless; }
++};
++
++// Boot-time GPU init, called by the embedder when BIB_GPU=1: creates the
++// WebGL2 context on the engine canvas, makes it current, and installs the
++// shared PlatformDisplay. Returns false on any failure, leaving the CPU
++// raster path untouched (setSharedDisplay is never called on failure).
++bool initializePlatformDisplayEmscripten(const char* canvasSelector);
++
++// The boot context handle (0 until initialize succeeds). The embedder uses
++// it to wrap framebuffer 0 for the present pass. NOTE: an EM_JS helper,
++// bibEnableAllWebGLExtensions() (C linkage, defined in the .cpp), enables
++// every browser-offered extension on the current context — the embedder
++// re-declares and re-calls it after a G4 context restore, because
++// restoration invalidates every previously enabled extension (WebGL spec).
++EMSCRIPTEN_WEBGL_CONTEXT_HANDLE emscriptenSkiaWebGLContext();
++
++#if USE(SKIA)
++// Assembled GLES interface over emscripten_webgl_get_proc_address, with the
++// two shims WebGL2 needs (GL_VERSION truncation + real glGetInternalformativ).
++// Consumed by skiaGLInterface() in PlatformDisplaySkia.cpp.
++sk_sp<const GrGLInterface> createSkiaGLInterfaceEmscripten();
++#endif
++
++} // namespace WebCore
+diff --git a/Source/WebCore/platform/graphics/emscripten/SystemFontDatabaseEmscripten.cpp b/Source/WebCore/platform/graphics/emscripten/SystemFontDatabaseEmscripten.cpp
+new file mode 100644
+index 00000000000..4a0bd1177bf
+--- /dev/null
++++ b/Source/WebCore/platform/graphics/emscripten/SystemFontDatabaseEmscripten.cpp
+@@ -0,0 +1,32 @@
++/*
++ * PORT=Emscripten system font database, cribbed verbatim from
++ * platform/graphics/playstation/SystemFontDatabasePlayStation.cpp — both
++ * ports have no OS font service; the base class + a fixed shorthand works.
++ */
++
++#include "config.h"
++#include "SystemFontDatabase.h"
++
++#include "NotImplemented.h"
++#include "WebKitFontFamilyNames.h"
++#include <wtf/NeverDestroyed.h>
++
++namespace WebCore {
++
++SystemFontDatabase& SystemFontDatabase::singleton()
++{
++    static NeverDestroyed<SystemFontDatabase> database = SystemFontDatabase();
++    return database.get();
++}
++
++auto SystemFontDatabase::platformSystemFontShorthandInfo(FontShorthand) -> SystemFontShorthandInfo
++{
++    notImplemented();
++    return { WebKitFontFamilyNames::standardFamily, 16, normalWeightValue() };
++}
++
++void SystemFontDatabase::platformInvalidate()
++{
++}
++
++} // namespace WebCore
+diff --git a/Source/WebCore/platform/graphics/skia/ImageBufferSkiaAcceleratedBackend.cpp b/Source/WebCore/platform/graphics/skia/ImageBufferSkiaAcceleratedBackend.cpp
+index 5731b7e2be0..74bdd63a1ca 100644
+--- a/Source/WebCore/platform/graphics/skia/ImageBufferSkiaAcceleratedBackend.cpp
++++ b/Source/WebCore/platform/graphics/skia/ImageBufferSkiaAcceleratedBackend.cpp
+@@ -107,6 +107,15 @@ std::unique_ptr<ImageBufferSkiaAcceleratedBackend> ImageBufferSkiaAcceleratedBac
+     if (parameters.purpose != RenderingPurpose::Canvas && !ProcessCapabilities::canUseAcceleratedBuffers())
+         return nullptr;
+ 
++#if defined(__EMSCRIPTEN__)
++    // This port only boots the shared display when the embedder opts into
++    // the GPU path (Module.bibGPU). Without it, sharedDisplay() would
++    // RELEASE_ASSERT — degrade to the unaccelerated backend instead
++    // (ImageBitmap requests Accelerated unconditionally on USE(SKIA)).
++    if (!PlatformDisplay::sharedDisplayIfExists())
++        return nullptr;
++#endif
++
+     auto* glContext = PlatformDisplay::sharedDisplay().skiaGLContext();
+     if (!glContext || !glContext->makeContextCurrent())
+         return nullptr;
+diff --git a/Source/WebCore/platform/graphics/skia/PlatformDisplaySkia.cpp b/Source/WebCore/platform/graphics/skia/PlatformDisplaySkia.cpp
+index 134a1cf11d3..5fdbf8fa072 100644
+--- a/Source/WebCore/platform/graphics/skia/PlatformDisplaySkia.cpp
++++ b/Source/WebCore/platform/graphics/skia/PlatformDisplaySkia.cpp
+@@ -30,6 +30,10 @@
+ #include "FontRenderOptions.h"
+ #include "GLContext.h"
+ 
++#if defined(__EMSCRIPTEN__)
++#include "PlatformDisplayEmscripten.h"
++#endif
++
+ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+ #include <skia/core/SkColorSpace.h>
+ #include <skia/gpu/ganesh/GrBackendSurface.h>
+@@ -82,6 +86,12 @@ static sk_sp<const GrGLInterface> skiaGLInterface()
+     static NeverDestroyed<sk_sp<const GrGLInterface>> grGLInterface {
+ #if USE(LIBEPOXY)
+         GrGLInterfaces::MakeEpoxyEGL()
++#elif defined(__EMSCRIPTEN__)
++        // Assembled over emscripten_webgl_get_proc_address with the WebGL2
++        // shims (GL_VERSION truncation + glGetInternalformativ) — see
++        // PlatformDisplayEmscripten.cpp. Emscripten's EGL cannot back
++        // GrGLInterfaces::MakeEGL().
++        createSkiaGLInterfaceEmscripten()
+ #else
+         GrGLInterfaces::MakeEGL()
+ #endif
+@@ -280,7 +290,7 @@ private:
+ 
+ GLContext* PlatformDisplay::skiaGLContext()
+ {
+-#if PLATFORM(GTK) || PLATFORM(WPE) || (PLATFORM(PLAYSTATION) && !USE(COORDINATED_GRAPHICS))
++#if PLATFORM(GTK) || PLATFORM(WPE) || (PLATFORM(PLAYSTATION) && !USE(COORDINATED_GRAPHICS)) || defined(__EMSCRIPTEN__)
+     if (!s_skiaGLContext) {
+         s_skiaGLContext = SkiaGLContext::create(*this);
+         m_skiaGLContexts.add(*s_skiaGLContext);
+diff --git a/Source/WebCore/platform/network/curl/CurlContext.cpp b/Source/WebCore/platform/network/curl/CurlContext.cpp
+index 145c3e2b04c..21835186851 100644
+--- a/Source/WebCore/platform/network/curl/CurlContext.cpp
++++ b/Source/WebCore/platform/network/curl/CurlContext.cpp
+@@ -134,7 +134,7 @@ CurlContext::CurlContext()
+     m_isHttp3Enabled = (info->features & CURL_VERSION_HTTP3) && m_isAltSvcEnabled;
+ #endif
+ 
+-#ifndef NDEBUG
++#if !defined(NDEBUG) || defined(__EMSCRIPTEN__) // BIB: keep runtime-gated curl tracing in release wasm builds
+     m_verbose = envVar.defined("DEBUG_CURL");
+ 
+     auto logFile = envVar.read("CURL_LOG_FILE");
+@@ -145,7 +145,7 @@ CurlContext::CurlContext()
+ 
+ CurlContext::~CurlContext()
+ {
+-#ifndef NDEBUG
++#if !defined(NDEBUG) || defined(__EMSCRIPTEN__) // BIB: keep runtime-gated curl tracing in release wasm builds
+     if (m_logFile)
+         fclose(m_logFile);
+ #endif
+@@ -289,6 +289,13 @@ CURLMsg* CurlMultiHandle::readInfo(int& messagesInQueue)
+     return curl_multi_info_read(m_multiHandle, &messagesInQueue);
+ }
+ 
++#if defined(__EMSCRIPTEN__)
++CURLMcode CurlMultiHandle::getTimeout(long& timeoutMs)
++{
++    return curl_multi_timeout(m_multiHandle, &timeoutMs);
++}
++#endif
++
+ // CurlHandle -------------------------------------------------
+ 
+ CurlHandle::CurlHandle()
+@@ -308,7 +315,7 @@ CurlHandle::CurlHandle()
+ 
+     enableProxyIfExists();
+ 
+-#ifndef NDEBUG
++#if !defined(NDEBUG) || defined(__EMSCRIPTEN__) // BIB: keep runtime-gated curl tracing in release wasm builds
+     enableVerboseIfUsed();
+     enableStdErrIfUsed();
+ #endif
+@@ -935,7 +942,7 @@ std::optional<CertificateInfo> CurlHandle::certificateInfo() const
+     return std::nullopt;
+ }
+ 
+-#ifndef NDEBUG
++#if !defined(NDEBUG) || defined(__EMSCRIPTEN__) // BIB: keep runtime-gated curl tracing in release wasm builds
+ 
+ void CurlHandle::enableVerboseIfUsed()
+ {
+diff --git a/Source/WebCore/platform/network/curl/CurlContext.h b/Source/WebCore/platform/network/curl/CurlContext.h
+index e673140e1d5..26a38daa3ed 100644
+--- a/Source/WebCore/platform/network/curl/CurlContext.h
++++ b/Source/WebCore/platform/network/curl/CurlContext.h
+@@ -132,7 +132,7 @@ public:
+     Seconds connectTimeout() const { return m_connectTimeout; }
+     Seconds defaultTimeoutInterval() const { return m_defaultTimeoutInterval; }
+ 
+-#ifndef NDEBUG
++#if !defined(NDEBUG) || defined(__EMSCRIPTEN__) // BIB: keep runtime-gated curl tracing in release wasm builds
+     FILE* getLogFile() const { return m_logFile; }
+     bool isVerbose() const { return m_verbose; }
+ #endif
+@@ -156,7 +156,7 @@ private:
+ 
+     String m_alternativeServicesStorageFile;
+ 
+-#ifndef NDEBUG
++#if !defined(NDEBUG) || defined(__EMSCRIPTEN__) // BIB: keep runtime-gated curl tracing in release wasm builds
+     FILE* m_logFile { nullptr };
+     bool m_verbose { false };
+ #endif
+@@ -183,6 +183,12 @@ public:
+     CURLMcode wakeUp();
+     CURLMcode perform(int&);
+     CURLMsg* readInfo(int&);
++#if defined(__EMSCRIPTEN__)
++    // BIB: curl_multi_timeout — how soon libcurl wants another perform()
++    // pass (0 = immediately, -1 = only waiting on socket activity). The
++    // single-threaded main-RunLoop pump uses this to pick its re-arm delay.
++    CURLMcode getTimeout(long&);
++#endif
+ 
+ private:
+     CURLM* m_multiHandle { nullptr };
+@@ -316,7 +322,7 @@ public:
+     CURLcode send(const uint8_t*, size_t, size_t&);
+     CURLcode receive(uint8_t*, size_t, size_t&);
+ 
+-#ifndef NDEBUG
++#if !defined(NDEBUG) || defined(__EMSCRIPTEN__) // BIB: keep runtime-gated curl tracing in release wasm builds
+     void enableVerboseIfUsed();
+     void enableStdErrIfUsed();
+ #endif
+diff --git a/Source/WebCore/platform/network/curl/CurlRequest.cpp b/Source/WebCore/platform/network/curl/CurlRequest.cpp
+index d867e529097..ef71bd5e2e8 100644
+--- a/Source/WebCore/platform/network/curl/CurlRequest.cpp
++++ b/Source/WebCore/platform/network/curl/CurlRequest.cpp
+@@ -173,7 +173,16 @@ void CurlRequest::callClient(Function<void(CurlRequest&, CurlRequestClient&)>&&
+ 
+ void CurlRequest::runOnMainThread(Function<void()>&& task)
+ {
++#if defined(__EMSCRIPTEN__)
++    // Single-threaded wasm: transfer callbacks already run on the main
++    // thread, inside curl_multi_perform. ensureOnMainThread would run the
++    // client task inline — re-entering WebCore (and possibly curl itself,
++    // via cancel/pause) from inside a curl callback. Always defer to the
++    // next RunLoop cycle to keep the upstream async contract.
++    callOnMainThread(WTF::move(task));
++#else
+     ensureOnMainThread(WTF::move(task));
++#endif
+ }
+ 
+ void CurlRequest::runOnWorkerThreadIfRequired(Function<void()>&& task)
+@@ -511,6 +520,18 @@ int CurlRequest::didReceiveDebugInfo(curl_infotype type, std::span<const char> d
+     if (!data.data())
+         return 0;
+ 
++#if !defined(NDEBUG) || defined(__EMSCRIPTEN__)
++    // BIB: this callback REPLACES curl's default stderr verbose output, so
++    // DEBUG_CURL was silently swallowed for every CurlRequest transfer.
++    // Re-emit the informational lines when verbose tracing is requested.
++    if (type == CURLINFO_TEXT && CurlContext::singleton().isVerbose()) {
++        auto size = data.size();
++        while (size && (data[size - 1] == '\n' || data[size - 1] == '\r'))
++            --size;
++        WTFLogAlways("curl: %.*s", static_cast<int>(size), data.data());
++    }
++#endif
++
+     if (type == CURLINFO_HEADER_OUT) {
+         String requestHeader(data);
+         auto headerFields = requestHeader.split("\r\n"_s);
+diff --git a/Source/WebCore/platform/network/curl/CurlRequestScheduler.cpp b/Source/WebCore/platform/network/curl/CurlRequestScheduler.cpp
+index 43dce2f2ad2..66082e90317 100644
+--- a/Source/WebCore/platform/network/curl/CurlRequestScheduler.cpp
++++ b/Source/WebCore/platform/network/curl/CurlRequestScheduler.cpp
+@@ -33,6 +33,10 @@
+ 
+ #include "CurlRequestSchedulerClient.h"
+ 
++#if defined(__EMSCRIPTEN__)
++#include <wtf/RunLoop.h>
++#endif
++
+ namespace WebCore {
+ 
+ WTF_MAKE_TZONE_ALLOCATED_IMPL(CurlRequestScheduler);
+@@ -65,6 +69,12 @@ void CurlRequestScheduler::cancel(CurlRequestSchedulerClient* client)
+         return;
+ 
+     cancelTransfer(client);
++
++#if defined(__EMSCRIPTEN__)
++    // No parked worker thread will notice the queued finalize task; make
++    // sure the main-thread pump is armed to drain it.
++    startOrWakeUpThread();
++#endif
+ }
+ 
+ void CurlRequestScheduler::callOnWorkerThread(Function<void()>&& task)
+@@ -81,6 +91,30 @@ void CurlRequestScheduler::startOrWakeUpThread()
+ {
+     ASSERT(isMainThread());
+ 
++#if defined(__EMSCRIPTEN__)
++    // Single-threaded wasm: no worker thread exists. Lazily create the
++    // multi handle, then arm a self-rescheduling RunLoop pump that makes
++    // one non-blocking pass per cycle while work is pending (the
++    // libcurl.js pattern — curl_multi over non-blocking websocket
++    // sockets never needs to block).
++    {
++        Locker locker { m_multiHandleMutex };
++        if (!m_curlMultiHandle) {
++            m_curlMultiHandle.emplace();
++            m_curlMultiHandle->setMaxConnects(m_maxConnects);
++            m_curlMultiHandle->setMaxTotalConnections(m_maxTotalConnections);
++            m_curlMultiHandle->setMaxHostConnections(m_maxHostConnections);
++        }
++    }
++
++    if (m_pumpScheduled)
++        return;
++
++    m_pumpScheduled = true;
++    RunLoop::mainSingleton().dispatch([this] {
++        pumpMainThread();
++    });
++#else
+     {
+         Locker locker { m_mutex };
+         if (m_runThread) {
+@@ -100,8 +134,83 @@ void CurlRequestScheduler::startOrWakeUpThread()
+     m_thread = Thread::create("curlThread"_s, [this] {
+         workerThread();
+     }, ThreadType::Network);
++#endif
+ }
+ 
++#if defined(__EMSCRIPTEN__)
++void CurlRequestScheduler::pumpMainThread()
++{
++    ASSERT(isMainThread());
++
++    m_pumpScheduled = false;
++
++    // hostPump() can poke before any transfer ever created the handle.
++    {
++        Locker locker { m_multiHandleMutex };
++        if (!m_curlMultiHandle)
++            return;
++    }
++
++    executeTasks();
++
++    int activeCount = 0;
++    while (m_curlMultiHandle->perform(activeCount) == CURLM_CALL_MULTI_PERFORM) { }
++
++    while (true) {
++        int messagesInQueue = 0;
++        CURLMsg* msg = m_curlMultiHandle->readInfo(messagesInQueue);
++        if (!msg)
++            break;
++
++        ASSERT(msg->msg == CURLMSG_DONE);
++        if (auto client = m_clientMaps.inlineGet(msg->easy_handle))
++            completeTransfer(client, msg->data.result);
++    }
++
++    bool moreWork;
++    {
++        Locker locker { m_mutex };
++        moreWork = m_activeJobs.size() || m_taskQueue.size() || activeCount;
++    }
++    if (!moreWork)
++        return;
++
++    // Adaptive re-arm. curl_multi_timeout says how soon libcurl wants the
++    // next pass: 0 = it has immediate work (re-dispatch now — with the
++    // embedder's RunLoop wake-up hook this runs at macrotask rate, not
++    // once per display frame); -1 = it is only waiting on socket activity,
++    // which SOCKFS cannot signal into curl, so poll. The poll delay is
++    // capped at 8ms; the host page additionally pokes hostPump() when
++    // WebSocket data actually arrives, so the cap is a fallback, not the
++    // expected read latency.
++    long timeoutMs = -1;
++    m_curlMultiHandle->getTimeout(timeoutMs);
++
++    // Cycle-breaker (Codex 2026-06-10, high): if libcurl keeps answering
++    // "perform again now", chaining immediate dispatches would saturate the
++    // host event loop at macrotask rate with no code-level guarantee of a
++    // yield. Allow a short immediate burst, then force one pass through a
++    // 1ms timer before the next burst.
++    static constexpr int maxImmediatePumpBurst = 16;
++    if (!timeoutMs && ++m_immediatePumpBurst <= maxImmediatePumpBurst) {
++        startOrWakeUpThread();
++        return;
++    }
++    m_immediatePumpBurst = 0;
++
++    if (m_pumpTimerArmed || m_pumpScheduled)
++        return;
++
++    static constexpr long maxPollDelayMs = 8;
++    long delayMs = timeoutMs < 0 ? maxPollDelayMs : std::min(std::max(timeoutMs, 1L), maxPollDelayMs);
++    m_pumpTimerArmed = true;
++    RunLoop::mainSingleton().dispatchAfter(Seconds::fromMilliseconds(delayMs), [this] {
++        m_pumpTimerArmed = false;
++        pumpMainThread();
++    });
++}
++#endif
++
+ void CurlRequestScheduler::wakeUpThreadIfPossible()
+ {
+     Locker locker { m_multiHandleMutex };
+@@ -138,7 +247,9 @@ void CurlRequestScheduler::stopThread()
+ 
+ void CurlRequestScheduler::executeTasks()
+ {
++#if !defined(__EMSCRIPTEN__)
+     ASSERT(!isMainThread());
++#endif
+ 
+     Vector<Function<void()>> taskQueue;
+ 
+diff --git a/Source/WebCore/platform/network/curl/CurlRequestScheduler.h b/Source/WebCore/platform/network/curl/CurlRequestScheduler.h
+index fc5b225a8b7..3998a7ee71d 100644
+--- a/Source/WebCore/platform/network/curl/CurlRequestScheduler.h
++++ b/Source/WebCore/platform/network/curl/CurlRequestScheduler.h
+@@ -51,6 +51,13 @@ public:
+ 
+     void callOnWorkerThread(Function<void()>&&);
+ 
++#if defined(__EMSCRIPTEN__)
++    // BIB: host-page poke. The wisp WebSocket shim calls this (through the
++    // embedder's bib_pump_network export) the moment socket data arrives,
++    // so reads don't have to wait out the polling re-arm delay below.
++    void hostPump() { pumpMainThread(); }
++#endif
++
+ private:
+     void startOrWakeUpThread();
+     void wakeUpThreadIfPossible();
+@@ -61,6 +68,13 @@ private:
+ 
+     void workerThread();
+ 
++#if defined(__EMSCRIPTEN__)
++    // PORT=Emscripten is single-threaded: the multi handle is pumped from
++    // the main RunLoop (one non-blocking pass per cycle) instead of a
++    // dedicated thread parked in poll(). See CurlRequestScheduler.cpp.
++    void pumpMainThread();
++#endif
++
+     void startTransfer(CurlRequestSchedulerClient*);
+     void completeTransfer(CurlRequestSchedulerClient*, CURLcode);
+     void cancelTransfer(CurlRequestSchedulerClient*);
+@@ -77,6 +91,17 @@ private:
+     Lock m_multiHandleMutex;
+     std::optional<CurlMultiHandle> m_curlMultiHandle;
+ 
++#if defined(__EMSCRIPTEN__)
++    bool m_pumpScheduled { false };
++    // BIB: a delayed re-arm (dispatchAfter) is pending. Kept separate from
++    // m_pumpScheduled so a new request can still schedule an immediate pass
++    // while a poll timer is in flight; the spare pass is idempotent.
++    bool m_pumpTimerArmed { false };
++    // BIB: consecutive curl_multi_timeout==0 immediate re-arms; reset when
++    // a pass goes through the timer path (cycle-breaker, see .cpp).
++    int m_immediatePumpBurst { 0 };
++#endif
++
+     long m_maxConnects;
+     long m_maxTotalConnections;
+     long m_maxHostConnections;
+diff --git a/Source/WebCore/platform/network/curl/CurlStream.cpp b/Source/WebCore/platform/network/curl/CurlStream.cpp
+index e7708fd8bf2..19472b05b7b 100644
+--- a/Source/WebCore/platform/network/curl/CurlStream.cpp
++++ b/Source/WebCore/platform/network/curl/CurlStream.cpp
+@@ -41,6 +41,34 @@ CurlStream::CurlStream(CurlStreamScheduler& scheduler, CurlStreamID streamID, UR
+     : m_scheduler(scheduler)
+     , m_streamID(streamID)
+ {
++#if defined(__EMSCRIPTEN__)
++    // Single-threaded port: upstream's blocking CONNECT_ONLY perform()
++    // (the #else branch) can never complete here — the SOCKFS WebSocket
++    // underneath needs the JS event loop to open, and that loop is starved
++    // while perform() spins. Drive the connect through a private multi
++    // handle instead: the scheduler's main-thread pump calls tryToConnect()
++    // (via tryToTransfer) until libcurl reports the TCP+TLS connect
++    // finished, after which the easy handle serves curl_easy_recv/send
++    // exactly like upstream (the documented connect-only-via-multi
++    // pattern). This replaces the WS-0-era stub that failed every stream
++    // with CURLE_COULDNT_CONNECT at creation.
++    m_curlHandle = makeUnique<CurlHandle>();
++
++    url.setProtocol(url.protocolIs("wss"_s) ? "https"_s : "http"_s);
++    m_curlHandle->setURL(WTF::move(url), localhostAlias);
++
++    if (serverTrustEvaluation == ServerTrustEvaluation::Disable)
++        m_curlHandle->disableServerTrustEvaluation();
++
++    m_curlHandle->enableConnectionOnly();
++
++    m_connectMulti = makeUnique<CurlMultiHandle>();
++    if (m_connectMulti->addHandle(m_curlHandle->handle()) != CURLM_OK) {
++        notifyFailure(CURLE_COULDNT_CONNECT);
++        return;
++    }
++    tryToConnect();
++#else
+     ASSERT(!isMainThread());
+ 
+     m_curlHandle = makeUnique<CurlHandle>();
+@@ -62,16 +90,75 @@ CurlStream::CurlStream(CurlStreamScheduler& scheduler, CurlStreamID streamID, UR
+     m_scheduler.callClientOnMainThread(m_streamID, [streamID = m_streamID](Client& client) {
+         client.didOpen(streamID);
+     });
++#endif
+ }
+ 
+ CurlStream::~CurlStream()
+ {
++#if !defined(__EMSCRIPTEN__)
+     ASSERT(!isMainThread());
++#endif
+     destroyHandle();
+ }
+ 
++#if defined(__EMSCRIPTEN__)
++void CurlStream::tryToConnect()
++{
++    if (!m_connecting || !m_curlHandle || !m_connectMulti)
++        return;
++
++    int activeCount = 0;
++    CURLMcode performResult;
++    while ((performResult = m_connectMulti->perform(activeCount)) == CURLM_CALL_MULTI_PERFORM) { }
++    if (performResult != CURLM_OK) {
++        // A multi-level failure never produces a CURLMSG_DONE, which would
++        // otherwise strand the channel in CONNECTING forever (Codex).
++        m_connecting = false;
++        notifyFailure(CURLE_COULDNT_CONNECT);
++        return;
++    }
++
++    while (true) {
++        int messagesInQueue = 0;
++        CURLMsg* msg = m_connectMulti->readInfo(messagesInQueue);
++        if (!msg)
++            break;
++        if (msg->msg != CURLMSG_DONE || msg->easy_handle != m_curlHandle->handle())
++            continue;
++
++        auto result = msg->data.result;
++        // The multi handle must stay alive (and the easy handle in it) for
++        // the stream's whole life: the multi owns the connection cache, so
++        // curl_multi_cleanup here would close the just-established
++        // CONNECT_ONLY connection out from under curl_easy_recv/send
++        // (observed: "closing connection #0" + ACTIVESOCKET going BAD).
++        // destroyHandle() tears both down in the required order.
++        m_connecting = false;
++
++        if (result != CURLE_OK) {
++            notifyFailure(result);
++            return;
++        }
++
++        m_scheduler.callClientOnMainThread(m_streamID, [streamID = m_streamID](Client& client) {
++            client.didOpen(streamID);
++        });
++        return;
++    }
++}
++#endif
++
+ void CurlStream::destroyHandle()
+ {
++#if defined(__EMSCRIPTEN__)
++    // Teardown order required by curl: remove the easy handle from the
++    // multi, destroy the easy handle, then destroy the multi.
++    if (m_connectMulti && m_curlHandle)
++        m_connectMulti->removeHandle(m_curlHandle->handle());
++    m_curlHandle = nullptr;
++    m_connectMulti = nullptr;
++#endif
++
+     if (!m_curlHandle)
+         return;
+ 
+@@ -80,7 +167,9 @@ void CurlStream::destroyHandle()
+ 
+ void CurlStream::send(UniqueArray<uint8_t>&& buffer, size_t length)
+ {
++#if !defined(__EMSCRIPTEN__)
+     ASSERT(!isMainThread());
++#endif
+ 
+     if (!m_curlHandle)
+         return;
+@@ -90,17 +179,33 @@ void CurlStream::send(UniqueArray<uint8_t>&& buffer, size_t length)
+ 
+ void CurlStream::appendMonitoringFd(fd_set& readfds, fd_set& writefds, fd_set& exceptfds, int& maxfd)
+ {
++#if !defined(__EMSCRIPTEN__)
+     ASSERT(!isMainThread());
++#endif
+ 
+     if (!m_curlHandle)
+         return;
+ 
++#if defined(__EMSCRIPTEN__)
++    // No usable ACTIVESOCKET until the multi-driven connect completes —
++    // asking for it now would read as a failure and kill the stream.
++    if (m_connecting)
++        return;
++#endif
++
+     auto socket = m_curlHandle->getActiveSocket();
+     if (!socket.has_value()) {
+         notifyFailure(socket.error());
+         return;
+     }
+ 
++    // CURLINFO_ACTIVESOCKET reports CURL_SOCKET_BAD (-1) as a "success"
++    // when the connection is gone — FD_SET on it corrupts memory.
++    if (*socket == CURL_SOCKET_BAD || *socket >= FD_SETSIZE) {
++        notifyFailure(CURLE_RECV_ERROR);
++        return;
++    }
++
+     FD_SET(*socket, &readfds);
+     FD_SET(*socket, &exceptfds);
+ 
+@@ -113,17 +218,33 @@ void CurlStream::appendMonitoringFd(fd_set& readfds, fd_set& writefds, fd_set& e
+ 
+ void CurlStream::tryToTransfer(const fd_set& readfds, const fd_set& writefds, const fd_set& exceptfds)
+ {
++#if !defined(__EMSCRIPTEN__)
+     ASSERT(!isMainThread());
++#endif
+ 
+     if (!m_curlHandle)
+         return;
+ 
++#if defined(__EMSCRIPTEN__)
++    // The pump calls this every pass regardless of fd readiness; while the
++    // multi-driven connect is still in flight, give it the cycle instead.
++    if (m_connecting) {
++        tryToConnect();
++        return;
++    }
++#endif
++
+     auto socket = m_curlHandle->getActiveSocket();
+     if (!socket.has_value()) {
+         notifyFailure(socket.error());
+         return;
+     }
+ 
++    if (*socket == CURL_SOCKET_BAD || *socket >= FD_SETSIZE) {
++        notifyFailure(CURLE_RECV_ERROR);
++        return;
++    }
++
+     if (FD_ISSET(*socket, &readfds) || FD_ISSET(*socket, &exceptfds))
+         tryToReceive();
+ 
+@@ -185,9 +306,13 @@ void CurlStream::tryToSend()
+ 
+ void CurlStream::notifyFailure(CURLcode errorCode)
+ {
++    // m_curlHandle can already be gone (or never have existed) on failure
++    // paths that run after destroyHandle().
+     CertificateInfo certificateInfo;
+-    if (auto info = m_curlHandle->certificateInfo())
+-        certificateInfo = WTF::move(*info);
++    if (m_curlHandle) {
++        if (auto info = m_curlHandle->certificateInfo())
++            certificateInfo = WTF::move(*info);
++    }
+ 
+     destroyHandle();
+ 
+diff --git a/Source/WebCore/platform/network/curl/CurlStream.h b/Source/WebCore/platform/network/curl/CurlStream.h
+index af04c9f7ac0..a2d897c643c 100644
+--- a/Source/WebCore/platform/network/curl/CurlStream.h
++++ b/Source/WebCore/platform/network/curl/CurlStream.h
+@@ -77,6 +77,12 @@ private:
+ 
+     void notifyFailure(CURLcode);
+ 
++#if defined(__EMSCRIPTEN__)
++    // Single-threaded port: non-blocking connect driven by the scheduler
++    // pump (see the constructor comment in CurlStream.cpp).
++    void tryToConnect();
++#endif
++
+     static const size_t kReceiveBufferSize = 16 * 1024;
+ 
+     CurlStreamScheduler& m_scheduler;
+@@ -86,6 +92,11 @@ private:
+ 
+     Vector<std::pair<UniqueArray<uint8_t>, size_t>> m_sendBuffers;
+     size_t m_sendBufferOffset { 0 };
++
++#if defined(__EMSCRIPTEN__)
++    std::unique_ptr<CurlMultiHandle> m_connectMulti;
++    bool m_connecting { true };
++#endif
+ };
+ 
+ } // namespace WebCore
+diff --git a/Source/WebCore/platform/network/curl/CurlStreamScheduler.cpp b/Source/WebCore/platform/network/curl/CurlStreamScheduler.cpp
+index 0fdc759290b..62bd87067db 100644
+--- a/Source/WebCore/platform/network/curl/CurlStreamScheduler.cpp
++++ b/Source/WebCore/platform/network/curl/CurlStreamScheduler.cpp
+@@ -27,6 +27,10 @@
+ #include "CurlStreamScheduler.h"
+ #include <wtf/TZoneMallocInlines.h>
+ 
++#if defined(__EMSCRIPTEN__)
++#include <wtf/RunLoop.h>
++#endif
++
+ #if USE(CURL)
+ 
+ namespace WebCore {
+@@ -98,7 +102,11 @@ void CurlStreamScheduler::callOnWorkerThread(Function<void()>&& task)
+ 
+ void CurlStreamScheduler::callClientOnMainThread(CurlStreamID streamID, Function<void(CurlStream::Client&)>&& task)
+ {
++#if !defined(__EMSCRIPTEN__)
++    // Single-threaded port: the pump runs ON the main thread; the deferred
++    // callOnMainThread below keeps the upstream async delivery contract.
+     ASSERT(!isMainThread());
++#endif
+ 
+     callOnMainThread([this, streamID, task = WTF::move(task)]() {
+         if (auto client = m_clientList.get(streamID))
+@@ -108,6 +116,18 @@ void CurlStreamScheduler::callClientOnMainThread(CurlStreamID streamID, Function
+ 
+ void CurlStreamScheduler::startThreadIfNeeded()
+ {
++#if defined(__EMSCRIPTEN__)
++    // Single-threaded wasm: no thread — arm a self-rescheduling pump on
++    // the main RunLoop instead (the CurlRequestScheduler recipe; the
++    // worker thread here would abort in Thread::create the moment a page
++    // opened a WebSocket).
++    if (m_pumpScheduled)
++        return;
++    m_pumpScheduled = true;
++    RunLoop::mainSingleton().dispatch([this] {
++        pumpMainThread();
++    });
++#else
+     {
+         Locker locker { m_mutex };
+         if (m_runThread)
+@@ -122,8 +142,85 @@ void CurlStreamScheduler::startThreadIfNeeded()
+     m_thread = Thread::create("curlStreamThread"_s, [this] {
+         workerThread();
+     }, ThreadType::Network);
++#endif
+ }
+ 
++#if defined(__EMSCRIPTEN__)
++void CurlStreamScheduler::pumpMainThread()
++{
++    ASSERT(isMainThread());
++
++    m_pumpScheduled = false;
++
++    bool hadTasks;
++    {
++        Locker locker { m_mutex };
++        hadTasks = m_taskQueue.size();
++    }
++
++    executeTasks();
++
++    // One non-blocking pass of the worker loop body: select() with a zero
++    // timeout polls readiness of the SOCKFS-backed sockets.
++    int rc = 0;
++    fd_set readfds;
++    fd_set writefds;
++    fd_set exceptfds;
++    int maxfd = -1;
++
++    FD_ZERO(&readfds);
++    FD_ZERO(&writefds);
++    FD_ZERO(&exceptfds);
++
++    for (auto& stream : m_streamList.values())
++        stream->appendMonitoringFd(readfds, writefds, exceptfds, maxfd);
++
++    if (maxfd >= 0) {
++        struct timeval timeout { 0, 0 };
++        rc = ::select(maxfd + 1, &readfds, &writefds, &exceptfds, &timeout);
++        if (rc == -1) {
++            FD_ZERO(&readfds);
++            FD_ZERO(&writefds);
++            FD_ZERO(&exceptfds);
++        }
++    }
++
++    for (auto& stream : m_streamList.values())
++        stream->tryToTransfer(readfds, writefds, exceptfds);
++
++    bool moreWork;
++    {
++        Locker locker { m_mutex };
++        moreWork = m_streamList.size() || m_taskQueue.size();
++    }
++    if (!moreWork)
++        return;
++
++    // Something happened this pass (queued tasks ran, or select() reported
++    // readiness): pump again at macrotask rate while data is flowing.
++    // Otherwise the streams are merely open-and-idle — a WebSocket like
++    // Discord's gateway stays connected for the whole session, and an
++    // immediate re-dispatch here would spin the host event loop at 100%
++    // for its lifetime. Poll on a short timer instead; writefds is only
++    // monitored while sends are buffered, so an idle socket really does
++    // report rc == 0.
++    if (hadTasks || rc > 0) {
++        startThreadIfNeeded();
++        return;
++    }
++
++    if (m_pumpTimerArmed || m_pumpScheduled)
++        return;
++
++    static constexpr long pollDelayMs = 8;
++    m_pumpTimerArmed = true;
++    RunLoop::mainSingleton().dispatchAfter(Seconds::fromMilliseconds(pollDelayMs), [this] {
++        m_pumpTimerArmed = false;
++        pumpMainThread();
++    });
++}
++#endif
++
+ void CurlStreamScheduler::stopThreadIfNoMoreJobRunning()
+ {
+     ASSERT(!isMainThread());
+@@ -140,7 +237,9 @@ void CurlStreamScheduler::stopThreadIfNoMoreJobRunning()
+ 
+ void CurlStreamScheduler::executeTasks()
+ {
++#if !defined(__EMSCRIPTEN__)
+     ASSERT(!isMainThread());
++#endif
+ 
+     Vector<Function<void()>> taskQueue;
+ 
+diff --git a/Source/WebCore/platform/network/curl/CurlStreamScheduler.h b/Source/WebCore/platform/network/curl/CurlStreamScheduler.h
+index 2d7a77d759a..c196005ac65 100644
+--- a/Source/WebCore/platform/network/curl/CurlStreamScheduler.h
++++ b/Source/WebCore/platform/network/curl/CurlStreamScheduler.h
+@@ -54,6 +54,15 @@ private:
+ 
+     void workerThread();
+ 
++#if defined(__EMSCRIPTEN__)
++    // PORT=Emscripten is single-threaded: the worker thread is replaced by
++    // a self-rescheduling main-RunLoop pump (same recipe as
++    // CurlRequestScheduler::pumpMainThread).
++    void pumpMainThread();
++    bool m_pumpScheduled { false };
++    bool m_pumpTimerArmed { false };
++#endif
++
+     Lock m_mutex;
+     RefPtr<Thread> m_thread;
+     bool m_runThread { false };
+diff --git a/Source/WebCore/platform/network/emscripten/CurlSSLHandleEmscripten.cpp b/Source/WebCore/platform/network/emscripten/CurlSSLHandleEmscripten.cpp
+new file mode 100644
+index 00000000000..493312c0cd0
+--- /dev/null
++++ b/Source/WebCore/platform/network/emscripten/CurlSSLHandleEmscripten.cpp
+@@ -0,0 +1,53 @@
++/*
++ * PORT=Emscripten CurlSSLHandle platform half, cribbed from
++ * platform/network/win/CurlSSLHandleWin.cpp (cipher/curve lists) with a
++ * MEMFS CA bundle: the embedder --embed-files a Mozilla-style bundle at
++ * /etc/ssl/cacert.pem (see src/embedder/embedder.cmake). TLS terminates
++ * inside the engine — the Wisp transport below is a plain byte pipe.
++ */
++
++#include "config.h"
++#include "CurlSSLHandle.h"
++
++#include <wtf/FileSystem.h>
++
++namespace WebCore {
++
++void CurlSSLHandle::platformInitialize()
++{
++    constexpr auto cipherList =
++        "TLS_AES_128_GCM_SHA256:"
++        "TLS_CHACHA20_POLY1305_SHA256:"
++        "TLS_AES_256_GCM_SHA384:"
++        "ECDHE-ECDSA-AES128-GCM-SHA256:"
++        "ECDHE-RSA-AES128-GCM-SHA256:"
++        "ECDHE-ECDSA-CHACHA20-POLY1305:"
++        "ECDHE-RSA-CHACHA20-POLY1305:"
++        "ECDHE-ECDSA-AES256-GCM-SHA384:"
++        "ECDHE-RSA-AES256-GCM-SHA384:"
++        "ECDHE-ECDSA-AES256-SHA:"
++        "ECDHE-ECDSA-AES128-SHA:"
++        "ECDHE-RSA-AES128-SHA:"
++        "ECDHE-RSA-AES256-SHA:"
++        "AES128-GCM-SHA256:"
++        "AES256-GCM-SHA384:"
++        "AES128-SHA:"
++        "AES256-SHA";
++
++    constexpr auto ecCurves =
++        "X25519:"
++        "P-256:"
++        "P-384:"
++        "P-521";
++
++    setCipherList(cipherList);
++    setECCurves(ecCurves);
++
++    auto caBundlePath = "/etc/ssl/cacert.pem"_s;
++    if (FileSystem::fileExists(caBundlePath))
++        setCACertPath(String { caBundlePath });
++    else
++        WTFLogAlways("CurlSSLHandle: no CA bundle at /etc/ssl/cacert.pem — all TLS verification will fail");
++}
++
++} // namespace WebCore
+diff --git a/Source/WebCore/platform/network/emscripten/NetworkStateNotifierEmscripten.cpp b/Source/WebCore/platform/network/emscripten/NetworkStateNotifierEmscripten.cpp
+new file mode 100644
+index 00000000000..f66a6fffe71
+--- /dev/null
++++ b/Source/WebCore/platform/network/emscripten/NetworkStateNotifierEmscripten.cpp
+@@ -0,0 +1,22 @@
++/*
++ * PORT=Emscripten network state notifier, cribbed from
++ * platform/network/playstation/NetworkStateNotifierPlayStation.cpp.
++ * The wasm guest is "online" whenever the host tab is; report always-on.
++ * (Mirroring navigator.onLine from the host is a later refinement.)
++ */
++
++#include "config.h"
++#include "NetworkStateNotifier.h"
++
++namespace WebCore {
++
++void NetworkStateNotifier::updateStateWithoutNotifying()
++{
++    m_isOnLine = true;
++}
++
++void NetworkStateNotifier::startObserving()
++{
++}
++
++} // namespace WebCore
+diff --git a/Source/WebCore/rendering/emscripten/RenderThemeEmscripten.cpp b/Source/WebCore/rendering/emscripten/RenderThemeEmscripten.cpp
+new file mode 100644
+index 00000000000..1486ed1c71a
+--- /dev/null
++++ b/Source/WebCore/rendering/emscripten/RenderThemeEmscripten.cpp
+@@ -0,0 +1,25 @@
++/*
++ * PORT=Emscripten RenderTheme, cribbed from
++ * rendering/playstation/RenderThemePlayStation — base RenderTheme paints
++ * usable generic form controls; nothing to override for first paint.
++ */
++
++#include "config.h"
++#include "RenderTheme.h"
++
++#include <wtf/NeverDestroyed.h>
++
++namespace WebCore {
++
++class RenderThemeEmscripten final : public RenderTheme {
++public:
++    friend NeverDestroyed<RenderThemeEmscripten>;
++};
++
++RenderTheme& RenderTheme::singleton()
++{
++    static NeverDestroyed<RenderThemeEmscripten> theme;
++    return theme;
++}
++
++} // namespace WebCore
+diff --git a/Source/WebCore/workers/Worker.cpp b/Source/WebCore/workers/Worker.cpp
+index a74247d0ad2..1027406e306 100644
+--- a/Source/WebCore/workers/Worker.cpp
++++ b/Source/WebCore/workers/Worker.cpp
+@@ -101,6 +101,24 @@ Worker::Worker(ScriptExecutionContext& context, JSC::RuntimeFlags runtimeFlags,
+ 
+ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, JSC::RuntimeFlags runtimeFlags, Variant<RefPtr<TrustedScriptURL>, String>&& url, WorkerOptions&& options)
+ {
++    // PORT=Emscripten note (Phase W-A, decision-004): CLASSIC dedicated
++    // workers run COOPERATIVELY ON THE MAIN THREAD via
++    // WorkerThreadMode::UseMainThread (see
++    // WorkerMessagingProxy::startWorkerGlobalScope) — no Thread::create,
++    // no pthread. Synchronous worker APIs that would deadlock the shared
++    // thread (importScripts/sync XHR via WorkerThreadableLoader, crypto key
++    // wrap/unwrap, in-worker WebSocket) fail fast at their own sites.
++#if defined(__EMSCRIPTEN__)
++    // Module workers stay gated: WorkerThread startup runs
++    // loadModuleSynchronously -> runInMode spinning until the module graph
++    // resolves, but the fetches are async and their bytes arrive via host
++    // JS events that can't fire while wasm spins — guaranteed deadlock on
++    // the shared main thread (Codex review 2026-06-11). Catchable throw,
++    // same contract as the old all-workers gate.
++    if (options.type == WorkerType::Module)
++        return Exception { ExceptionCode::NotSupportedError, "Module workers are not supported in this single-threaded engine"_s };
++#endif
++
+     auto compliantScriptURLString = trustedTypeCompliantString(context, WTF::move(url), "Worker constructor"_s);
+     if (compliantScriptURLString.hasException())
+         return compliantScriptURLString.releaseException();
+diff --git a/Source/WebCore/workers/WorkerGlobalScope.cpp b/Source/WebCore/workers/WorkerGlobalScope.cpp
+index e1a8096208a..9b614a42370 100644
+--- a/Source/WebCore/workers/WorkerGlobalScope.cpp
++++ b/Source/WebCore/workers/WorkerGlobalScope.cpp
+@@ -511,6 +511,16 @@ void WorkerGlobalScope::addMessage(MessageSource source, MessageLevel level, con
+ 
+ std::optional<Vector<uint8_t>> WorkerGlobalScope::serializeAndWrapCryptoKey(CryptoKeyData&& keyData)
+ {
++#if defined(__EMSCRIPTEN__)
++    // PORT=Emscripten Phase W-A (decision-004): workers share the main
++    // thread, so post-to-loader-then-BinarySemaphore-wait is a same-thread
++    // deadlock. Unreachable TODAY (WebCrypto is link-stubbed: no algorithms
++    // register, no CryptoKey can exist) but a live deadlock the day the
++    // real OpenSSL backend lands — fail the wrap instead (Codex cross-check
++    // finding, 2026-06-11). Same below in unwrapCryptoKey.
++    UNUSED_PARAM(keyData);
++    return std::nullopt;
++#else
+     Ref protectedThis { *this };
+     auto* workerLoaderProxy = thread()->workerLoaderProxy();
+     if (!workerLoaderProxy)
+@@ -524,10 +534,16 @@ std::optional<Vector<uint8_t>> WorkerGlobalScope::serializeAndWrapCryptoKey(Cryp
+     });
+     semaphore.wait();
+     return wrappedKey;
++#endif
+ }
+ 
+ std::optional<Vector<uint8_t>> WorkerGlobalScope::unwrapCryptoKey(const Vector<uint8_t>& wrappedKey)
+ {
++#if defined(__EMSCRIPTEN__)
++    // Same-thread semaphore deadlock — see serializeAndWrapCryptoKey above.
++    UNUSED_PARAM(wrappedKey);
++    return std::nullopt;
++#else
+     Ref protectedThis { *this };
+     auto* workerLoaderProxy = thread()->workerLoaderProxy();
+     if (!workerLoaderProxy)
+@@ -541,6 +557,7 @@ std::optional<Vector<uint8_t>> WorkerGlobalScope::unwrapCryptoKey(const Vector<u
+     });
+     semaphore.wait();
+     return key;
++#endif
+ }
+ 
+ Crypto& WorkerGlobalScope::crypto()
+diff --git a/Source/WebCore/workers/WorkerMessagingProxy.cpp b/Source/WebCore/workers/WorkerMessagingProxy.cpp
+index 0cade107174..2fcca96c9af 100644
+--- a/Source/WebCore/workers/WorkerMessagingProxy.cpp
++++ b/Source/WebCore/workers/WorkerMessagingProxy.cpp
+@@ -159,7 +159,19 @@ void WorkerMessagingProxy::startWorkerGlobalScope(const URL& scriptURL, PAL::Ses
+ 
+     m_scriptURL = scriptURL;
+ 
+-    WorkerParameters params { scriptURL, scriptExecutionContext->url(), name, identifier, WTF::move(initializationData.userAgent), isOnline, contentSecurityPolicyResponseHeaders, shouldBypassMainWorldContentSecurityPolicy, crossOriginEmbedderPolicy, timeOrigin, referrerPolicy, workerType, credentials, scriptExecutionContext->settingsValues(), WorkerThreadMode::CreateNewThread, sessionID,
++#if defined(__EMSCRIPTEN__)
++    // PORT=Emscripten Phase W-A (decision-004): no pthreads in this build —
++    // Thread::create would RELEASE_ASSERT. Run dedicated workers
++    // cooperatively on the main thread instead: WorkerMainRunLoop + shared
++    // commonVM, the same upstream mode service workers use for in-process
++    // testing. Constraints handled elsewhere: synchronous worker loads
++    // fail fast (WorkerThreadableLoader), crypto key wrap/unwrap fails
++    // fast (WorkerGlobalScope) — both would deadlock the shared thread.
++    constexpr auto bibWorkerThreadMode = WorkerThreadMode::UseMainThread;
++#else
++    constexpr auto bibWorkerThreadMode = WorkerThreadMode::CreateNewThread;
++#endif
++    WorkerParameters params { scriptURL, scriptExecutionContext->url(), name, identifier, WTF::move(initializationData.userAgent), isOnline, contentSecurityPolicyResponseHeaders, shouldBypassMainWorldContentSecurityPolicy, crossOriginEmbedderPolicy, timeOrigin, referrerPolicy, workerType, credentials, scriptExecutionContext->settingsValues(), bibWorkerThreadMode, sessionID,
+         WTF::move(initializationData.serviceWorkerData),
+         initializationData.clientIdentifier,
+         scriptExecutionContext->advancedPrivacyProtections(),
+diff --git a/Source/WebCore/workers/WorkerRunLoop.cpp b/Source/WebCore/workers/WorkerRunLoop.cpp
+index 1b4f47b117f..32d0ee39100 100644
+--- a/Source/WebCore/workers/WorkerRunLoop.cpp
++++ b/Source/WebCore/workers/WorkerRunLoop.cpp
+@@ -468,8 +468,21 @@ void WorkerMainRunLoop::postTaskForMode(ScriptExecutionContext::Task&& task, con
+             if (!checkedThis || checkedThis->m_terminated)
+                 return;
+             scope = checkedThis->m_workerOrWorkletGlobalScope.get();
+-            if (!scope)
++            if (!scope) {
++#if defined(__EMSCRIPTEN__)
++                // PORT=Emscripten Phase W-A (decision-004): tasks posted
++                // before the bootstrap dispatch has run setGlobalScope land
++                // here with a null scope — upstream's silent drop loses
++                // every page->worker postMessage queued during startup
++                // (WorkerMessagingProxy flushes early tasks BEFORE
++                // thread->start() enqueues the bootstrap; main-loop FIFO
++                // then runs them first). Requeue instead: the bootstrap is
++                // already in the queue, so this self-limits. Termination
++                // (m_terminated / proxy teardown) stops the requeue loop.
++                checkedThis->postTaskForMode(WTF::move(task), WorkerRunLoop::defaultMode());
++#endif
+                 return;
++            }
+         }
+         task.performTask(*scope);
+     });
+diff --git a/Source/cmake/OptionsEmscripten.cmake b/Source/cmake/OptionsEmscripten.cmake
+new file mode 100644
+index 00000000000..b8c090ce71f
+--- /dev/null
++++ b/Source/cmake/OptionsEmscripten.cmake
+@@ -0,0 +1,169 @@
++# PORT=Emscripten: WebCore + JavaScriptCore compiled to WebAssembly with
++# Emscripten. Single-process WebKit1-style embedder; no WebKit2, no tools.
++#
++# Modeled on OptionsJSCOnly.cmake (proven by the Phase 1 wasm JSCOnly build),
++# with the WebCore dependency surface borrowed from OptionsWin.cmake and
++# OptionsPlayStation.cmake (curl networking, Skia CPU raster).
++
++find_package(Threads REQUIRED)
++
++set(CMAKE_C_VISIBILITY_PRESET hidden)
++set(CMAKE_CXX_VISIBILITY_PRESET hidden)
++set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
++
++add_definitions(-DBUILDING_EMSCRIPTEN__)
++
++set(PROJECT_VERSION_MAJOR 1)
++set(PROJECT_VERSION_MINOR 0)
++set(PROJECT_VERSION_MICRO 0)
++set(PROJECT_VERSION ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_MICRO})
++
++# Single-process embedder: WebCore is the top of our stack. No WebKit2
++# (multiprocess/IPC), no legacy API layer, no inspector UI, no Tools
++# (MiniBrowser, TestWebKitAPI, DumpRenderTree).
++set(ENABLE_WEBKIT OFF)
++set(ENABLE_WEBKIT_LEGACY OFF)
++set(ENABLE_WEBINSPECTORUI OFF)
++set(ENABLE_TOOLS OFF)
++set(ENABLE_WEBGPU OFF)
++
++WEBKIT_OPTION_BEGIN()
++
++WEBKIT_OPTION_DEFINE(ENABLE_STATIC_JSC "Whether to build JavaScriptCore as a static library." PUBLIC ON)
++
++# JavaScriptCore: CLoop interpreter only — wasm cannot self-JIT.
++WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_JIT PRIVATE OFF)
++WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_FTL_JIT PRIVATE OFF)
++WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_DFG_JIT PRIVATE OFF)
++WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_C_LOOP PRIVATE ON)
++WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEBASSEMBLY PRIVATE OFF)
++
++# HARD CONSTRAINT: Thread::suspend() traps under wasm — never enable.
++WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_SAMPLING_PROFILER PRIVATE OFF)
++WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_REMOTE_INSPECTOR PRIVATE OFF)
++
++# Allocator: emmalloc/dlmalloc via USE_SYSTEM_MALLOC. bmalloc's virtual
++# memory reservation tricks do not fit wasm32 linear memory.
++WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_SYSTEM_MALLOC PRIVATE ON)
++
++# Graphics: Skia CPU raster (vendored Source/ThirdParty/skia) into a plain
++# memory buffer; the embedder blits pixels to the host <canvas>. cairo is
++# dead in WebKit >= 2.46. The GPU path (Skia -> WebGL2) is a later phase.
++WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_SKIA PRIVATE ON)
++WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_SKIA_ENCODERS PRIVATE OFF)
++
++# Optional web features: everything OFF for first bring-up.
++# FTPDIR must be OFF: with it on, CurlHandle::enableAllowedProtocols passes
++# "file,ftp,ftps,http,https" to CURLOPT_PROTOCOLS_STR — our libcurl has no
++# ftp, and curl's protocol2num() zeroes the allowlist before failing
++# mid-parse, leaving ONLY "file" allowed => every http(s) load dies with
++# CURLE_UNSUPPORTED_PROTOCOL ("Protocol \"http\" disabled").
++WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_FTPDIR PRIVATE OFF)
++# Tier A2 (task #62): VIDEO on with ZERO media engines registered — no
++# USE(GSTREAMER)/AVFOUNDATION, so MediaPlayer falls back to its null
++# private. <video>/<audio> become real DOM elements with spec-correct
++# error events (MEDIA_ERR_SRC_NOT_SUPPORTED) and canPlayType() == "";
++# actual playback is a later host-bridge epic. Replaces the A1 JS stub
++# (web/media-stub.js self-disables when the real bindings exist).
++WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_VIDEO PRIVATE ON)
++WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEB_AUDIO PRIVATE OFF)
++WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEBGL PRIVATE OFF)
++WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_MEDIA_SOURCE PRIVATE OFF)
++WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_MEDIA_STREAM PRIVATE OFF)
++WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEB_RTC PRIVATE OFF)
++WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_ENCRYPTED_MEDIA PRIVATE OFF)
++WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_GAMEPAD PRIVATE OFF)
++WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_SPEECH_SYNTHESIS PRIVATE OFF)
++WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_NOTIFICATIONS PRIVATE OFF)
++WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_GEOLOCATION PRIVATE OFF)
++WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_FULLSCREEN_API PRIVATE OFF)
++WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEBXR PRIVATE OFF)
++WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_XSLT PRIVATE OFF)
++WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_MATHML PRIVATE OFF)
++WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEBDRIVER PRIVATE OFF)
++WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_MINIBROWSER PRIVATE OFF)
++WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_API_TESTS PRIVATE OFF)
++
++# Image formats beyond the sysroot tier (jpeg/png/webp) stay off.
++WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_AVIF PRIVATE OFF)
++WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_JPEGXL PRIVATE OFF)
++WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_LCMS PRIVATE OFF)
++WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_WOFF2 PRIVATE OFF)
++
++WEBKIT_OPTION_END()
++
++# wasm builds are fully static; a SHARED JavaScriptCore is not supported.
++if (NOT ENABLE_STATIC_JSC)
++    message(FATAL_ERROR "PORT=Emscripten requires ENABLE_STATIC_JSC=ON (wasm builds are fully static)")
++endif ()
++
++# Event loop: generic RunLoop (RunLoopGeneric.cpp). Emscripten has no GLib.
++SET_AND_EXPOSE_TO_BUILD(USE_GENERIC_EVENT_LOOP 1)
++SET_AND_EXPOSE_TO_BUILD(WTF_DEFAULT_EVENT_LOOP 0)
++
++# Platform options (PlayStation idiom): socket-backed remote inspector when
++# enabled (OFF by default here), unix-domain-socket SharedMemory handles —
++# platform/unix/SharedMemoryUnix.cpp is gated on USE(UNIX_DOMAIN_SOCKETS).
++SET_AND_EXPOSE_TO_BUILD(USE_INSPECTOR_SOCKET_SERVER ${ENABLE_REMOTE_INSPECTOR})
++SET_AND_EXPOSE_TO_BUILD(USE_UNIX_DOMAIN_SOCKETS ON)
++
++find_package(ICU 70.1 REQUIRED COMPONENTS data i18n uc)
++
++if (ENABLE_WEBCORE)
++    # Networking: WebKit curl backend (platform/Curl.cmake), Win-port glue.
++    SET_AND_EXPOSE_TO_BUILD(USE_CURL ON)
++    SET_AND_EXPOSE_TO_BUILD(USE_OPENSSL ON)
++
++    if (USE_SKIA)
++        find_package(HarfBuzz 1.4.2 REQUIRED COMPONENTS ICU)
++        SET_AND_EXPOSE_TO_BUILD(USE_HARFBUZZ ON)
++    endif ()
++
++    # Provided by third_party/wasm-sysroot (found via CMAKE_FIND_ROOT_PATH).
++    find_package(Freetype 2.9.0 REQUIRED)
++
++    # Web fonts (GTK idiom): the sysroot FreeType is built with brotli
++    # (FT_CONFIG_OPTION_USE_BROTLI), so it decodes WOFF2 natively — no
++    # libwoff2 needed (USE_WOFF2 stays OFF). HAVE_WOFF_SUPPORT gates
++    # FontCustomPlatformData's format acceptance; without it every
++    # woff/woff2 @font-face (i.e. all modern web fonts, all icon fonts)
++    # was silently rejected and text fell back to DejaVu.
++    include(WOFF2Checks)
++    if (FREETYPE_WOFF2_SUPPORT_IS_AVAILABLE)
++        SET_AND_EXPOSE_TO_BUILD(HAVE_WOFF_SUPPORT ON)
++    else ()
++        message(FATAL_ERROR "Sysroot FreeType lacks brotli/WOFF2 — rerun tools/build-deps/webcore-deps.sh (freetype section)")
++    endif ()
++    find_package(JPEG REQUIRED)
++    find_package(LibXml2 2.9.7 REQUIRED)
++    find_package(PNG REQUIRED)
++    find_package(SQLite3 REQUIRED)
++    if (NOT TARGET SQLite3::SQLite3) # CMake < 4.3 (same compat alias as GTK/Win)
++        add_library(SQLite3::SQLite3 ALIAS SQLite::SQLite3)
++    endif ()
++    find_package(WebP REQUIRED COMPONENTS demux)
++    find_package(ZLIB REQUIRED)
++
++    # Curl tier — built into the sysroot by tools/build-deps/curl-tier.sh
++    # (decision-003): curl 8.x + OpenSSL 3.5 + nghttp2 + brotli + libpsl.
++    # platform/Curl.cmake links CURL::libcurl, OpenSSL::SSL, LibPSL::LibPSL.
++    # The vendored Skia also REQUIREs Fontconfig on non-Win/non-PlayStation
++    # (ThirdParty/skia/CMakeLists.txt:6) — fontconfig rides in the same tier.
++    find_package(CURL 7.85.0 REQUIRED)
++    find_package(OpenSSL REQUIRED)
++    find_package(LibPSL 0.20.2 REQUIRED)
++    # Our static libpsl is built --enable-runtime=libicu (curl-tier.sh) but
++    # libpsl.pc/FindLibPSL advertise only -lpsl; propagate the ICU dependency
++    # or the embedder link fails with undefined u_*/uidna_* symbols.
++    target_link_libraries(LibPSL::LibPSL INTERFACE ICU::uc)
++
++    # WebCore/CMakeLists.txt links OpenGL::GLES unconditionally on CMake ports
++    # (ANGLE / epoxy / system GLES elsewhere). Emscripten's GLES2+EGL are emcc
++    # link-time JS libraries with headers in the default sysroot include path —
++    # there is no .a for a find module, so satisfy generation with an empty
++    # INTERFACE target. CPU-raster Phase 2 never calls GL; the Skia GPU path
++    # (Phase 6) will wire -lGL/-sFULL_ES2 style flags at final link instead.
++    if (NOT TARGET OpenGL::GLES)
++        add_library(OpenGL::GLES INTERFACE IMPORTED)
++    endif ()
++endif ()
+diff --git a/Source/cmake/WebKitCommon.cmake b/Source/cmake/WebKitCommon.cmake
+index 639b7e5d1ee..cda53315062 100644
+--- a/Source/cmake/WebKitCommon.cmake
++++ b/Source/cmake/WebKitCommon.cmake
+@@ -43,6 +43,7 @@ if (NOT HAS_RUN_WEBKIT_COMMON)
+     # Determine which port will be built
+     # -----------------------------------------------------------------------------
+     set(ALL_PORTS
++        Emscripten
+         GTK
+         JSCOnly
+         Mac

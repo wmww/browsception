@@ -1,8 +1,18 @@
 node_modules/
-engine/
+src/engine/
 test/fixtures/ca/
 experiments/data/
 dist/
 *.log
 *.pem
 _metadata/
+
+# Engine build state — shared singleton in the main checkout, never tracked.
+# Sources under engine/WebkitWasm/{src,tools,web} ARE tracked.
+engine/WebkitWasm/third_party/
+engine/WebkitWasm/build/
+engine/artifacts/
+engine/cmake-3.31.7-linux-x86_64/
+engine/logs/
+engine/.build.lock
+engine/.build.owner

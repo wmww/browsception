@@ -26,7 +26,8 @@ surface for speed (no WebGPU for the nested engine, no nested-wasm-runs-natively
 | [ui.md](ui.md) | Activation states, whitelist/blacklist modes, list semantics, toolbar UI, DNR mapping, shipping default |
 | [networking.md](networking.md) | The fetch bridge design, cookie model, shim guard list |
 | [bridge-probe.md](bridge-probe.md) | Spike 0.2 results: verified platform behaviors the bridge rests on + redirect/cookie design decisions |
-| [engine-build.md](engine-build.md) | Reproducible WebkitWasm build (pins, fixes, sizes, divergences); incremental-iteration recipe |
+| [engine-build.md](engine-build.md) | Reproducible engine build (pins, fixes, sizes, divergences, build traps); incremental-iteration recipe |
+| [engine-internals.md](engine-internals.md) | Hard limits of the wasm engine, WebKit-internals gotchas that re-bite on rebases, perf constraints |
 | [rendering-input.md](rendering-input.md) | Blit paths, input forwarding, IME, find-in-page, clipboard, audio, popups |
 | [security.md](security.md) | Threat model, trust boundaries, what we must enforce ourselves |
 | [testing.md](testing.md) | Automated test tiers (unit/bridge/full-integration), fixture+oracle design, agent iteration loop |
@@ -43,7 +44,8 @@ lives in [roadmap.md](roadmap.md). Phase summaries:
   design verified — engine-driven redirects, webRequest Set-Cookie capture (bridge-probe.md);
   interception matrix + blit path + test harness stood up (testing.md).
 - **Phase 1 engine⇄shim**: versioned ABI (`src/abi/bib_abi.h` + abi.mjs mirror); engine fork
-  (branch `browsception` in engine/WebkitWasm) transplanted networking onto the host-fetch bridge
+  (engine/WebkitWasm — absorbed into this repo 2026-08-12, sources tracked, no inner git;
+  provenance in its LICENSING.md) transplanted networking onto the host-fetch bridge
   (BibNetBridge, no curl/wisp in the path), rendering to a runtime-sized shared-heap framebuffer
   (`bibFrame` zero-copy present), input through WebCore's EventHandler, crash/heartbeat recovery,
   flat-heap leak check. Exit gate: 10.2-min crash-free real-site browse (experiments/log.md).
@@ -86,6 +88,9 @@ fixed the popup escaping to the stale entry-point URL (ui.md § Viewer chrome & 
 *Scroll blit at any dpr* (2026-08-11, engine af6f559) — was dpr==1-only, every HiDPI/zoomed
 scroll a full-viewport repaint (~1fps at 4K); now device-px snapped shift + settle repaint +
 viewer wheel coalescing, 2-5ms strips at any dpr (rendering-input.md § scrolling).
+*Engine fork absorbed* (2026-08-12) — engine/WebkitWasm sources are tracked in this repo
+(squashed import, upstream docs/spikes pruned, gems distilled into engine-internals.md);
+build state stays a main-checkout singleton (worktrees.md).
 
 Open issues in issues/ (first-nav race residual, guest-JS wedge, engine-side load failures
 silent). Next work: [roadmap.md](roadmap.md).

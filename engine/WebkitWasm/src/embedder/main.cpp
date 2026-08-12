@@ -2682,5 +2682,5 @@ int main()
         exit(1); // EXIT_RUNTIME=0: explicit teardown (node gate path)
     }
     printf("EMBEDDER: DONE\n");
-    exit(0); // EXIT_RUNTIME=0: explicit teardown runs Module.onExit (gate1 reads /out.ppm there)
+    exit(0); // EXIT_RUNTIME=0: explicit teardown runs Module.onExit (run-embedder.cjs reads /out.ppm there)
 }

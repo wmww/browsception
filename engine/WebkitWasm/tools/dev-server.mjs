@@ -193,6 +193,27 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // Cookie-on-redirect probe for tools/smoke-bridge.mjs: leg 1 sets a
+    // cookie on a 302, leg 2 echoes what came back. Proves the engine's jar
+    // stores a Set-Cookie from a redirect hop and re-attaches it on the next
+    // one (the bridge follows redirects engine-side, so both legs are
+    // separate bridge fetches).
+    if (pathname === "/cookie-test/redirect-set") {
+      res.writeHead(302, {
+        Location: "/cookie-test/echo",
+        "Set-Cookie": "bibredir=9; Path=/",
+        "Cache-Control": "no-store",
+      }).end();
+      return;
+    }
+    if (pathname === "/cookie-test/echo") {
+      res.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
+      }).end(`<title>cookie echo</title><pre>cookie: ${req.headers.cookie ?? "(none)"}</pre>`);
+      return;
+    }
+
     let root = ROOT;
     let rel = pathname;
     const mount = mounts.find(

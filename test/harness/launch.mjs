@@ -17,7 +17,7 @@ import { join } from 'node:path';
 
 // Per-checkout ports (parallel worktrees must not share a fixture server —
 // the oracle would cross-contaminate). See ports.mjs.
-import { HTTP_PORT, HTTPS_PORT } from './ports.mjs';
+import { HTTP_PORT, HTTPS_PORT, waitForOwnFixtureServer } from './ports.mjs';
 export { HTTP_PORT, HTTPS_PORT, PORT_BASE } from './ports.mjs';
 
 // plain-http.bstest maps to the fixture http port; everything else *.bstest to
@@ -89,15 +89,7 @@ export function extensionIdFromManifest(extensionDir) {
 // Wait until the fixture server oracle is reachable (undici fetch ignores our
 // self-signed cert only with NODE_TLS_REJECT_UNAUTHORIZED=0; use http port).
 export async function waitForFixtureServer(timeoutMs = 5000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const r = await fetch(`http://127.0.0.1:${HTTP_PORT}/__health`);
-      if (r.ok) return;
-    } catch {}
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  throw new Error('fixture server not reachable — start test/fixtures/server.mjs');
+  await waitForOwnFixtureServer(HTTP_PORT, timeoutMs);
 }
 
 // Oracle helpers.

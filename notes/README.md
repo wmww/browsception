@@ -107,8 +107,8 @@ shim never sees (unsupported top-level MIME type, blocked port, any WebCore refu
 leave the viewer on "booting…". Two of those refusals dispatch to no client upstream — the patch
 adds the notification (networking.md, engine-internals.md; tier-2 scenario 16).
 
-Open issues in issues/ (first-nav race residual, guest-JS wedge, vendored web-dep hygiene,
-smoke tools ignore a worktree's engine web/tools). Next work:
+Open issues in issues/ (first-nav race residual, guest-JS wedge, vendored web-dep hygiene).
+Next work:
 [roadmap.md](roadmap.md).
 
 ## Key decisions

@@ -33,10 +33,32 @@ tolerate a vanished checkout).
 | `engine/artifacts/<stamp>/` | main checkout | immutable snapshots of `embedder.{js,wasm}` + meta.json (`source_hash` = hash of the sources built, plus checkout/branch/sha/dirty/pthread), newest 5 kept, `latest` symlink |
 | `src/engine/` | per checkout | hardlinks into a snapshot (~0 disk; Chrome can't reliably follow symlinks, hardlinks are fine). Pruning a snapshot never breaks staged copies — hardlinks keep inodes alive |
 | `node_modules` | per checkout | hardlink-clone of main's |
+| smoke harness (dev-server, `web/`, staged engine) | per checkout | `tools/lib/dev-harness.mjs`; only the build tree behind `stage-engine` is shared |
 | test/dev-server ports | per checkout | derived block of 16 from checkout-path hash (`test/harness/ports.mjs`, base 21000–28999, override `BS_PORT_BASE`). Fixture pages that need live ports use `__HTTP_PORT__`/`__HTTPS_PORT__` placeholders substituted by server.mjs |
 
 Port isolation matters: with a fixed port, one worktree's harness would silently talk to another
 worktree's fixture server (health check passes, oracle cross-contaminates).
+
+## Smokes and harness servers
+
+`tools/smoke-*.mjs` run entirely out of **this** checkout via `tools/lib/dev-harness.mjs`:
+its `engine/WebkitWasm/tools/dev-server.mjs`, its `web/` harness, and `/engine` mounted from
+its `src/engine` (the hash-matched hardlink snapshot; `startDevServer` re-stages `--if-stale`
+first). Nothing is served out of the main checkout's live `build/webcore/bin` — that holds
+whichever checkout built last, and a relink rewrites it under a running smoke. Before this
+(fixed 2026-08-13) a smoke from a worktree silently exercised main's harness and a neighbour's
+engine.
+
+Port blocks are *derived*, so two checkouts can hash to the same one. Both harness servers
+therefore identify themselves and the clients refuse a stranger:
+
+- fixture server `/__health` → `{checkout}`; `waitForOwnFixtureServer()` (ports.mjs) throws
+  `.foreign` rather than adopting it, and `ensureFixtureServer()` rethrows instead of spawning
+  a doomed second one. Silently sharing it would cross-contaminate the request oracle.
+- dev server `/__whoami` → `{root, mounts}`; `waitForServers(urls, server)` checks it, and a
+  dev server that dies on a busy port kills the smoke instead of letting it drive a neighbour's.
+
+If you hit a collision, set `BS_PORT_BASE` in one checkout.
 
 ## JS-only work (the common case)
 

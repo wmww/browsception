@@ -10,36 +10,17 @@
 // capture -> bib_* -> EventHandler path a human exercises).
 
 import { chromium } from 'playwright-core';
-import { spawn } from 'node:child_process';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-import { engineRoot } from './lib/paths.mjs';
+import { startDevServer, waitForServers } from './lib/dev-harness.mjs';
 import { PORT_BASE } from '../test/harness/ports.mjs';
 
-const W = join(engineRoot, 'WebkitWasm');
 const PORT = PORT_BASE + 6;
 const headed = process.argv.includes('--headed');
 const minutesArg = process.argv.indexOf('--minutes');
 const MINUTES = minutesArg >= 0 ? Number(process.argv[minutesArg + 1]) : 10;
 
-const server = spawn(
-  'node',
-  ['tools/dev-server.mjs', 'web', '--mount', '/engine=build/webcore/bin'],
-  { cwd: W, env: { ...process.env, PORT: String(PORT) }, stdio: 'ignore' },
-);
-process.on('exit', () => server.kill());
-await new Promise((resolve, reject) => {
-  const t0 = Date.now();
-  (async function poll() {
-    try {
-      await fetch(`http://127.0.0.1:${PORT}/browser.html`);
-      resolve();
-    } catch {
-      Date.now() - t0 > 5000 ? reject(new Error('dev server did not start')) : setTimeout(poll, 100);
-    }
-  })();
-});
+const server = startDevServer({ port: PORT });
+await waitForServers([`http://127.0.0.1:${PORT}/browser.html`], server);
 
 const browser = await chromium.launch({
   executablePath: process.env.BS_CHROMIUM ?? '/usr/bin/chromium',

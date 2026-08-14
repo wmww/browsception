@@ -18,12 +18,13 @@
 // don't reliably); a rebuild writes new snapshot dirs, never touching inodes
 // already staged into other worktrees.
 
-import { copyFileSync, existsSync, linkSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { copyFileSync, existsSync, linkSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { checkoutRoot, engineRoot } from './lib/paths.mjs';
 import { engineSrcHash } from './lib/engine-src-hash.mjs';
 
 const OUT = join(checkoutRoot, 'src/engine');
+const CONFIG = 'bib-build-config.js';
 const ARTIFACTS = join(engineRoot, 'artifacts');
 const fromIdx = process.argv.indexOf('--from');
 const fromArg = fromIdx >= 0 ? process.argv[fromIdx + 1] : null;
@@ -79,7 +80,7 @@ if (ifStale && mode === 'link') {
   const same = ['embedder.js', 'embedder.wasm'].every((f) => {
     try { return statSync(join(src, f)).ino === statSync(join(OUT, f)).ino; } catch { return false; }
   });
-  if (same) process.exit(0);
+  if (same && existsSync(join(OUT, CONFIG))) process.exit(0);
 }
 if (warning) console.warn(warning);
 
@@ -94,4 +95,20 @@ for (const f of ['embedder.js', 'embedder.wasm']) {
     copyFileSync(s, d);
   }
   console.log(`staged ${f} (${(statSync(d).size / 1048576).toFixed(1)} MB, ${mode} from ${basename(src)})`);
+}
+
+// Threading-mode stamp: the dev harness (web/browser.html) reads it from the
+// /engine mount before picking #screen's context. Snapshots made before it was
+// snapshotted don't carry the file — meta.json records the same bit, so
+// synthesize it rather than letting the harness fall back to its default.
+{
+  const d = join(OUT, CONFIG);
+  rmSync(d, { force: true });
+  if (existsSync(join(src, CONFIG))) {
+    copyFileSync(join(src, CONFIG), d);
+  } else {
+    const pthread = readMeta(src).pthread;
+    writeFileSync(d, `// Synthesized by tools/stage-engine.mjs from ${basename(src)}/meta.json.\n` +
+      `window.BIB_PTHREAD_BUILD = ${pthread === undefined ? true : !!pthread};\n`);
+  }
 }

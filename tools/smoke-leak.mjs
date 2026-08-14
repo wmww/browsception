@@ -12,41 +12,25 @@ import { spawn } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { engineRoot } from './lib/paths.mjs';
-import { PORT_BASE } from '../test/harness/ports.mjs';
+import { startDevServer, waitForServers } from './lib/dev-harness.mjs';
+import { PORT_BASE, waitForOwnFixtureServer } from '../test/harness/ports.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const W = join(engineRoot, 'WebkitWasm');
 const PORT = PORT_BASE + 7;
 const FIXTURE_HTTP = PORT_BASE + 8;
 const FIXTURE_HTTPS = PORT_BASE + 9;
 const navsArg = process.argv.indexOf('--navs');
 const NAVS = navsArg >= 0 ? Number(process.argv[navsArg + 1]) : 50;
 
-const servers = [
-  spawn('node', ['test/fixtures/server.mjs', '--http', String(FIXTURE_HTTP), '--https', String(FIXTURE_HTTPS)], {
-    cwd: ROOT,
-    stdio: 'ignore',
-  }),
-  spawn(
-    'node',
-    ['tools/dev-server.mjs', 'web', '--mount', '/engine=build/webcore/bin'],
-    { cwd: W, env: { ...process.env, PORT: String(PORT), BIB_BSTEST_PORT: String(FIXTURE_HTTP) }, stdio: 'ignore' },
-  ),
-];
-process.on('exit', () => servers.forEach((s) => s.kill()));
-await new Promise((resolve, reject) => {
-  const t0 = Date.now();
-  (async function poll() {
-    try {
-      await fetch(`http://127.0.0.1:${PORT}/browser.html`);
-      await fetch(`http://127.0.0.1:${FIXTURE_HTTP}/__health`);
-      resolve();
-    } catch {
-      Date.now() - t0 > 5000 ? reject(new Error('servers did not start')) : setTimeout(poll, 100);
-    }
-  })();
-});
+const fixtures = spawn(
+  'node',
+  ['test/fixtures/server.mjs', '--http', String(FIXTURE_HTTP), '--https', String(FIXTURE_HTTPS)],
+  { cwd: ROOT, stdio: 'ignore' },
+);
+process.on('exit', () => fixtures.kill());
+const server = startDevServer({ port: PORT, env: { BIB_BSTEST_PORT: String(FIXTURE_HTTP) } });
+await waitForServers([`http://127.0.0.1:${PORT}/browser.html`], server);
+await waitForOwnFixtureServer(FIXTURE_HTTP);
 
 const browser = await chromium.launch({
   executablePath: process.env.BS_CHROMIUM ?? '/usr/bin/chromium',
@@ -109,5 +93,6 @@ if (finalHeap > 2.5 * 1024 ** 3) {
 }
 
 await browser.close();
-servers.forEach((s) => s.kill());
+fixtures.kill();
+server.kill();
 process.exit(failures ? 1 : 0);

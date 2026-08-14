@@ -7,35 +7,17 @@
 // the sparing real-site smoke at the end of an engine work session.
 
 import { chromium } from 'playwright-core';
-import { spawn } from 'node:child_process';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 
-import { engineRoot } from './lib/paths.mjs';
+import { startDevServer, waitForServers, LOGS } from './lib/dev-harness.mjs';
 import { PORT_BASE } from '../test/harness/ports.mjs';
 
-const W = join(engineRoot, 'WebkitWasm');
 const PORT = PORT_BASE + 5;
 const headed = process.argv.includes('--headed');
 
 // --- dev server (serves harness + /__bibproxy) ---------------------------
-const server = spawn('node', ['tools/dev-server.mjs', 'web', '--mount', '/engine=build/webcore/bin'], {
-  cwd: W,
-  env: { ...process.env, PORT: String(PORT) },
-  stdio: 'ignore',
-});
-process.on('exit', () => server.kill());
-await new Promise((resolve, reject) => {
-  const t0 = Date.now();
-  (async function poll() {
-    try {
-      await fetch(`http://127.0.0.1:${PORT}/browser.html`);
-      resolve();
-    } catch {
-      Date.now() - t0 > 5000 ? reject(new Error('dev server did not start')) : setTimeout(poll, 100);
-    }
-  })();
-});
+const server = startDevServer({ port: PORT });
+await waitForServers([`http://127.0.0.1:${PORT}/browser.html`], server);
 
 const browser = await chromium.launch({ executablePath: process.env.BS_CHROMIUM ?? '/usr/bin/chromium', headless: !headed });
 
@@ -78,7 +60,7 @@ async function loadAndProbe(name, target, probeJs, expect, timeoutMs = 120000) {
     console.log(`FAIL ${name}: ${e.message}`);
     failures++;
     try {
-      await page.screenshot({ path: join(W, `../logs/smoke-bridge-${name}.png`) });
+      await page.screenshot({ path: join(LOGS, `smoke-bridge-${name}.png`) });
     } catch {}
   } finally {
     await page.close();

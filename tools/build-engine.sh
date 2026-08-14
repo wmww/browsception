@@ -100,6 +100,9 @@ snapshot() {
   DEST="$HERE/artifacts/$STAMP"
   mkdir -p "$DEST"
   cp "$BIN/embedder.js" "$BIN/embedder.wasm" "$DEST/"
+  # Threading-mode stamp (embedder.cmake): the dev harness reads it from
+  # /engine/ before choosing the canvas context, so it belongs in the snapshot.
+  cp "$BIN/bib-build-config.js" "$DEST/" 2>/dev/null || true
   cat > "$DEST/meta.json" <<EOF
 {
   "stamp": "$STAMP",

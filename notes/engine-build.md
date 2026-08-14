@@ -96,10 +96,8 @@ Rebuilds: `tools/build-engine.sh` (embedder-only changes are a ~1.5 min compile+
 any checkout — engine work belongs on the branch that needs it; worktrees.md).
 Milestone smoke: `node tools/smoke-bridge.mjs` (real sites — not CI); its cookie case rides
 dev-server `/cookie-test/redirect-set` → 302 + `Set-Cookie` → `/cookie-test/echo`, which echoes
-the `Cookie` it received (green 2026-08-13). Caveat: the smokes run the MAIN checkout's
-`engine/WebkitWasm` (dev-server + `web/`) via `engineRoot`, so a worktree's changes to those
-files only take effect once merged — see issues/smoke-tools-ignore-worktree-engine-web.md.
-Build RAM is mild on this box: 12 jobs
+the `Cookie` it received (green 2026-08-13). All smokes run THIS checkout's harness and engine
+(`tools/lib/dev-harness.mjs`; worktrees.md § Smokes). Build RAM is mild on this box: 12 jobs
 fine; unified TUs ~1.2 GB clang RSS each.
 
 ## Build traps & pin rationale (distilled from fork docs at import)

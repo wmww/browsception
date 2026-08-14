@@ -11,7 +11,11 @@ export async function ensureFixtureServer() {
   try {
     await waitForFixtureServer(300);
     return { stop: async () => {} }; // externally managed
-  } catch {}
+  } catch (e) {
+    // A foreign server on our port is fatal: spawning ours would just lose the
+    // bind and leave the tests asserting against someone else's oracle.
+    if (e.foreign) throw e;
+  }
   const child = spawn(process.execPath, [SERVER, '--https', String(HTTPS_PORT), '--http', String(HTTP_PORT)], {
     stdio: 'ignore',
   });

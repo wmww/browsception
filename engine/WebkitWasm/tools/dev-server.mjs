@@ -193,6 +193,16 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // Which checkout's tree is this? Spawners bind a derived per-checkout port
+    // (test/harness/ports.mjs) but two checkouts can hash to the same block —
+    // the harness compares this against the root it asked for rather than
+    // silently driving a neighbouring worktree's engine.
+    if (pathname === "/__whoami") {
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" })
+        .end(JSON.stringify({ root: ROOT, mounts: mounts.map((m) => [m.prefix, m.root]), pid: process.pid }));
+      return;
+    }
+
     // Cookie-on-redirect probe for tools/smoke-bridge.mjs: leg 1 sets a
     // cookie on a 302, leg 2 echoes what came back. Proves the engine's jar
     // stores a Set-Cookie from a redirect hop and re-attaches it on the next

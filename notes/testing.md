@@ -13,7 +13,8 @@ HTTPS fixtures use a mkcert-style locally-trusted CA installed into the disposab
 (needed because the bridge and DNR rules target https; keep one http fixture to test scheme
 handling). The server double-acts as an **assertion oracle**: it records every request it receives
 (headers included) and exposes `/__requests` for tests to verify e.g. that no `Cookie` from the
-host jar ever arrived, or that a blocked fetch never hit the wire.
+host jar ever arrived, or that a blocked fetch never hit the wire. `/__health` carries the
+checkout path so a harness never adopts a parallel worktree's oracle (worktrees.md § Smokes).
 
 Fixture pages are assertion-friendly by construction:
 - `grid.bstest` — colored rectangles at known coordinates (pixel-probe assertions, no golden

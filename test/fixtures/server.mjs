@@ -17,7 +17,7 @@ import { readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { HTTP_PORT as DEFAULT_HTTP, HTTPS_PORT as DEFAULT_HTTPS } from '../harness/ports.mjs';
+import { CHECKOUT, HTTP_PORT as DEFAULT_HTTP, HTTPS_PORT as DEFAULT_HTTPS } from '../harness/ports.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PAGES = join(HERE, 'pages');
@@ -81,7 +81,10 @@ function handle(req, res, scheme) {
     }
     return send(res, 200, JSON.stringify(requests, null, 1), 'json');
   }
-  if (path === '/__health') return send(res, 200, '{"ok":true}', 'json');
+  // The checkout stamp lets a harness reject a neighbouring worktree's server
+  // (ports.mjs § waitForOwnFixtureServer).
+  if (path === '/__health')
+    return send(res, 200, JSON.stringify({ ok: true, checkout: CHECKOUT, pid: process.pid }), 'json');
 
   record(req, scheme);
 
@@ -181,6 +184,18 @@ const flag = (name, dflt) => {
 const HTTPS_PORT = flag('https', DEFAULT_HTTPS);
 const HTTP_PORT = flag('http', DEFAULT_HTTP);
 
-https.createServer(ensureCert(), (q, s) => handle(q, s, 'https')).listen(HTTPS_PORT);
-http.createServer((q, s) => handle(q, s, 'http')).listen(HTTP_PORT);
-console.log(`fixture server: https :${HTTPS_PORT}, http :${HTTP_PORT} (oracle at /__requests)`);
+// Spawners run this with stdio:'ignore', so an unhandled EADDRINUSE would be a
+// silent death followed by the harness talking to whoever DOES hold the port.
+// Exit non-zero with a named reason; the health check catches the rest.
+const bail = (what) => (e) => {
+  console.error(`fixture server: ${what} — ${e.code === 'EADDRINUSE' ? `port already in use` : e.message}`);
+  process.exit(1);
+};
+https.createServer(ensureCert(), (q, s) => handle(q, s, 'https'))
+  .on('error', bail(`https :${HTTPS_PORT}`)).listen(HTTPS_PORT);
+http.createServer((q, s) => handle(q, s, 'http'))
+  .on('error', bail(`http :${HTTP_PORT}`))
+  // Announce only once actually bound — the old unconditional log claimed
+  // success a tick before an EADDRINUSE killed the process.
+  .listen(HTTP_PORT, () =>
+    console.log(`fixture server: https :${HTTPS_PORT}, http :${HTTP_PORT} (oracle at /__requests)`));

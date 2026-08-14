@@ -89,11 +89,17 @@ since both checkouts' objects stay in the graph).
    sources (`src/engine/.staged-meta.json`) → it keeps the staged copy (its snapshot was pruned
    by other checkouts' builds; the bits are still right). Otherwise it stages `latest` with a
    loud warning naming what that was built from (legit for JS-only worktrees; a real mismatch is
-   visible instead of silent). `--from <stamp>` pins explicitly — and does **no** checking: stamps
-   are `<time>-<sha>[-dirty]`, so two worktrees on the same commit produce indistinguishable
-   names and `--from` will happily stage a neighbour's engine (this has happened and cost an A/B
-   run: issues/staged-engine-artifacts-are-anonymous.md). When you pin, pin by a stamp whose
-   `meta.json` `checkout` you have read, and confirm `src/engine/.staged-meta.json` afterwards.
+   visible instead of silent). Artifact identity is first-class (an A/B run once measured a
+   neighbour's engine because stamps looked alike, 2026-08-14):
+   - stamps carry the builder: `<time>-<sha>[-dirty]-<checkout>`; `--list` shows every
+     snapshot's branch/checkout/source_hash and which is staged/matching.
+   - every staging action prints one provenance line (stamp, branch, checkout, source_hash),
+     and engine-backed tests/probes print it at startup, so measurement logs self-attribute.
+     They also warn if an engine build is running (concurrent ninja skews timings).
+   - `--from <stamp>` pins explicitly (`--from mine` = newest built from this checkout); pinning
+     another checkout's artifact is allowed — that's the A/B case — but warns by name. A pin is
+     **sticky**: the pretest `--if-stale` re-run keeps it (with a reminder line) instead of
+     silently swapping engines mid-experiment; a plain `node tools/stage-engine.mjs` unpins.
 3. **Dep tier / bootstrap edits are main-checkout work**: `tools/bootstrap.sh` and
    `tools/build-deps/*` always run from main and only touch `third_party/`.
 

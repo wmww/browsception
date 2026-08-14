@@ -10,6 +10,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { checkoutRoot } from './paths.mjs';
+import { stagedEngineIdentity, engineBuildInProgress } from './engine-id.mjs';
 
 const W = join(checkoutRoot, 'engine/WebkitWasm');
 const ENGINE = join(checkoutRoot, 'src/engine');
@@ -25,6 +26,9 @@ export function startDevServer({ port, env = {} }) {
   });
   if (!existsSync(join(ENGINE, 'embedder.wasm')))
     throw new Error(`no engine staged at ${ENGINE} — run: bash tools/build-engine.sh`);
+  console.log(stagedEngineIdentity(ENGINE));
+  const busy = engineBuildInProgress();
+  if (busy) console.warn(`WARNING: engine build running [${busy}] — timing numbers will be noisy`);
 
   const server = spawn(
     'node',

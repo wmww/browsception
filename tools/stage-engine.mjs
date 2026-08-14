@@ -4,26 +4,33 @@
 // engine rebuilds. Works from worktrees: engine/ is resolved through the
 // main checkout (tools/lib/paths.mjs).
 //
-// Source, in order:
-//   --from <stamp|dir>       a specific engine/artifacts/ snapshot (pins, no checks)
-//   newest snapshot whose meta.json source_hash matches THIS checkout's engine
-//     sources (tools/lib/engine-src-hash.mjs) — the artifact that actually
-//     corresponds to the code in this branch
-//   the already-staged copy, if .staged-meta.json says it was hash-matched to
-//     these same sources — its snapshot may have been pruned by other
-//     checkouts' builds, but the staged bits are still the right ones. Never
-//     silently downgrade a checkout to a neighbour's artifact.
-//   engine/artifacts/latest  newest snapshot, with a loud warning naming what it
-//                            was built from (a fresh worktree next to a
-//                            dirty-main build is a legit JS-only situation)
-//   build/webcore/bin        raw build output (mutable -> copied; a later
-//                            relink may rewrite it in place, so never link it)
+// Modes:
+//   (default)                newest snapshot whose meta.json source_hash matches
+//                            THIS checkout's engine sources; falls back to the
+//                            already-staged copy if it was hash-matched to these
+//                            same sources (its snapshot got pruned); else stages
+//                            `latest` with a loud warning; else copies raw
+//                            build/webcore/bin. Clears any pin.
+//   --from <stamp|dir|mine>  pin a specific snapshot ('mine' = newest built from
+//                            this checkout). Warns when pinning another
+//                            checkout's artifact (the A/B use case — deliberate,
+//                            but named out loud). Records pinned: true, which
+//                            --if-stale honours: pretest hooks will NOT silently
+//                            replace a pinned engine; a plain run unpins.
+//   --if-stale               exit quietly when what's staged is already the
+//                            right choice (same inode) or pinned; used by
+//                            wt-setup on every pretest to self-heal.
+//   --list                   inventory of snapshots: identity, whether each
+//                            matches this checkout, which one is staged.
+//
+// Every staging action prints the artifact's identity (stamp, branch, checkout,
+// source_hash): an A/B run once measured a neighbour's engine because stamps
+// looked alike and nothing said whose bits were staged (2026-08-14).
+//
 // Hardlinks look like regular files to Chrome's unpacked loader (symlinks
 // don't reliably); a rebuild writes new snapshot dirs, never touching inodes
-// already staged into other worktrees.
-//
-// Concurrency: another checkout's build may prune a snapshot mid-stage; the
-// whole select+stage is retried once from scratch if staging throws.
+// already staged into other worktrees. Another checkout's build may prune a
+// snapshot mid-stage; the whole select+stage is retried once if staging throws.
 
 import { copyFileSync, existsSync, linkSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
@@ -36,10 +43,8 @@ const STAGED_META = join(OUT, '.staged-meta.json');
 const ARTIFACTS = join(engineRoot, 'artifacts');
 const fromIdx = process.argv.indexOf('--from');
 const fromArg = fromIdx >= 0 ? process.argv[fromIdx + 1] : null;
-// --if-stale: exit silently when what's already staged IS the chosen source
-// (same inode). Lets wt-setup re-run on every pretest and still self-heal a
-// checkout left staged with a pre-rebuild artifact, without any noise.
 const ifStale = process.argv.includes('--if-stale');
+const listMode = process.argv.includes('--list');
 
 const readJson = (p) => {
   try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return {}; }
@@ -61,12 +66,60 @@ const stagedStillMatches = (hash) => {
   return (m.source_hashes ?? []).includes(hash)
     && ['embedder.js', 'embedder.wasm', CONFIG].every((f) => existsSync(join(OUT, f)));
 };
+const identityLine = (src, mode) => {
+  if (mode !== 'link') return `engine: raw build output from ${src} (unattributed — prefer snapshots)`;
+  const m = readMeta(src);
+  return `engine: ${basename(src)} — branch ${m.branch ?? '?'}, checkout ${basename(m.checkout ?? '?')},` +
+    ` source_hash ${m.source_hash ?? '?'}`;
+};
+const isStagedFrom = (dir) => {
+  try { return statSync(join(dir, 'embedder.wasm')).ino === statSync(join(OUT, 'embedder.wasm')).ino; }
+  catch { return false; }
+};
+
+if (listMode) {
+  const hash = engineSrcHash(checkoutRoot);
+  const staged = readJson(STAGED_META);
+  console.log(`this checkout: ${basename(checkoutRoot)} (source_hash ${hash})` +
+    (staged.pinned ? ` — PINNED to ${staged.stamp}` : ''));
+  for (const d of snapshots()) {
+    const m = readMeta(d);
+    const marks = [
+      isStagedFrom(d) ? 'staged' : null,
+      snapshotHashes(d).includes(hash) ? 'matches-this-checkout' : null,
+    ].filter(Boolean).join(', ');
+    console.log(`  ${basename(d)}  branch=${m.branch ?? '?'} checkout=${basename(m.checkout ?? '?')}` +
+      ` source_hash=${m.source_hash ?? '?'} webkit_patch=${(m.webkit_patch ?? '?').slice(0, 12)}` +
+      (marks ? `  [${marks}]` : ''));
+  }
+  process.exit(0);
+}
 
 function stageOnce() {
+  // A pinned engine (--from) survives the pretest --if-stale re-run: an A/B
+  // sweep must not have its artifact swapped back mid-experiment by npm test.
+  if (ifStale && readJson(STAGED_META).pinned
+      && ['embedder.js', 'embedder.wasm'].every((f) => existsSync(join(OUT, f)))) {
+    console.log(`engine PINNED to ${readJson(STAGED_META).stamp} — 'node tools/stage-engine.mjs' to unpin`);
+    return;
+  }
+
   let src, mode, warning = null;
   if (fromArg) {
-    src = existsSync(join(fromArg, 'embedder.wasm')) ? fromArg : join(ARTIFACTS, fromArg);
+    if (fromArg === 'mine') {
+      src = snapshots().find((d) => readMeta(d).checkout === checkoutRoot);
+      if (!src) {
+        console.error(`no snapshot was built from this checkout (${basename(checkoutRoot)}) — see --list`);
+        process.exit(1);
+      }
+    } else {
+      src = existsSync(join(fromArg, 'embedder.wasm')) ? fromArg : join(ARTIFACTS, fromArg);
+    }
     mode = 'link';
+    const m = readMeta(src);
+    if (m.checkout && m.checkout !== checkoutRoot)
+      console.warn(`note: pinning ${basename(m.checkout)}'s artifact` +
+        ` (branch ${m.branch ?? '?'}, source_hash ${m.source_hash ?? '?'})`);
   } else {
     const hash = engineSrcHash(checkoutRoot);
     const match = snapshots().find((d) => snapshotHashes(d).includes(hash));
@@ -140,12 +193,15 @@ function stageOnce() {
     }
   }
 
-  // Record what got staged, so a later run can keep a still-correct copy after
-  // its snapshot is pruned (mode 'copy' from mutable bin/ records no hashes).
+  // Record what got staged: lets a later run keep a still-correct copy after
+  // its snapshot is pruned, makes pins sticky, and lets probes/tests
+  // self-attribute (mode 'copy' from mutable bin/ records no hashes).
   writeFileSync(STAGED_META, JSON.stringify({
     stamp: basename(src),
     source_hashes: mode === 'link' ? snapshotHashes(src) : [],
+    ...(fromArg ? { pinned: true } : {}),
   }, null, 2) + '\n');
+  console.log(identityLine(src, mode) + (fromArg ? ' [PINNED]' : ''));
 }
 
 try {

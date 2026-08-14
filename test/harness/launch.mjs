@@ -29,12 +29,20 @@ export const CHROMIUM_BIN = process.env.BS_CHROMIUM ?? '/usr/bin/chromium';
 
 // The engine wasm is gitignored and staged per checkout (tools/stage-engine.mjs,
 // run for you by tools/wt-setup.mjs). Without it every engine-backed scenario
-// dies on a boot timeout with no hint — fail here instead.
+// dies on a boot timeout with no hint — fail here instead. Prints which engine
+// this run will attribute its results to (once per process).
+import { stagedEngineIdentity, engineBuildInProgress } from '../../tools/lib/engine-id.mjs';
+let saidEngine = false;
 export function requireStagedEngine(extensionDir) {
-  if (existsSync(join(extensionDir, 'engine/embedder.wasm'))) return;
-  throw new Error(
-    `no engine staged at ${join(extensionDir, 'engine')} — run: node tools/wt-setup.mjs`,
-  );
+  if (!existsSync(join(extensionDir, 'engine/embedder.wasm')))
+    throw new Error(
+      `no engine staged at ${join(extensionDir, 'engine')} — run: node tools/wt-setup.mjs`,
+    );
+  if (saidEngine) return;
+  saidEngine = true;
+  console.log(stagedEngineIdentity(join(extensionDir, 'engine')));
+  const busy = engineBuildInProgress();
+  if (busy) console.warn(`WARNING: engine build running [${busy}] — timing numbers will be noisy`);
 }
 
 /**

@@ -104,7 +104,12 @@ snapshot() {
   SHA="$(git -C "$CHECKOUT_ROOT" log -1 --format=%h -- engine/ 2>/dev/null || echo nogit)"
   DIRTY=""
   [ -n "$(git -C "$CHECKOUT_ROOT" status --porcelain -- engine/ 2>/dev/null)" ] && DIRTY="-dirty"
-  STAMP="$(date -u +%Y%m%d-%H%M%S)-$SHA$DIRTY"
+  # The checkout token makes stamps self-identifying: two worktrees on the same
+  # sha with dirty sources used to produce indistinguishable names, and an A/B
+  # run staged a neighbour's engine by recency (2026-08-14).
+  local TOKEN; TOKEN="$(basename "$CHECKOUT_ROOT")"
+  [ "$CHECKOUT_ROOT" = "$MAIN_ROOT" ] && TOKEN="main"
+  STAMP="$(date -u +%Y%m%d-%H%M%S)-$SHA$DIRTY-$TOKEN"
   DEST="$HERE/artifacts/$STAMP"
   mkdir -p "$DEST"
   cp "$BIN/embedder.js" "$BIN/embedder.wasm" "$DEST/"

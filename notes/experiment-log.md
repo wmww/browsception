@@ -317,8 +317,10 @@ showing up as stability.
 
 **Care needed**: a neighbouring worktree built + staged its own artifact mid-run, and the first A/B
 round silently measured *its* engine (identical numbers to the old one, since it lacked this
-change). Stage by explicit `--from <stamp>` and check `src/engine/.staged-meta.json` when another
-agent may be building.
+change). Tooling closed this 2026-08-14: stamps name their builder, `stage-engine --list` shows
+identity, pins (`--from`, sticky vs `--if-stale`) print provenance, and engine-backed runs print
+the staged stamp + a warning if a build is concurrently running. For an A/B: pin each side by
+stamp, and check the printed `engine:` line in the probe output.
 
 **Also**: tier-2 scenario 19 (wheel burst → click) guards the two invariants no perf number covers
 — distance conserved, and nothing merged past a discrete event. `bib_abi.h` documents the

@@ -65,12 +65,6 @@ namespace BIB {
 
 using namespace WebCore;
 
-static const String& embedderErrorDomain()
-{
-    static NeverDestroyed<String> domain { "BrowserInBrowserEmbedder"_s };
-    return domain;
-}
-
 // The single cookie store for the whole embedder. Default-session semantics
 // (matches the Page's PAL::SessionID::defaultSessionID()), but the database
 // is forced to sqlite ":memory:" — the default-session path would be a MEMFS

@@ -564,6 +564,10 @@ async function bootEngine() {
       } else if (kind === 'title') {
         bs.state.title = data.title ?? '';
         document.title = data.title || bs.state.url || 'browsception';
+      } else if (kind === 'loadfailed') {
+        // Top-level load the engine gave up on (the shim's own failures
+        // arrive via onMainLoadFailed; either may fire first, same strip).
+        if (!bs.dead && data.url) showLoadError(data.url, data.kind, data.message);
       } else if (kind === 'progress') {
         bs.state.progress = data.p ?? 0;
         progressEl.style.width = `${Math.round((data.p ?? 0) * 100)}%`;
@@ -627,6 +631,7 @@ async function bootEngine() {
     [NET_ERR.TIMEOUT]: 'timed out',
     [NET_ERR.TOO_LARGE]: 'response too large',
     [NET_ERR.PROTOCOL]: 'protocol error',
+    [NET_ERR.ENGINE]: 'the engine refused it',
   };
   function showLoadError(url, kind, message) {
     bootEl.textContent = `couldn't load ${url} — ${NET_ERR_TEXT[kind] ?? `error ${kind}`}`;

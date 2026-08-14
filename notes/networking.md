@@ -136,10 +136,29 @@ Two hygiene rules fall out of the same design, both tier-0 tested:
   next fetch of the same URL would take it — stale `Set-Cookie` into the engine jar, or a stale 3xx
   read as a redirect. A 30 s sweep on unclaimed entries backstops whatever else leaks.
 
-A failed top-level load is now visible: the bridge calls `onMainLoadFailed` for every non-cancelled
-`main` request failure and the viewer shows an error strip with a retry (no "open natively" button
-— that escape hatch is the popup's, ui.md). Failures the bridge never sees are still silent
-(issues/engine-side-load-failures-are-silent.md).
+A failed top-level load is visible from **both** sides, into the same viewer error strip (retry
+button; no "open natively" — that escape hatch is the popup's, ui.md):
+
+- the bridge calls `onMainLoadFailed` for every non-cancelled `main` request failure — DNS/TLS,
+  guard denials, the size cap, idle timeouts;
+- the engine emits `bibChrome` `"loadfailed"` `{url, kind, message}` from `BibFrameLoaderClient`
+  (`dispatchDidFailProvisionalLoad` / `dispatchDidFailLoad` / `dispatchUnableToImplementPolicy`)
+  for everything WebCore refuses after or without a successful fetch — unsupported top-level MIME
+  type, undisplayable hop, internal abort. `kind` is a `BIB_NET_ERR_*` value, `ENGINE` (7) when the
+  refusal was the engine's own.
+
+Two of those refusals tell *no* client at all upstream, so the patch adds the notification (see
+engine-build.md § Divergences): a navigation to a blocked port / disallowed IP / local resource
+returns straight out of `FrameLoader::loadFrameRequest`, and a main resource the cache layer
+refuses to even start makes `DocumentLoader::loadMainResource` fall through to
+`maybeLoadEmpty()` — an empty commit is the only trace. Both now dispatch a failed provisional
+load first.
+
+A bridge failure fires both; the strip just shows the last one. Cancellations are reported by
+neither: superseded loads, `bib_stop`, and the policy-change unwind that follows an unshowable MIME
+type would all otherwise flash a bogus error. That unwind is exactly why
+`dispatchUnableToImplementPolicy` has to be hooked — it is the only non-cancellation notification
+of that failure.
 
 ## What the nested site can and cannot reach (summary)
 

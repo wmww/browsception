@@ -976,7 +976,7 @@ index b9df166312a..cd09004fb69 100644
  
  AsyncFileStream::AsyncFileStream(FileStreamClient& client)
 diff --git a/Source/WebCore/loader/DocumentLoader.cpp b/Source/WebCore/loader/DocumentLoader.cpp
-index 2c9b359bdf6..9e44b75c10a 100644
+index 2c9b359bdf6..adf96f530d5 100644
 --- a/Source/WebCore/loader/DocumentLoader.cpp
 +++ b/Source/WebCore/loader/DocumentLoader.cpp
 @@ -53,6 +53,7 @@
@@ -987,6 +987,21 @@ index 2c9b359bdf6..9e44b75c10a 100644
  #include "EventNames.h"
  #include "ExtensionStyleSheets.h"
  #include "FormSubmission.h"
+@@ -2333,6 +2334,14 @@ void DocumentLoader::loadMainResource(ResourceRequest&& request)
+ 
+         DOCUMENTLOADER_RELEASE_LOG("loadMainResource: Unable to load main resource, returning empty document");
+ 
++        // PORT=Emscripten: committing an empty document is the only trace this
++        // navigation ever leaves — the client is not told, so an embedder that
++        // renders to a canvas (no chrome of its own) silently keeps showing
++        // whatever was up. Report the refusal as the failed provisional load
++        // it is; clients that don't care no-op it.
++        String description = mainResourceOrError.error().isNull() ? String { "Load refused"_s } : mainResourceOrError.error().localizedDescription();
++        protectedFrameLoader()->protectedClient()->dispatchDidFailProvisionalLoad(ResourceError(errorDomainWebKitInternal, 0, m_request.url(), description, ResourceError::Type::AccessControl), WillContinueLoading::No, WillInternallyHandleFailure::No);
++
+         setRequest(ResourceRequest());
+         maybeLoadEmpty();
+         return;
 diff --git a/Source/WebCore/loader/EmptyClients.h b/Source/WebCore/loader/EmptyClients.h
 index 09a23e649b2..b196b347dd7 100644
 --- a/Source/WebCore/loader/EmptyClients.h
@@ -1017,10 +1032,10 @@ index 09a23e649b2..b196b347dd7 100644
      IntPoint screenToRootView(const IntPoint& p) const final { return p; }
      IntPoint rootViewToScreen(const IntPoint& p) const final { return p; }
 diff --git a/Source/WebCore/loader/EmptyFrameLoaderClient.h b/Source/WebCore/loader/EmptyFrameLoaderClient.h
-index 5ebee25c414..46caa5e7c76 100644
+index 5ebee25c414..28d11195096 100644
 --- a/Source/WebCore/loader/EmptyFrameLoaderClient.h
 +++ b/Source/WebCore/loader/EmptyFrameLoaderClient.h
-@@ -81,27 +81,32 @@ private:
+@@ -81,33 +81,44 @@ private:
      void dispatchDidReceiveServerRedirectForProvisionalLoad() final;
      void dispatchDidCancelClientRedirect() final;
      void dispatchWillPerformClientRedirect(const URL&, double, WallTime, LockBackForwardList) final;
@@ -1036,10 +1051,15 @@ index 5ebee25c414..46caa5e7c76 100644
      void dispatchDidStartProvisionalLoad() final;
 -    void dispatchDidReceiveTitle(const StringWithDirection&) final;
 -    void dispatchDidCommitLoad(std::optional<HasInsecureContent>, std::optional<UsedLegacyTLS>, std::optional<WasPrivateRelayed>) final;
+-    void dispatchDidFailProvisionalLoad(const ResourceError&, WillContinueLoading, WillInternallyHandleFailure) final;
+-    void dispatchDidFailLoad(const ResourceError&) final;
 +    void dispatchDidReceiveTitle(const StringWithDirection&) override;
 +    void dispatchDidCommitLoad(std::optional<HasInsecureContent>, std::optional<UsedLegacyTLS>, std::optional<WasPrivateRelayed>) override;
-     void dispatchDidFailProvisionalLoad(const ResourceError&, WillContinueLoading, WillInternallyHandleFailure) final;
-     void dispatchDidFailLoad(const ResourceError&) final;
++    // PORT=Emscripten: `override` — the embedder reports failed TOP-LEVEL
++    // loads to the host (bibChrome "loadfailed"); the empty bodies leave the
++    // viewer sitting on the last committed document with no explanation.
++    void dispatchDidFailProvisionalLoad(const ResourceError&, WillContinueLoading, WillInternallyHandleFailure) override;
++    void dispatchDidFailLoad(const ResourceError&) override;
      void dispatchDidFinishDocumentLoad() final;
 -    void dispatchDidFinishLoad() final;
 +    void dispatchDidFinishLoad() override;
@@ -1063,7 +1083,17 @@ index 5ebee25c414..46caa5e7c76 100644
      void updateSandboxFlags(SandboxFlags) final;
      void updateOpener(std::optional<FrameIdentifier>) final;
      void setPrinting(bool, FloatSize, FloatSize, float, AdjustViewSize) final;
-@@ -125,15 +130,15 @@ private:
+     void cancelPolicyCheck() final;
+ 
+-    void dispatchUnableToImplementPolicy(const ResourceError&) final;
++    // PORT=Emscripten: `override` — the ONLY notification for an
++    // unshowable top-level MIME type (the policy unwind that follows is a
++    // cancellation). Same "loadfailed" reporting as above.
++    void dispatchUnableToImplementPolicy(const ResourceError&) override;
+ 
+     void dispatchWillSendSubmitEvent(Ref<FormState>&&) final;
+     void dispatchWillSubmitForm(FormState&, URL&& requestURL, String&& method, CompletionHandler<void()>&&) final;
+@@ -125,15 +136,15 @@ private:
      void willReplaceMultipartContent() final;
      void didReplaceMultipartContent() final;
  
@@ -1082,7 +1112,7 @@ index 5ebee25c414..46caa5e7c76 100644
      bool canShowMIMETypeAsHTML(const String&) const final;
      bool representationExistsForURLScheme(StringView) const final;
      String generatedMIMETypeForURLScheme(StringView) const final;
-@@ -154,26 +159,26 @@ private:
+@@ -154,26 +165,26 @@ private:
  #if PLATFORM(IOS_FAMILY)
      void didRestoreFrameHierarchyForCachedFrame() final;
  #endif
@@ -1113,7 +1143,7 @@ index 5ebee25c414..46caa5e7c76 100644
  
  #if PLATFORM(COCOA)
      RemoteAXObjectRef accessibilityRemoteObject() final;
-@@ -200,7 +205,7 @@ private:
+@@ -200,7 +211,7 @@ private:
  
      void dispatchLoadEventToOwnerElementInAnotherProcess() final;
  
@@ -1122,6 +1152,51 @@ index 5ebee25c414..46caa5e7c76 100644
  };
  
  } // namespace WebCore
+diff --git a/Source/WebCore/loader/FrameLoader.cpp b/Source/WebCore/loader/FrameLoader.cpp
+index a852356c72a..cb8f157f018 100644
+--- a/Source/WebCore/loader/FrameLoader.cpp
++++ b/Source/WebCore/loader/FrameLoader.cpp
+@@ -1441,6 +1441,18 @@ void FrameLoader::setupForMultipartReplace()
+     detachChildren();
+ }
+ 
++
++// PORT=Emscripten: a navigation refused HERE never reaches a DocumentLoader,
++// so the frame client is never told and the load just evaporates — a console
++// message is the only trace. An embedder that renders to a canvas (no browser
++// chrome of its own) then sits on the previously committed document forever.
++// Report it as the failed provisional load it is; clients that don't care
++// no-op it like every other empty dispatch.
++static void notifyClientNavigationRefused(LocalFrame& frame, const URL& url, ASCIILiteral description)
++{
++    frame.loader().client().dispatchDidFailProvisionalLoad(ResourceError(errorDomainWebKitInternal, 0, url, description, ResourceError::Type::AccessControl), WillContinueLoading::No, WillInternallyHandleFailure::No);
++}
++
+ void FrameLoader::loadFrameRequest(FrameLoadRequest&& request, Event* event, RefPtr<const FormSubmission>&& formSubmission, std::optional<PrivateClickMeasurement>&& privateClickMeasurement)
+ {
+     FRAMELOADER_RELEASE_LOG_FORWARDABLE(FRAMELOADER_LOADFRAMEREQUEST_FRAME_LOAD_STARTED);
+@@ -1456,18 +1468,21 @@ void FrameLoader::loadFrameRequest(FrameLoadRequest&& request, Event* event, Ref
+     if (!request.protectedRequesterSecurityOrigin()->canDisplay(url, OriginAccessPatternsForWebProcess::singleton())) {
+         FRAMELOADER_RELEASE_LOG(ResourceLoading, "loadFrameRequest: canceling - Not allowed to load local resource");
+         reportLocalLoadFailed(frame.ptr(), url.stringCenterEllipsizedToLength());
++        notifyClientNavigationRefused(frame, url, "Not allowed to load local resource"_s);
+         return;
+     }
+ 
+     if (!portAllowed(url)) {
+         FRAMELOADER_RELEASE_LOG(ResourceLoading, "loadFrameRequest: canceling - port not allowed");
+         reportBlockedLoadFailed(frame, url);
++        notifyClientNavigationRefused(frame, url, "Not allowed to use restricted network port"_s);
+         return;
+     }
+ 
+     if (isIPAddressDisallowed(url)) {
+         FRAMELOADER_RELEASE_LOG(ResourceLoading, "loadFrameRequest: canceling - IP address is not allowed");
+         reportBlockedLoadFailed(frame, url);
++        notifyClientNavigationRefused(frame, url, "Not allowed to use restricted network host"_s);
+         return;
+     }
+     
 diff --git a/Source/WebCore/loader/WorkerThreadableLoader.cpp b/Source/WebCore/loader/WorkerThreadableLoader.cpp
 index 34cce582179..bdc65e41198 100644
 --- a/Source/WebCore/loader/WorkerThreadableLoader.cpp

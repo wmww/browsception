@@ -106,8 +106,13 @@ whole machine, end to end:
 15. **Guest WebSocket**: `new WebSocket(...)` in the guest fires `error`/`close` and the engine
     keeps running — the engine has no WS transport, and the *absence* of a channel is an engine
     abort (RELEASE_ASSERT in WebSocket::create), so this is a crash tripwire, not a feature test.
+16. **Engine-side load failure**: two classes, neither visible to the shim's fetch — a top-level
+    response the engine refuses to display (`/download`, application/octet-stream) and a
+    navigation refused before any request (`http://127.0.0.1:1/`, blocked port). Each must raise
+    the viewer error strip naming that URL, with a retry, and the next navigation must still
+    render and clear it. The only cover for the engine's `"loadfailed"` signal.
 
-That's ~15 scenarios total. Growth policy: a new test requires a new *class* of failure it would
+That's ~16 scenarios total. Growth policy: a new test requires a new *class* of failure it would
 catch (or a regression that escaped); prefer extending an existing scenario's probes over adding
 scenarios.
 

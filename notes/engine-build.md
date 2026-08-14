@@ -74,10 +74,12 @@ not the ~90 s embedder loop. Same for `NetworkStorageSession.h`, `CertificateInf
 
 ## Divergences from upstream WebKit
 
-Single patch `src/patches/webkit-emscripten.patch`: 67 files, ~3.1k lines (was 68/~3.5k
+Single patch `src/patches/webkit-emscripten.patch`: 68 files, ~3.2k lines (was 68/~3.5k
 before the curl cut — deleting the transport files took their patch hunks with them).
 Breakdown: 31 files in `Source/WebCore/platform` (the port's platform glue), 7 `Source/WTF`,
-7 `Source/JavaScriptCore`, 4 loader, 4 workers, 3 accessibility, 2 Modules, plus the
+7 `Source/JavaScriptCore`, 5 loader (three of them behavioural: the relaxed
+`Empty*Client` finals, plus the two "a refused navigation tells nobody" notifications in
+FrameLoader/DocumentLoader — networking.md), 4 workers, 3 accessibility, 2 Modules, plus the
 port pattern (`OptionsEmscripten.cmake`/`PlatformEmscripten.cmake` additions) and small
 editing/crypto/bindings/fileapi touches. The real port logic (embedder, net bridge, host
 page) lives in WebkitWasm's own `src/`, outside the WebKit tree. Tracks a WebKit

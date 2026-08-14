@@ -61,7 +61,7 @@ lives in [roadmap.md](roadmap.md). Phase summaries:
   gate: tools/smoke-mvp.mjs real-site pass — sandboxed example.com/wikipedia, whitelist→native
   sweep (experiments/log.md 2026-08-10).
 
-Tests: `npm test` = tiers 0–1, pure headless, per-commit (70 tests). `npm run test:tier2` = 13
+Tests: `npm test` = tiers 0–1, pure headless, per-commit (71 tests). `npm run test:tier2` = 15
 scenarios against the staged engine artifact (~15 s; restage with tools/stage-engine.mjs after
 engine rebuilds — src/engine/ is gitignored). Engine iteration is genuinely incremental (~90 s
 for embedder-only changes; engine-build.md fix 6) and works from any worktree branch
@@ -101,8 +101,14 @@ patch 68 files/3.5k lines → 67/3.1k. `USE(CURL)` stays ON for the port's platf
 CookieJarDB; libcrypto stays for PAL digests. Guest `new WebSocket()` now fails cleanly
 everywhere (tier-2 scenario 15); engine-side WS-over-host-WS is the only future path.
 
-Open issues in issues/ (first-nav race residual, guest-JS wedge, engine-side load failures
-silent, vendored web-dep hygiene, smoke-bridge cookie case 404s). Next work:
+*Engine-side load failures surface* (2026-08-13) — `bibChrome` `"loadfailed"` from
+BibFrameLoaderClient feeds the same viewer error strip as the bridge's own failures, so loads the
+shim never sees (unsupported top-level MIME type, blocked port, any WebCore refusal) no longer
+leave the viewer on "booting…". Two of those refusals dispatch to no client upstream — the patch
+adds the notification (networking.md, engine-internals.md; tier-2 scenario 16).
+
+Open issues in issues/ (first-nav race residual, guest-JS wedge, vendored web-dep hygiene,
+smoke-bridge cookie case 404s). Next work:
 [roadmap.md](roadmap.md).
 
 ## Key decisions

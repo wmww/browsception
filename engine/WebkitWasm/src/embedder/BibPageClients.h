@@ -19,6 +19,7 @@
 #pragma once
 
 #include "BackForwardController.h"
+#include "BibNetBridge.h" // NetErrorKind (bib_abi.h mirror)
 #include "Document.h"
 #include "DocumentLoader.h"
 #include "DocumentPage.h" // inline Frame::page() lives here, not in Frame.h
@@ -48,6 +49,7 @@
 #include "PlatformKeyboardEvent.h"
 #include "ProgressTracker.h"
 #include "ProgressTrackerClient.h"
+#include "ResourceError.h"
 #include "ResourceRequest.h"
 #include "StringWithDirection.h"
 #include "TextCheckerClient.h"
@@ -204,6 +206,30 @@ inline void emitUrlSignal(WebCore::LocalFrame& frame, const char* kindOverride =
     obj->setInteger("index"_s, static_cast<int>(backForward.backCount()));
     obj->setInteger("length"_s, static_cast<int>(backForward.backCount() + backForward.forwardCount() + 1));
     emitChrome("url", obj->toJSONString());
+}
+
+// "loadfailed" signal: a TOP-LEVEL load died. WebCore keeps whatever is
+// committed on screen (the boot page on a first navigation), so without this
+// the viewer just says "booting…" forever. The shim reports the failures IT
+// sees (its own fetch failing/being refused); this covers the ones it can't —
+// anything WebCore refuses after or without a successful fetch.
+//
+// kind mirrors bib_net_fail: a bridge failure arrives as a ResourceError in
+// the embedder's own domain with errorCode = BIB_NET_ERR_*; anything else is
+// WebCore refusing on its own account, reported as BIB_NET_ERR_ENGINE.
+inline void emitLoadFailed(WebCore::LocalFrame& frame, const WebCore::ResourceError& error)
+{
+    if (!frame.isMainFrame() || error.isNull() || error.isCancellation())
+        return;
+    bool fromBridge = error.domain() == embedderErrorDomain() && error.errorCode() >= NetErrGuard && error.errorCode() <= NetErrProtocol;
+    if (fromBridge && error.errorCode() == NetErrCancelled)
+        return; // superseded load; the next one owns the viewer
+    int kind = fromBridge ? error.errorCode() : NetErrEngine;
+    auto obj = JSON::Object::create();
+    obj->setString("url"_s, error.failingURL().string());
+    obj->setInteger("kind"_s, kind);
+    obj->setString("message"_s, error.localizedDescription());
+    emitChrome("loadfailed", obj->toJSONString());
 }
 
 // browsception 2.3: load-progress signals for the viewer's progress bar.
@@ -548,6 +574,19 @@ private:
     // same-document traversal; loadType tells them apart (loadItem sets it
     // before loadSameDocumentItem), so no override here.
     void dispatchDidPopStateWithinPage() final { emitUrlSignal(m_frameLoader->frame()); }
+    // Failed top-level loads (networking.md § load failures). Provisional =
+    // died before commit, didFail = died after;
+    // unableToImplementPolicy is the unshowable-MIME case, whose own unwind
+    // is a cancellation and so never reaches the two above.
+    void dispatchDidFailProvisionalLoad(const WebCore::ResourceError& error, WebCore::WillContinueLoading, WebCore::WillInternallyHandleFailure willInternallyHandleFailure) final
+    {
+        if (willInternallyHandleFailure == WebCore::WillInternallyHandleFailure::Yes)
+            return; // WebCore is about to retry (HTTPS fallback &c)
+        emitLoadFailed(m_frameLoader->frame(), error);
+    }
+    void dispatchDidFailLoad(const WebCore::ResourceError& error) final { emitLoadFailed(m_frameLoader->frame(), error); }
+    void dispatchUnableToImplementPolicy(const WebCore::ResourceError& error) final { emitLoadFailed(m_frameLoader->frame(), error); }
+
     void dispatchDidReceiveTitle(const WebCore::StringWithDirection& title) final
     {
         if (!m_frameLoader->frame().isMainFrame())

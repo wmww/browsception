@@ -49,13 +49,20 @@ re-bite on rebases or bound future features.
   hardcoded `SandboxFlags::all()` (no script runs until cleared via
   `LocalMainFrameCreationParameters.effectiveSandboxFlags`); `EmptyFrameLoaderClient` drops
   `FramePolicyFunction` (navigations stall), `canHandleRequest`/`canShowMIMEType` false,
-  no-op `committedLoad`, `createFrame()` → nullptr (iframes get null contentWindow);
+  no-op `committedLoad`, `createFrame()` → nullptr (iframes get null contentWindow),
+  no-op `dispatchDidFail*Load`/`dispatchUnableToImplementPolicy` (a load that dies leaves the
+  last committed document up with no notification anywhere — our "loadfailed" signal, networking.md);
   `EmptyStorageSessionProvider::storageSession()` → nullptr (cookies vanish); back/forward
   capacity 0; `EmptyEditorClient` blocks all editing (`final` — needs guard relaxation in
   EmptyClients.h); null `createBlobRegistry()` aborts on first `new Blob()`;
   `EmptyDatabaseProvider::idbConnectionToServerForSession` is RELEASE_ASSERT. `PlatformStrategies`
   is mandatory (`FrameLoader::pageLoadCompleted` derefs unconditionally). Never cache a
   `LocalFrameView` — `createView()` per commit or blank paint after first nav.
+- **A refused navigation notifies nobody.** Blocked port / disallowed IP / local resource bail out
+  of `FrameLoader::loadFrameRequest` after a console message, and a main resource the cache layer
+  won't start drops `DocumentLoader::loadMainResource` into `maybeLoadEmpty()` — WebKit2 survives
+  this because its UI shows *something*; a canvas embedder shows the last page forever. Our patch
+  dispatches a provisional-load failure at both sites (networking.md); re-check on every rebase.
 - **No `DisplayRefreshMonitor` in a custom port** → guest rAF never fires and "update the
   rendering" never runs unless the embedder calls `Page::updateRendering()` +
   `finalizeRenderingUpdate({})` per host frame.

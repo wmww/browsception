@@ -4,9 +4,9 @@
 // (tools/stage-engine.mjs); run via `npm run test:tier2` (per-merge/nightly,
 // not per-commit).
 //
-// Scenarios here: 7 render, 8 execute, 9 input, 14 resize, 12
-// crash/recovery, 13 startup budget, 15 guest WebSocket. 10 (navigation
-// chrome) and 11 (invariants) land with 2.3/2.5.
+// Scenarios here: 7 render, 8 execute, 9 input, 10 navigation chrome, 11
+// invariants, 12 crash/recovery, 13 startup budget, 14 resize, 15 guest
+// WebSocket, 16 engine-side load failure.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -171,6 +171,51 @@ test('guest WebSocket fails cleanly and the engine keeps running', { timeout: 30
   // Engine still alive: guest script runs and the page still paints.
   await evalProbe(page, '1 + 1', /^2\b/);
   await until(page, 25, 425, is([0, 255, 0]), 60000, 'still painting after WS failure');
+  await page.close();
+});
+
+// --- Engine-side load failure surfaces in the viewer -----------------------
+// /download is application/octet-stream: the bridge delivers it fine, WebCore
+// refuses to display it and keeps the committed document (the boot page). The
+// only notification is the engine's bibChrome "loadfailed" signal — without it
+// a first navigation like this reads "booting…" forever.
+test('load failure: an undisplayable top-level response shows an error strip', { timeout: 300000 }, async () => {
+  const page = await bootViewer('https://app.bstest/download');
+  const strip = await pollUntil(
+    async () => {
+      const t = await page.evaluate(() => {
+        const b = document.getElementById('boot');
+        return b.style.display === 'none' ? null : b.textContent;
+      });
+      return t && /couldn.t load/.test(t) ? t : null;
+    },
+    'load-failure strip',
+    60000,
+  );
+  assert.match(strip, /https:\/\/app\.bstest\/download/, `strip names the URL: ${strip}`);
+  assert.match(strip, /engine refused it.*MIME/, `strip explains the failure: ${strip}`);
+  assert.ok(await page.evaluate(() => !!document.querySelector('#boot button')), 'strip offers a retry');
+
+  // Second class: refused BEFORE any fetch (blocked port — WebCore never
+  // asks the bridge, and used to just commit an empty document).
+  await page.evaluate(() => __bs.navigate('http://127.0.0.1:1/'));
+  const blocked = await pollUntil(
+    async () => {
+      const t = await page.evaluate(() => document.getElementById('boot').textContent);
+      return t && t.includes('127.0.0.1:1') ? t : null;
+    },
+    'blocked-port strip',
+    60000,
+  );
+  assert.match(blocked, /engine refused it/, `blocked-port strip explains itself: ${blocked}`);
+
+  // The engine survived both: the next navigation renders and clears the strip.
+  await page.evaluate(() => __bs.navigate('https://grid.bstest/'));
+  await until(page, 100, 100, is([255, 0, 0]), 120000, 'navigation after a failed load');
+  await pollUntil(
+    () => page.evaluate(() => document.getElementById('boot').style.display === 'none'),
+    'strip cleared by the next commit',
+  );
   await page.close();
 });
 

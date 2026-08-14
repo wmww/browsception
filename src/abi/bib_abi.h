@@ -171,13 +171,18 @@ void bib_set_focus(int focused);
 
 #define BIB_NET_WINDOW_BYTES (4 * 1024 * 1024)
 
-/* bib_net_fail error kinds. */
+/* Load-failure kinds: bib_net_fail (1-6, shim → engine) and the bibChrome
+ * "loadfailed" signal (any of them, engine → shim). */
 #define BIB_NET_ERR_GUARD 1     /* refused by the shim guard list */
 #define BIB_NET_ERR_NETWORK 2   /* fetch/transport failure */
 #define BIB_NET_ERR_TIMEOUT 3   /* idle timeout (guard cap) */
 #define BIB_NET_ERR_TOO_LARGE 4 /* response cap exceeded (guard cap) */
 #define BIB_NET_ERR_CANCELLED 5 /* engine cancelled via bibNetCancel */
 #define BIB_NET_ERR_PROTOCOL 6  /* malformed/unexpected response */
+#define BIB_NET_ERR_ENGINE 7    /* engine refused the load itself (unsupported
+                                 * top-level MIME type, undisplayable hop,
+                                 * internal abort). "loadfailed" only — never a
+                                 * bib_net_fail argument. */
 
 /* headersJson ownership → engine (JS allocates via bib_wasm_alloc). */
 void bib_net_response(int reqId, char* headersJson);
@@ -244,6 +249,15 @@ void bib_crash(void);
  *          "progress" {"p": 0..1}    "cursor" {"cursor": css-name}
  *          "hover" {"url"|null}      "favicon" {"ptr","len","mime"} (bytes
  *          engine-malloc'd, JS frees)
+ *          "loadfailed" {"url","kind","message"}
+ *                a TOP-LEVEL load died and the committed document stayed on
+ *                screen. kind is a BIB_NET_ERR_* value: 1-6 when the failure
+ *                came back through bib_net_fail, BIB_NET_ERR_ENGINE when the
+ *                engine itself refused it. Cancellations (superseded loads,
+ *                bib_stop, policy-change unwinds) are NOT reported. Bridge
+ *                failures reach the shim twice — once here, once from the
+ *                shim's own fetch — deliberately: the two paths cover each
+ *                other's blind spots and the host renders the last one.
  *          reserved (fast-follows): "open", "download", "dialog", "caret"
  * bibQueryResult(queryId, jsonPtr)              [page]  bib_query answer
  * bibPersist(jsonPtr)                           [page]  storage snapshot to

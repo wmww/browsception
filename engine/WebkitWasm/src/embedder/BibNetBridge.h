@@ -12,10 +12,20 @@
 
 #include "ResourceRequest.h"
 #include "ResourceResponse.h"
+#include <wtf/NeverDestroyed.h>
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
 namespace BIB {
+
+// Domain of every ResourceError the embedder mints. It is what tells
+// "errorCode is a NetErrorKind" apart from "errorCode is WebCore's own" —
+// WebCore errors carry errorDomainWebKitInternal &c.
+inline const String& embedderErrorDomain()
+{
+    static NeverDestroyed<String> domain { "BrowserInBrowserEmbedder"_s };
+    return domain;
+}
 
 // bib_net_fail kinds (mirror of BIB_NET_ERR_* in bib_abi.h).
 enum NetErrorKind {
@@ -25,6 +35,9 @@ enum NetErrorKind {
     NetErrTooLarge = 4,
     NetErrCancelled = 5,
     NetErrProtocol = 6,
+    // Engine-side refusal, reported to the host on the bibChrome
+    // "loadfailed" signal only — never an argument to bib_net_fail.
+    NetErrEngine = 7,
 };
 
 class NetBridgeClient {

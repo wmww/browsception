@@ -57,7 +57,8 @@ export const MOD = { SHIFT: 1, CTRL: 2, ALT: 4, META: 8 };
 // bib_key type values (BIB_KEY_*).
 export const KEY = { RAWDOWN: 0, UP: 1, CHAR: 2 };
 
-// bib_net_fail error kinds (BIB_NET_ERR_*).
+// Load-failure kinds (BIB_NET_ERR_*). 1-6 ride bib_net_fail; ENGINE is
+// engine→shim only, on the bibChrome "loadfailed" signal.
 export const NET_ERR = {
   GUARD: 1,
   NETWORK: 2,
@@ -65,6 +66,7 @@ export const NET_ERR = {
   TOO_LARGE: 4,
   CANCELLED: 5,
   PROTOCOL: 6,
+  ENGINE: 7,
 };
 
 // Per-request unacked-bytes window for bib_net_data flow control
@@ -72,7 +74,7 @@ export const NET_ERR = {
 export const NET_WINDOW_BYTES = 4 * 1024 * 1024;
 
 // bibChrome signal kinds (v1; reserved fast-follows excluded).
-export const CHROME_KINDS = ['title', 'url', 'progress', 'cursor', 'hover', 'favicon'];
+export const CHROME_KINDS = ['title', 'url', 'progress', 'cursor', 'hover', 'favicon', 'loadfailed'];
 
 // bibChrome "url" nav kinds: what the navigation did to the engine's
 // back/forward list. The viewer mirrors it into real tab history.

@@ -16,3 +16,6 @@ engine/cmake-3.31.7-linux-x86_64/
 engine/logs/
 engine/.build.lock
 engine/.build.owner
+
+# Ephemeral git worktrees (a checkout must never be committed into its parent).
+.worktrees/

@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+# Run by the user's worktree helper right after creating a worktree (cwd = the
+# worktree). Provisions node_modules + staged engine so every entry point works
+# without relying on npm pretest hooks. Idempotent, ~2 s.
+exec node tools/wt-setup.mjs

@@ -10,6 +10,12 @@ worktree, and never copy the 12 GB `engine/` tree.
 node tools/wt-setup.mjs     # also auto-runs via npm pretest/pretest:tier2 hooks
 ```
 
+The user's worktree helpers also run executables from `.wt-hooks/` (cwd = the worktree):
+`create` after creation (wired: runs wt-setup, so fresh worktrees are provisioned before
+any agent touches them), `done` before a worktree is marked complete, `wipe` before
+unmerged deletion (`done`/`wipe` deliberately unused — nothing needs them; see
+`plans/fix-worktree-engine-coupling.md` §4b).
+
 - `node_modules` → `cp -al` hardlink-clone from the main checkout (falls back to `npm ci` if the
   lockfile differs).
 - `src/engine/` → hardlinked from the newest `engine/artifacts/` snapshot (`tools/stage-engine.mjs`).

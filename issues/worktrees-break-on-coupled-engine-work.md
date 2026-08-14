@@ -38,6 +38,9 @@ worktree idle.
    `meta.json` already records `engine_sha` + `engine_dirty`, so the data to detect this
    exists; nothing checks it.
 
+**Plan**: `plans/fix-worktree-engine-coupling.md` (2026-08-13) — build the invoking
+checkout's sources against the shared tree; supersedes the options below.
+
 ## Possible fixes (unranked, none attempted)
 
 - `stage-engine.mjs`: compare the snapshot's `engine_sha`/tracked-source hash against the

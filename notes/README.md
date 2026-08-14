@@ -156,8 +156,8 @@ instead of `writePixels`-ing an unpremul→premul conversion of the framebuffer 
 fast scrolling went 2 → 18 fps with the input backlog 74 → 2 and the post-input tail 1.7 s →
 0.16 s; distance is conserved exactly (rendering-input.md § scrolling, tier-2 scenario 19).
 
-Open issues in issues/ (guest-JS wedge, rcap dynamic budget, viewer URL-scheme allowlist). Next
-work: [roadmap.md](roadmap.md).
+Open issues in issues/ (guest-JS wedge, rcap dynamic budget, viewer URL-scheme allowlist,
+anonymous engine artifacts). Next work: [roadmap.md](roadmap.md).
 
 ## Key decisions
 

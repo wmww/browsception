@@ -89,7 +89,11 @@ since both checkouts' objects stay in the graph).
    sources (`src/engine/.staged-meta.json`) → it keeps the staged copy (its snapshot was pruned
    by other checkouts' builds; the bits are still right). Otherwise it stages `latest` with a
    loud warning naming what that was built from (legit for JS-only worktrees; a real mismatch is
-   visible instead of silent). `--from <stamp>` pins explicitly.
+   visible instead of silent). `--from <stamp>` pins explicitly — and does **no** checking: stamps
+   are `<time>-<sha>[-dirty]`, so two worktrees on the same commit produce indistinguishable
+   names and `--from` will happily stage a neighbour's engine (this has happened and cost an A/B
+   run: issues/staged-engine-artifacts-are-anonymous.md). When you pin, pin by a stamp whose
+   `meta.json` `checkout` you have read, and confirm `src/engine/.staged-meta.json` afterwards.
 3. **Dep tier / bootstrap edits are main-checkout work**: `tools/bootstrap.sh` and
    `tools/build-deps/*` always run from main and only touch `third_party/`.
 

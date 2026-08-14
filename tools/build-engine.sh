@@ -3,9 +3,9 @@
 # (engine/WebkitWasm/tools/) with the fixes a fresh checkout on a current
 # Arch host needs. See notes/engine-build.md for the full story.
 #
-# Builds THIS checkout's engine sources (engine/WebkitWasm/src + web/engine-pre.js)
-# against the MAIN checkout's shared build tree — so a worktree branch can carry a
-# coupled engine+JS change and build it. Everything else (third_party/, the 7.4k
+# Builds THIS checkout's engine sources (engine/WebkitWasm/src) against the MAIN
+# checkout's shared build tree — so a worktree branch can carry a coupled
+# engine+JS change and build it. Everything else (third_party/, the 7.4k
 # WebCore objects, the ninja graph) stays shared: repointing sources rebuilds only
 # the 5 embedder TUs + link. See notes/worktrees.md.
 #
@@ -340,7 +340,7 @@ fi
 # pre-js next to the build tree and touch main.cpp when it changes, so a
 # pre-js-only edit still relinks.
 PRE_STAMP="$W/build/.engine-pre.sha"
-PRE_NOW="$(sha_of "$BUILD_SRC/web/engine-pre.js")"
+PRE_NOW="$(sha_of "$BUILD_SRC/src/embedder/engine-pre.js")"
 if [ "$PRE_NOW" != "$(cat "$PRE_STAMP" 2>/dev/null || true)" ]; then
   echo "==> engine-pre.js changed — touching main.cpp to force a relink"
   touch "$BUILD_SRC/src/embedder/main.cpp"

@@ -890,14 +890,16 @@
 
     // ---- guest wasm shim, host side (decision-006 S-A) ----
     // The engine's polyfill ships guest module bytes here; Binaryen's
-    // wasm2js (binaryen.js, same v130 as the spike CLI) translates them to
-    // plain JS. Synchronous by design: the whole engine is single-threaded,
+    // wasm2js (npm `binaryen`, exact-pinned v130 — same as the spike CLI —
+    // served from node_modules by the dev server's /vendor mount; the pin is
+    // exact because the workarounds below are v130-specific) translates them
+    // to plain JS. Synchronous by design: the whole engine is single-threaded,
     // so __bibWasm2js -> EM_ASM -> this function is one same-thread call
     // chain and sync `new WebAssembly.Module()` probes (Discord's
     // wasmSupported) just work.
     let binaryen = null;
     const wasmShimReady = Promise.allSettled([
-      import("./vendor/binaryen.js").then((m) => { binaryen = m.default; }),
+      import("/vendor/binaryen/index.js").then((m) => { binaryen = m.default; }),
       fetch("wasm-polyfill.js").then((r) => (r.ok ? r.text() : "")),
       fetch("media-stub.js").then((r) => (r.ok ? r.text() : "")),
     ]).then(([, polyfill, media]) => {
@@ -908,7 +910,7 @@
       // absent without breaking the other.
       let wasmText = polyfill.status === "fulfilled" ? polyfill.value : "";
       if (!binaryen || !wasmText) {
-        log("wasm shim unavailable" + (binaryen ? "" : " (binaryen.js failed to load)"));
+        log("wasm shim unavailable" + (binaryen ? "" : " (binaryen failed to load)"));
         wasmText = "";
       }
       const mediaText = media.status === "fulfilled" ? media.value : "";
@@ -1006,7 +1008,7 @@
       // ?noblock=0 doesn't silently disable it (Codex).
       bibNoBlock: params.get("noblock") === "1",
       // Event-driven pump hooks. W-B1: the ENGINE-side pokes now land in
-      // the pthread worker's Module (web/engine-pre.js) — these page-side
+      // the pthread worker's Module (src/embedder/engine-pre.js) — these page-side
       // copies are kept as a harmless fallback for single-threaded builds.
       bibWakeUp: schedulePump,
       bibArmTimer: armPumpTimer,

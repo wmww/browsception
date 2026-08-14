@@ -58,8 +58,8 @@ boot-size, grow, shrink, and post-resize input.
   scrolls (ChromeClient::scroll delta is IntSize), so floats never reach the blit. Note WebCore
   skips invisible fixed layers in scrollContentsFastPath (NotCompositedForNoVisibleContent), so
   an opacity:0 100vw/100vh fixed overlay doesn't force slow scrolling. Probes:
-  `experiments/perf-scroll-probe.mjs` (BIBPERF/BIBSCROLL via `?perflog=1`),
-  `experiments/scroll-roundtrip.mjs` (pixel-exactness). loginasroot.net @1600x860: 2-5ms strip
+  `tools/perf-scroll-probe.mjs` (BIBPERF/BIBSCROLL via `?perflog=1`),
+  `tools/scroll-roundtrip.mjs` (pixel-exactness). loginasroot.net @1600x860: 2-5ms strip
   repaints / ~12% busy at any dpr (was ~100ms/98% at dpr≠1). Shadow-heavy full paints remain ~3x
   a text page (~100ms vs ~30ms per 1.4Mpx) — matters for load/resize/settle only; Skia blur
   caching is the lead if it ever hurts.

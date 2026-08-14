@@ -7,7 +7,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # Build STATE (third_party/, build/, sysroot — absolute paths baked in) and
 # the SOURCE checkout being compiled are separable: BIB_TREE is the shared
 # WebkitWasm tree that owns the 12 GB build state, BIB_SRC is the checkout
-# whose src/embedder + web/engine-pre.js get compiled into the embedder.
+# whose src/embedder gets compiled into the embedder.
 # Both default to this script's own tree, so standalone use is unchanged;
 # tools/build-engine.sh sets them when building a worktree's sources against
 # the main checkout's build tree (notes/worktrees.md).

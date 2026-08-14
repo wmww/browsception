@@ -1,7 +1,6 @@
 node_modules/
 src/engine/
 test/fixtures/ca/
-experiments/data/
 dist/
 *.log
 *.pem

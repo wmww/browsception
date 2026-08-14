@@ -1,6 +1,6 @@
 // Scroll-perf probe: real engine + real site, perflog=1, synthesized wheel.
-// Findings 2026-08-11 in notes/rendering-input.md § scrolling + experiments/log.md.
-// Usage: node experiments/perf-scroll-probe.mjs [url] [dpr]
+// Findings 2026-08-11 in notes/rendering-input.md § scrolling + notes/experiment-log.md.
+// Usage: node tools/perf-scroll-probe.mjs [url] [dpr]
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { launch, extensionIdFromManifest } from '../test/harness/launch.mjs';

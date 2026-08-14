@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { launch, extensionIdFromManifest, oracleClear, oracleRequests } from '../harness/launch.mjs';
 import { ensureFixtureServer } from '../harness/fixture-server.mjs';
 
-const PROBE_EXT = join(dirname(fileURLToPath(import.meta.url)), '../../spikes/probe-ext');
+const PROBE_EXT = join(dirname(fileURLToPath(import.meta.url)), '../fixtures/probe-ext');
 
 let server, browser, context, extId;
 

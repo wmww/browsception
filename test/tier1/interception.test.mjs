@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { launch, extensionIdFromManifest, oracleClear, oracleRequests, HTTP_PORT } from '../harness/launch.mjs';
 import { ensureFixtureServer } from '../harness/fixture-server.mjs';
 
-const PROBE_EXT = join(dirname(fileURLToPath(import.meta.url)), '../../spikes/probe-ext');
+const PROBE_EXT = join(dirname(fileURLToPath(import.meta.url)), '../fixtures/probe-ext');
 
 let server, browser, context, extId, probePage;
 const viewerPrefix = () => `chrome-extension://${extId}/viewer.html?url=`;

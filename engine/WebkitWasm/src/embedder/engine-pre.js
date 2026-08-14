@@ -13,7 +13,8 @@
  *   - bibWasmPolyfill: guest-injection text (wasm polyfill + media stub),
  *     fetched with sync XHR (legal and cheap in a worker).
  *   - bibWasm2js: binaryen wasm2js translation, loaded via dynamic import
- *     (binaryen.js is ESM-only). Translation is synchronous AND legal here
+ *     (npm `binaryen`, ESM-only, served from node_modules by the dev
+ *     server's /vendor mount). Translation is synchronous AND legal here
  *     — on the page it janked the UI thread (the W-B "strict upgrade").
  *     Returns null until the import resolves (~100-300ms after boot);
  *     callers see CompileError, same as a translation failure.
@@ -95,9 +96,9 @@
 
     // --- binaryen wasm2js bridge (same translation as browser.html) -----
     var binaryen = null;
-    import("/vendor/binaryen.js")
+    import("/vendor/binaryen/index.js")
       .then(function (m) { binaryen = m.default; })
-      .catch(function (e) { console.warn("engine-pre: binaryen.js failed to load: " + e); });
+      .catch(function (e) { console.warn("engine-pre: binaryen failed to load: " + e); });
     Module.bibWasm2js = function (payload, mode) {
       if (!binaryen)
         return null; // not loaded (yet) — guest sees CompileError

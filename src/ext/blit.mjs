@@ -1,8 +1,8 @@
-// Frame presentation for the viewer (graduated from spikes/blit, see
-// RESULTS.md): WebGL2 texSubImage2D straight from the wasm-heap SAB view —
-// ~0.7 ms/full 1080p frame even on SwiftShader — with putImageData as the
-// compat fallback. Dirty boxes upload as a full-width row band (contiguous,
-// single texSubImage2D; per RESULTS.md band upload is the 6-15x win and
+// Frame presentation for the viewer (graduated from spike 0.4 — numbers in
+// notes/open-questions.md #10): WebGL2 texSubImage2D straight from the
+// wasm-heap SAB view — ~0.7 ms/full 1080p frame even on SwiftShader — with
+// putImageData as the compat fallback. Dirty boxes upload as a full-width row
+// band (contiguous, single texSubImage2D; the band upload is the 6-15x win and
 // column cropping isn't worth a staging copy).
 //
 // The engine owns framebuffer geometry (bibFrame carries fbW/fbH): present()

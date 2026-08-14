@@ -32,8 +32,8 @@ tolerate a vanished checkout).
 | `third_party/WebKit` working tree | main checkout | singleton with **one** patch loaded at a time; which one is recorded in `engine/.webkit-patch.applied` (+ `.owner`). Builds from a checkout whose tracked patch differs are refused until `--sync-webkit` |
 | `engine/artifacts/<stamp>/` | main checkout | immutable snapshots of `embedder.{js,wasm}` + meta.json (`source_hash` = hash of the sources built, plus checkout/branch/sha/dirty/pthread), newest 5 kept, `latest` symlink |
 | `src/engine/` | per checkout | hardlinks into a snapshot (~0 disk; Chrome can't reliably follow symlinks, hardlinks are fine). Pruning a snapshot never breaks staged copies — hardlinks keep inodes alive |
-| `node_modules` | per checkout | hardlink-clone of main's |
-| smoke harness (dev-server, `web/`, staged engine) | per checkout | `tools/lib/dev-harness.mjs`; only the build tree behind `stage-engine` is shared |
+| `node_modules` | per checkout | hardlink-clone of main's; the dev server mounts it at `/vendor` so harness pages can import npm deps (binaryen) |
+| smoke harness (dev-server, `web/`, staged engine) | per checkout | ordinary tracked source, not build state — `tools/lib/dev-harness.mjs` serves **this** checkout's copy; only the build tree behind `stage-engine` is shared |
 | test/dev-server ports | per checkout | derived block of 16 from checkout-path hash (`test/harness/ports.mjs`, base 21000–28999, override `BS_PORT_BASE`). Fixture pages that need live ports use `__HTTP_PORT__`/`__HTTPS_PORT__` placeholders substituted by server.mjs |
 
 Port isolation matters: with a fixed port, one worktree's harness would silently talk to another
@@ -67,17 +67,17 @@ don't interact at all.
 
 ## Engine (C++) work
 
-Edit `engine/WebkitWasm/{src,web}` **on your own branch in your own worktree** and build from
+Edit `engine/WebkitWasm/src/` **on your own branch in your own worktree** and build from
 there: `bash tools/build-engine.sh` compiles *this checkout's* sources against the main
 checkout's shared build tree. A coupled engine+JS change is one branch, one review, testable in
 place.
 
 Why it's cheap: everything checkout-specific flows through one CMake cache var
 (`EMSCRIPTEN_EMBEDDER_CMAKE` → `src/embedder/embedder.cmake`, which also pulls
-`web/engine-pre.js` via `--pre-js`), and no WebCore object includes anything from our `src/`.
-Repointing it reconfigures and rebuilds the 5 embedder TUs + link only. Measured: **~1.5 min**
-for a build from a worktree, 7 ninja edges (3 when switching back, since both checkouts' objects
-stay in the graph).
+`src/embedder/engine-pre.js` via `--pre-js`), and no WebCore object includes anything from
+our `src/`. Repointing it reconfigures and rebuilds the 5 embedder TUs + link only.
+Measured: **~1.5 min** for a build from a worktree, 7 ninja edges (3 when switching back,
+since both checkouts' objects stay in the graph).
 
 1. `bash tools/build-engine.sh` — from any checkout; takes the lock, waits with a message if
    another build is running. Flags: `--sync-webkit` (below), `--force` (skip the fast path),

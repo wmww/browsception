@@ -7,6 +7,10 @@ infrastructure: the fixture server, the dev-build test hook, and the launch reci
 ## Shared infrastructure
 
 ### Fixture server
+Everything a test loads from disk lives under `test/fixtures/` — the pages, the CA, and
+`probe-ext/` (the probe extension three tier-1 suites load; `tools/gen-ext.mjs` also reads the
+shared dev key from it, so the real extension keeps its pinned id).
+
 A local HTTP(S) server (`test/fixtures/`) serving hand-written pages designed for assertion, on
 domains mapped into Chromium via `--host-resolver-rules="MAP *.bstest 127.0.0.1:<port>"`.
 HTTPS fixtures use a mkcert-style locally-trusted CA installed into the disposable test profile
@@ -160,15 +164,17 @@ without a human driving each experiment.
 3. **Rebuild granularity**: shim/extension changes are seconds (plain JS/TS bundle); engine
    changes are an Emscripten relink (~minutes) — batch engine-side experiments accordingly.
 4. **Measure, don't eyeball, perf**: every perf experiment records `__bs.metrics()` JSON to
-   `experiments/data/`; screenshots are for correctness/visual questions only.
+   the session scratchpad and copies the numbers into its lab-notebook entry; screenshots are
+   for correctness/visual questions only.
 5. **Fixtures only** in loops (rule above). The real-site smoke list (Wikipedia, HN, MDN, one SPA)
    runs at most once per session-of-work, sequentially, as a final check.
 
 ### Lab notebook (durable)
-`experiments/log.md` — append-only, dated entries: hypothesis → what was run (exact commands/
-commits) → result (numbers/screenshot refs) → decision. Conclusions that change design get
-promoted into `notes/` in the same change; the log is the raw record, notes are the distilled
-truth. Data and kept screenshots in `experiments/data/` (git-LFS or gitignored as size dictates).
+`notes/experiment-log.md` — append-only, dated entries: hypothesis → what was run (exact
+commands/commits) → result (numbers/screenshot refs) → decision. Conclusions that change design
+get promoted into the other notes in the same change; the log is the raw record, notes are the
+distilled truth. Raw dumps and screenshots are transient (session scratchpad) — the numbers that
+matter go in the entry.
 
 ### Guardrails for unattended runs
 - Anything destructive/irreversible or touching accounts/real credentials: out of scope, stop and

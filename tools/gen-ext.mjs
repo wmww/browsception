@@ -14,7 +14,7 @@ const SRC = join(HERE, '../src');
 
 // Pinned id from the shared dev key (same key as the probe extension —
 // they are never loaded into the same profile).
-const key = readFileSync(join(HERE, '../spikes/probe-ext/key.b64'), 'utf8').trim();
+const key = readFileSync(join(HERE, '../test/fixtures/probe-ext/key.b64'), 'utf8').trim();
 const hash = createHash('sha256').update(Buffer.from(key, 'base64')).digest();
 let id = '';
 for (const b of hash.subarray(0, 16))

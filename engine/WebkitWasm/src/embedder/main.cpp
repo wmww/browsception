@@ -996,7 +996,7 @@ static void bibRunTick(void*)
 
 // One engine-RunLoop iteration WITHOUT the rendering-update steps. The
 // wake-up plumbing (Module.bibWakeUp -> macrotask, Module.bibArmTimer ->
-// setTimeout — WORKER-scope under W-B1, see web/engine-pre.js) calls this,
+// setTimeout — WORKER-scope under W-B1, see engine-pre.js) calls this,
 // so engine work runs at event-loop rate while rendering stays on
 // bib_tick's rAF cadence.
 static std::atomic<bool> g_pumpQueued { false };
@@ -2114,7 +2114,7 @@ int main()
     g_engineThreadReady.store(true, std::memory_order_release);
 
     // Install the worker-scope Module hooks (pump, bibWasmPolyfill,
-    // bibWasm2js — web/engine-pre.js) NOW: this EM_ASM runs in the engine
+    // bibWasm2js — engine-pre.js) NOW: this EM_ASM runs in the engine
     // pthread's worker scope with Module fully constructed. The pre-js's
     // own eager attempts can fire before the pthread bootstrap builds
     // Module (gate9: empty bibWasmPolyfill got cached for the session).
@@ -2196,7 +2196,7 @@ int main()
     // The callback fires while the RunLoop lock is held: bibWakeUp must
     // only schedule, never call back into the engine synchronously.
     // W-B1: this EM_ASM executes in the ENGINE pthread's worker scope —
-    // Module.bibWakeUp there is installed by web/engine-pre.js (worker-local
+    // Module.bibWakeUp there is installed by engine-pre.js (worker-local
     // MessageChannel calling _bib_pump on this same thread), NOT the page's.
     WTF::RunLoop::setWakeUpCallback([] {
         EM_ASM({ if (Module.bibWakeUp) Module.bibWakeUp(); });

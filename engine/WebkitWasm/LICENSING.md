@@ -49,6 +49,7 @@ repo with invited collaborators it's lower-stakes, but read this first.)
 | OpenSSL | Apache-2.0 |
 | ICU | Unicode/ICU |
 | zlib, libpng, libjpeg-turbo, libwebp, freetype, harfbuzz, libxml2, sqlite, brotli, libpsl, fontconfig | individual permissive licenses |
+| Binaryen (npm `binaryen`, exact-pinned; dev harness only — `web/browser.html`'s guest-wasm wasm2js shim, served from `node_modules`, never shipped in the extension) | Apache-2.0 |
 
 All permissive and mutually compatible. The one with copyleft reach is **WebCore
 (LGPL-2.1)** — the embedder statically links it.

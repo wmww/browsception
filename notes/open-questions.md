@@ -73,14 +73,33 @@ result appended here (keep the question, add `**Answer (date):**`).
    Influences pthread pool size and whether tab-discard/restore is needed early.
 10. **Frame transport pick.** texSubImage2D-from-SAB-in-render-worker vs main-thread upload:
     measure on 1080p/1440p; decide default; measure dirty-rect wins.
-    **Answer (2026-08-09, spike 0.4 — details in spikes/blit/RESULTS.md):** default =
-    main-thread WebGL2 texSubImage2D straight from the SAB (Chromium 150 accepts
-    SAB-backed views directly). Full-frame: <1 ms at 1080p, ~1.3 ms worst at 1440p, even
-    on SwiftShader; putImageData is compat/debug only (drops to 45 fps at 1440p
-    headless). Dirty rows ~10% → 0.1–0.2 ms (6–15×): plumb row-band dirty info from the
-    engine day one, but full-frame-every-frame is affordable. Input ring round-trip avg
-    5–14 ms (rAF-quantized), zero drops. Viewer skeleton in spikes/blit/ is the base for
-    the real viewer.
+    **ANSWERED (2026-08-09, spike 0.4):** default = main-thread WebGL2 texSubImage2D
+    straight from the SAB — Chromium 150 accepts a SAB-backed view in texSubImage2D
+    directly, so no staging copy is needed (the copy fallback exists and self-activates
+    on a thrown upload). Measured on Chromium 150, 5 s per config, engine at 60 fps,
+    headless SwiftShader vs windowed Radeon 890M; blit ms = avg / p95, CPU-side inside
+    the blit call:
+
+    | config | headless | windowed |
+    |---|---|---|
+    | 1080p webgl2 full | 0.65 / 0.75 | 0.68 / 1.45 |
+    | 1080p webgl2 dirty (~10% rows) | 0.10 / 0.13 | 0.11 / 0.25 |
+    | 1440p webgl2 full | 1.31 / 1.95 | 1.02 / 1.33 |
+    | 1440p webgl2 dirty | 0.16 / 0.19 | 0.11 / 0.32 |
+    | 1080p 2d full | 1.30 / 1.50 | 1.40 / 2.78 |
+    | 1440p 2d full | 2.64 / 3.41 (**45 fps**) | 3.21 / 3.95 |
+
+    Cost is flat whether or not the GPU is real, and a `gl.finish()` variant changed
+    nothing — upload submission *is* the main-thread cost, no hidden GPU tail. So
+    putImageData is compat/debug only: 2–3×, always pays a full SAB copy, and is the one
+    config that dropped frames. Dirty rows ~10% → 0.1–0.2 ms (6–15× win, one contiguous
+    row-band upload on both paths) — worth carrying row-band dirty info out of the engine
+    from day one, but full-frame-every-frame is affordable, so it's an optimization, not a
+    requirement. Input ring (SPSC, 256 × 40 B) round-trip avg 5–14 ms / p95 19–31 ms,
+    dominated by rAF quantization (the worker wakes on `Atomics.notify` within the ms);
+    zero drops at 30 events/s. A render-worker/OffscreenCanvas variant wasn't needed;
+    revisit only if the main thread gets congested. The spike's blit paths graduated
+    into `src/ext/blit.mjs`.
 11. **Engine startup latency.** Cold compile of a 100–250 MB module + engine boot; how much does
     IndexedDB module caching + eager boot-at-browser-start help? Target: viewer interactive < 2s
     warm.

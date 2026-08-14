@@ -90,7 +90,7 @@ target_link_options(BibEmbedder PRIVATE
     # pthread's EM_ASM blocks read the WORKER's Module, which inherits
     # nothing from the page (W-B0). NOTE: cmake does not track pre-js edits —
     # touch main.cpp to force a relink after changing it.
-    "SHELL:--pre-js ${BIB_EMBEDDER_DIR}/../../web/engine-pre.js"
+    "SHELL:--pre-js ${BIB_EMBEDDER_DIR}/engine-pre.js"
     "SHELL:-sSTACK_SIZE=8MB"
     "SHELL:-sINITIAL_MEMORY=256MB"
     "SHELL:-sALLOW_MEMORY_GROWTH=1"

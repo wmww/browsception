@@ -1,6 +1,6 @@
 # Bridge probe results (spike 0.2, 2026-08-09)
 
-Environment: Chromium 150.0.7871.186 (Arch), headless, probe extension `spikes/probe-ext/`.
+Environment: Chromium 150.0.7871.186 (Arch), headless, probe extension `test/fixtures/probe-ext/`.
 All rows are asserted permanently by `test/tier1/bridge-probe.test.mjs` (per-commit CI);
 rerun that suite to revalidate on new Chrome versions.
 

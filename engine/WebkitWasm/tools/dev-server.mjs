@@ -8,11 +8,16 @@
 //   --mount /engine=build/webcore/bin
 // so multi-GB build artifacts are served in place instead of being copied
 // into web/. Each mount gets the same realpath+containment guard as the root.
+//
+// /vendor is mounted automatically at the repo-root node_modules (when it
+// exists), so harness pages can import npm dev deps (binaryen) without
+// every call site repeating a --mount flag.
 
 import { createServer, request as httpRequest } from "node:http";
 import { createReadStream } from "node:fs";
 import { stat, realpath } from "node:fs/promises";
-import { join, sep, extname, resolve } from "node:path";
+import { join, sep, extname, resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const positional = [];
 const mounts = []; // [{ prefix: "/engine", root: "/abs/dir" }]
@@ -31,6 +36,16 @@ for (let i = 2; i < process.argv.length; i++) {
     });
   } else {
     positional.push(arg);
+  }
+}
+// Built-in /vendor => <repo root>/node_modules, so harness pages can import
+// npm dev deps. An explicit --mount /vendor=... wins.
+if (!mounts.some((m) => m.prefix === "/vendor")) {
+  const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+  try {
+    mounts.push({ prefix: "/vendor", root: await realpath(join(repoRoot, "node_modules")) });
+  } catch {
+    // no node_modules (deps not installed) — /vendor just 404s.
   }
 }
 // Longest prefix wins so /engine/sub can coexist with /engine.

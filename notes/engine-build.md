@@ -14,7 +14,7 @@ with the five fixes a fresh checkout needs (below). Output:
 `engine/artifacts/<stamp>/` (newest 5 kept; meta.json stamped with `source_hash` — the hash of
 the engine sources built, `tools/lib/engine-src-hash.mjs` — plus the invoking checkout, branch,
 sha, dirty, pthread) for staging. Worktree-safe: it compiles **the invoking checkout's**
-`engine/WebkitWasm/{src,web/engine-pre.js}` against the main checkout's shared build tree
+`engine/WebkitWasm/src/` against the main checkout's shared build tree
 (`BIB_TREE`/`BIB_SRC` split in build-webcore.sh + export-webkit-patches.sh), resolves that tree
 via the git common dir, and serializes concurrent builds with `engine/.build.lock`. A snapshot
 whose `source_hash` already matches exits in ~0.7 s. Before building it exports
@@ -28,6 +28,13 @@ cd engine/WebkitWasm
 PORT=8090 node tools/dev-server.mjs web --mount /engine=build/webcore/bin
 # open http://127.0.0.1:8090/browser.html?url=https://example.com
 ```
+The server also mounts `/vendor` → repo-root `node_modules` automatically, which is how both
+harness pages get Binaryen (npm `binaryen`, exact-pinned v130 — the wasm2js workarounds are
+version-specific; the extension ships no guest-wasm shim, so it's a devDependency only).
+
+**`web/` is harness-only**: `browser.html` + page glue, served as-is, never a build input.
+Everything the embedder compiles or links — including `engine-pre.js` (`--pre-js`) — lives under
+`src/`, which is exactly what `tools/lib/engine-src-hash.mjs` hashes.
 
 ## Pins & shape
 
@@ -149,5 +156,5 @@ are legitimately wide — touching one still costs a broad rebuild; so does anyt
 freshens WebKit-tree mtimes (why `--sync-webkit` restores them for files the switch leaves
 unchanged: 960 ninja edges / 13 min vs 9 edges / 1.5 min, measured 2026-08-13).
 
-cmake does not track `--pre-js` inputs: build-engine.sh stamps `sha256(web/engine-pre.js)` at
+cmake does not track `--pre-js` inputs: build-engine.sh stamps `sha256(src/embedder/engine-pre.js)` at
 `build/.engine-pre.sha` and touches `main.cpp` when it changes, so a pre-js-only edit relinks.

@@ -1,7 +1,12 @@
-# Experiments log
+# Experiment log
 
 Append-only lab notebook (notes/testing.md § Lab notebook). Raw record here;
-distilled conclusions get promoted into `notes/` in the same change.
+distilled conclusions get promoted into the other notes in the same change.
+
+Historical record — entries are not rewritten. Paths have since moved:
+`spikes/probe-ext/` → `test/fixtures/probe-ext/`, `spikes/blit/` → deleted
+(numbers in open-questions #10, code in `src/ext/blit.mjs`),
+`experiments/*.mjs` → `tools/`.
 
 ---
 

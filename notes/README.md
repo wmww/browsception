@@ -33,6 +33,7 @@ surface for speed (no WebGPU for the nested engine, no nested-wasm-runs-natively
 | [testing.md](testing.md) | Automated test tiers (unit/bridge/full-integration), fixture+oracle design, agent iteration loop |
 | [worktrees.md](worktrees.md) | Ephemeral-worktree workflow: wt-setup, building your branch's engine sources against the shared tree, WebKit-patch ownership, artifact snapshots, per-checkout ports |
 | [open-questions.md](open-questions.md) | Unverified assumptions and spikes to run (answers appended in place) |
+| [experiment-log.md](experiment-log.md) | Append-only lab notebook: dated entries (hypothesis → what ran → numbers → decision) behind the distilled notes |
 | [roadmap.md](roadmap.md) | Post-MVP fast-follows, cleanups, standing risks, working agreements |
 
 ## Status
@@ -49,7 +50,7 @@ lives in [roadmap.md](roadmap.md). Phase summaries:
   (BibNetBridge; the curl/wisp transport was later deleted outright), rendering to a
   runtime-sized shared-heap framebuffer
   (`bibFrame` zero-copy present), input through WebCore's EventHandler, crash/heartbeat recovery,
-  flat-heap leak check. Exit gate: 10.2-min crash-free real-site browse (experiments/log.md).
+  flat-heap leak check. Exit gate: 10.2-min crash-free real-site browse (experiment-log.md).
 - **Phase 2 extension**: viewer hosts the engine (src/ext/viewer.mjs + blit.mjs, OPFS persistence,
   `__bs` test hook); SW reconciles storage.sync state → DNR + symmetric tab sweep (sw.mjs);
   browser chrome v1 (true-URL bar, back/forward/reload via real BackForwardList, progress, nested
@@ -59,7 +60,7 @@ lives in [roadmap.md](roadmap.md). Phase summaries:
   whitelist-by-default** — `DEFAULT_STATE.mode='whitelist'`, static catch-all enabled in the
   manifest so a fresh install intercepts before the SW runs (ui.md § shipping default). Exit
   gate: tools/smoke-mvp.mjs real-site pass — sandboxed example.com/wikipedia, whitelist→native
-  sweep (experiments/log.md 2026-08-10).
+  sweep (experiment-log.md 2026-08-10).
 
 Tests: `npm test` = tiers 0–1, pure headless, per-commit (71 tests). `npm run test:tier2` = 15
 scenarios against the staged engine artifact (~15 s; restage with tools/stage-engine.mjs after
@@ -107,9 +108,15 @@ shim never sees (unsupported top-level MIME type, blocked port, any WebCore refu
 leave the viewer on "booting…". Two of those refusals dispatch to no client upstream — the patch
 adds the notification (networking.md, engine-internals.md; tier-2 scenario 16).
 
-Open issues in issues/ (first-nav race residual, guest-JS wedge, vendored web-dep hygiene).
-Next work:
-[roadmap.md](roadmap.md).
+*Repo hygiene* (2026-08-13) — one convention per kind of thing: Binaryen is an exact-pinned npm
+devDependency served at `/vendor` by the dev server (no vendored blob); `engine-pre.js` moved to
+`src/embedder/`, so `engine/WebkitWasm/web/` is harness-only and everything under `src/` is a
+build input; the probe extension is a test fixture (`test/fixtures/probe-ext/`); `spikes/` and
+`experiments/` are gone (blit numbers → open-questions #10, probes → `tools/`, lab notebook →
+[experiment-log.md](experiment-log.md)).
+
+Open issues in issues/ (first-nav race residual, guest-JS wedge, rcap dynamic budget, viewer
+URL-scheme allowlist). Next work: [roadmap.md](roadmap.md).
 
 ## Key decisions
 

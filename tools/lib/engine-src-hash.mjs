@@ -1,6 +1,5 @@
 // sha256 over a checkout's ENGINE BUILD INPUTS: engine/WebkitWasm/src/**
-// (embedder TUs, headers, embedder.cmake, the WebKit patch) plus
-// engine/WebkitWasm/web/engine-pre.js (linked in with --pre-js).
+// (embedder TUs, headers, embedder.cmake, engine-pre.js, the WebKit patch).
 //
 // Equal hash => the two checkouts would produce the same embedder.{js,wasm},
 // so a snapshot built from one is valid in the other. build-engine.sh uses it
@@ -8,8 +7,8 @@
 // stage-engine.mjs uses it to pick the snapshot that matches this checkout.
 //
 // Not inputs (deliberately): third_party/ (pinned + the patch above covers our
-// edits), tools/ (build scripts don't change the artifact), the rest of web/
-// (browser.html & co are host-page files, loaded at runtime, not linked).
+// edits), tools/ (build scripts don't change the artifact), web/ (browser.html
+// & co are harness host-page files, loaded at runtime, not linked).
 
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
@@ -30,7 +29,7 @@ function walk(dir, out = []) {
 /** @param {string} root checkout root (defaults to this file's checkout) */
 export function engineSrcHash(root = checkoutRoot) {
   const w = join(root, 'engine/WebkitWasm');
-  const files = [...walk(join(w, 'src')), join(w, 'web/engine-pre.js')].filter(existsSync);
+  const files = walk(join(w, 'src'));
   const h = createHash('sha256');
   for (const f of files) {
     h.update(relative(w, f).split(sep).join('/'));

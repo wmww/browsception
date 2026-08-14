@@ -9,6 +9,10 @@
 //   newest snapshot whose meta.json source_hash matches THIS checkout's engine
 //     sources (tools/lib/engine-src-hash.mjs) — the artifact that actually
 //     corresponds to the code in this branch
+//   the already-staged copy, if .staged-meta.json says it was hash-matched to
+//     these same sources — its snapshot may have been pruned by other
+//     checkouts' builds, but the staged bits are still the right ones. Never
+//     silently downgrade a checkout to a neighbour's artifact.
 //   engine/artifacts/latest  newest snapshot, with a loud warning naming what it
 //                            was built from (a fresh worktree next to a
 //                            dirty-main build is a legit JS-only situation)
@@ -17,6 +21,9 @@
 // Hardlinks look like regular files to Chrome's unpacked loader (symlinks
 // don't reliably); a rebuild writes new snapshot dirs, never touching inodes
 // already staged into other worktrees.
+//
+// Concurrency: another checkout's build may prune a snapshot mid-stage; the
+// whole select+stage is retried once from scratch if staging throws.
 
 import { copyFileSync, existsSync, linkSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
@@ -25,6 +32,7 @@ import { engineSrcHash } from './lib/engine-src-hash.mjs';
 
 const OUT = join(checkoutRoot, 'src/engine');
 const CONFIG = 'bib-build-config.js';
+const STAGED_META = join(OUT, '.staged-meta.json');
 const ARTIFACTS = join(engineRoot, 'artifacts');
 const fromIdx = process.argv.indexOf('--from');
 const fromArg = fromIdx >= 0 ? process.argv[fromIdx + 1] : null;
@@ -33,8 +41,13 @@ const fromArg = fromIdx >= 0 ? process.argv[fromIdx + 1] : null;
 // checkout left staged with a pre-rebuild artifact, without any noise.
 const ifStale = process.argv.includes('--if-stale');
 
-const readMeta = (dir) => {
-  try { return JSON.parse(readFileSync(join(dir, 'meta.json'), 'utf8')); } catch { return {}; }
+const readJson = (p) => {
+  try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return {}; }
+};
+const readMeta = (dir) => readJson(join(dir, 'meta.json'));
+const snapshotHashes = (dir) => {
+  const m = readMeta(dir);
+  return [m.source_hash, ...(m.also_source_hashes ?? [])].filter(Boolean);
 };
 const snapshots = () => {
   try {
@@ -43,72 +56,101 @@ const snapshots = () => {
       .sort().reverse().map((n) => join(ARTIFACTS, n));
   } catch { return []; }
 };
+const stagedStillMatches = (hash) => {
+  const m = readJson(STAGED_META);
+  return (m.source_hashes ?? []).includes(hash)
+    && ['embedder.js', 'embedder.wasm', CONFIG].every((f) => existsSync(join(OUT, f)));
+};
 
-let src, mode, warning = null;
-if (fromArg) {
-  src = existsSync(join(fromArg, 'embedder.wasm')) ? fromArg : join(ARTIFACTS, fromArg);
-  mode = 'link';
-} else {
-  const hash = engineSrcHash(checkoutRoot);
-  const match = snapshots().find((d) => {
-    const m = readMeta(d);
-    return m.source_hash === hash || (m.also_source_hashes ?? []).includes(hash);
-  });
-  if (match) {
-    src = match;
+function stageOnce() {
+  let src, mode, warning = null;
+  if (fromArg) {
+    src = existsSync(join(fromArg, 'embedder.wasm')) ? fromArg : join(ARTIFACTS, fromArg);
     mode = 'link';
-  } else if (existsSync(join(ARTIFACTS, 'latest/embedder.wasm'))) {
-    src = realpathSync(join(ARTIFACTS, 'latest'));
-    mode = 'link';
-    const m = readMeta(src);
-    warning = (
-      `WARNING: no engine artifact matches this checkout's engine sources (${hash}).\n` +
-      `         Staging ${basename(src)}, built from ${m.checkout ?? '?'}` +
-      ` (branch ${m.branch ?? '?'}, sha ${m.sha ?? '?'}${m.dirty ? '-dirty' : ''}, source_hash ${m.source_hash ?? '?'}).\n` +
-      `         If this checkout changes engine/WebkitWasm, build it: bash tools/build-engine.sh`);
   } else {
-    src = join(engineRoot, 'WebkitWasm/build/webcore/bin');
-    mode = 'copy';
+    const hash = engineSrcHash(checkoutRoot);
+    const match = snapshots().find((d) => snapshotHashes(d).includes(hash));
+    if (match) {
+      src = match;
+      mode = 'link';
+    } else if (stagedStillMatches(hash)) {
+      if (!ifStale)
+        console.log(`staged copy still matches these sources (snapshot ${readJson(STAGED_META).stamp ?? '?'} pruned) — keeping it`);
+      return;
+    } else if (existsSync(join(ARTIFACTS, 'latest/embedder.wasm'))) {
+      src = realpathSync(join(ARTIFACTS, 'latest'));
+      mode = 'link';
+      const m = readMeta(src);
+      warning = (
+        `WARNING: no engine artifact matches this checkout's engine sources (${hash}).\n` +
+        `         Staging ${basename(src)}, built from ${m.checkout ?? '?'}` +
+        ` (branch ${m.branch ?? '?'}, sha ${m.sha ?? '?'}${m.dirty ? '-dirty' : ''}, source_hash ${m.source_hash ?? '?'}).\n` +
+        `         If this checkout changes engine/WebkitWasm, build it: bash tools/build-engine.sh`);
+    } else {
+      src = join(engineRoot, 'WebkitWasm/build/webcore/bin');
+      mode = 'copy';
+    }
   }
-}
-if (!existsSync(join(src, 'embedder.wasm'))) {
-  console.error(`no engine artifacts at ${src} — build with tools/build-engine.sh first`);
-  process.exit(1);
+  if (!existsSync(join(src, 'embedder.wasm'))) {
+    console.error(`no engine artifacts at ${src} — build with tools/build-engine.sh first`);
+    process.exit(1);
+  }
+
+  if (ifStale && mode === 'link') {
+    const same = ['embedder.js', 'embedder.wasm'].every((f) => {
+      try { return statSync(join(src, f)).ino === statSync(join(OUT, f)).ino; } catch { return false; }
+    });
+    if (same && existsSync(join(OUT, CONFIG))) {
+      // backfill for checkouts staged before .staged-meta.json existed
+      if (!existsSync(STAGED_META))
+        writeFileSync(STAGED_META, JSON.stringify({
+          stamp: basename(src), source_hashes: snapshotHashes(src),
+        }, null, 2) + '\n');
+      return;
+    }
+  }
+  if (warning) console.warn(warning);
+
+  mkdirSync(OUT, { recursive: true });
+  for (const f of ['embedder.js', 'embedder.wasm']) {
+    const s = join(src, f);
+    const d = join(OUT, f);
+    rmSync(d, { force: true });
+    if (mode === 'link') {
+      try { linkSync(s, d); } catch { copyFileSync(s, d); }
+    } else {
+      copyFileSync(s, d);
+    }
+    console.log(`staged ${f} (${(statSync(d).size / 1048576).toFixed(1)} MB, ${mode} from ${basename(src)})`);
+  }
+
+  // Threading-mode stamp: the dev harness (web/browser.html) reads it from the
+  // /engine mount before picking #screen's context. Snapshots made before it was
+  // snapshotted don't carry the file — meta.json records the same bit, so
+  // synthesize it rather than letting the harness fall back to its default.
+  {
+    const d = join(OUT, CONFIG);
+    rmSync(d, { force: true });
+    if (existsSync(join(src, CONFIG))) {
+      copyFileSync(join(src, CONFIG), d);
+    } else {
+      const pthread = readMeta(src).pthread;
+      writeFileSync(d, `// Synthesized by tools/stage-engine.mjs from ${basename(src)}/meta.json.\n` +
+        `window.BIB_PTHREAD_BUILD = ${pthread === undefined ? true : !!pthread};\n`);
+    }
+  }
+
+  // Record what got staged, so a later run can keep a still-correct copy after
+  // its snapshot is pruned (mode 'copy' from mutable bin/ records no hashes).
+  writeFileSync(STAGED_META, JSON.stringify({
+    stamp: basename(src),
+    source_hashes: mode === 'link' ? snapshotHashes(src) : [],
+  }, null, 2) + '\n');
 }
 
-if (ifStale && mode === 'link') {
-  const same = ['embedder.js', 'embedder.wasm'].every((f) => {
-    try { return statSync(join(src, f)).ino === statSync(join(OUT, f)).ino; } catch { return false; }
-  });
-  if (same && existsSync(join(OUT, CONFIG))) process.exit(0);
-}
-if (warning) console.warn(warning);
-
-mkdirSync(OUT, { recursive: true });
-for (const f of ['embedder.js', 'embedder.wasm']) {
-  const s = join(src, f);
-  const d = join(OUT, f);
-  rmSync(d, { force: true });
-  if (mode === 'link') {
-    try { linkSync(s, d); } catch { copyFileSync(s, d); }
-  } else {
-    copyFileSync(s, d);
-  }
-  console.log(`staged ${f} (${(statSync(d).size / 1048576).toFixed(1)} MB, ${mode} from ${basename(src)})`);
-}
-
-// Threading-mode stamp: the dev harness (web/browser.html) reads it from the
-// /engine mount before picking #screen's context. Snapshots made before it was
-// snapshotted don't carry the file — meta.json records the same bit, so
-// synthesize it rather than letting the harness fall back to its default.
-{
-  const d = join(OUT, CONFIG);
-  rmSync(d, { force: true });
-  if (existsSync(join(src, CONFIG))) {
-    copyFileSync(join(src, CONFIG), d);
-  } else {
-    const pthread = readMeta(src).pthread;
-    writeFileSync(d, `// Synthesized by tools/stage-engine.mjs from ${basename(src)}/meta.json.\n` +
-      `window.BIB_PTHREAD_BUILD = ${pthread === undefined ? true : !!pthread};\n`);
-  }
+try {
+  stageOnce();
+} catch (e) {
+  console.warn(`staging failed (${e.message}) — snapshot pruned mid-stage? retrying once`);
+  stageOnce();
 }

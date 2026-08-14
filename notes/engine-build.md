@@ -11,7 +11,7 @@ tier was deleted 2026-08-13 — the engine's only transport is now the host-fetc
 `tools/build-engine.sh` — wraps the engine's idempotent scripts (`engine/WebkitWasm/tools/`)
 with the five fixes a fresh checkout needs (below). Output:
 `engine/WebkitWasm/build/webcore/bin/embedder.{js,wasm}`, snapshotted into
-`engine/artifacts/<stamp>/` (newest 5 kept; meta.json stamped with `source_hash` — the hash of
+`engine/artifacts/<stamp>/` (newest 12 kept; meta.json stamped with `source_hash` — the hash of
 the engine sources built, `tools/lib/engine-src-hash.mjs` — plus the invoking checkout, branch,
 sha, dirty, pthread) for staging. Worktree-safe: it compiles **the invoking checkout's**
 `engine/WebkitWasm/src/` against the main checkout's shared build tree
@@ -19,8 +19,9 @@ sha, dirty, pthread) for staging. Worktree-safe: it compiles **the invoking chec
 via the git common dir, and serializes concurrent builds with `engine/.build.lock`. A snapshot
 whose `source_hash` already matches exits in ~0.7 s. Before building it exports
 `src/patches/webkit-emscripten.patch` from the WebKit working tree (warning if it had untracked
-edits) and refuses to build when another checkout's patch is loaded there (`--sync-webkit`
-switches). See notes/worktrees.md § Engine work.
+edits); when another checkout's patch is loaded there it takes the tree over automatically and
+losslessly (the previous owner's live edits are captured into that owner's patch file first).
+See notes/worktrees.md § Engine work.
 
 Dev harness (headless drivers: `tools/smoke-{browse,bridge,leak,fixtures}.mjs`):
 ```sh
@@ -153,7 +154,7 @@ and skips bootstrap entirely when ready; a one-file embedder change is then
 compile+relink (~1.5 min, 7 ninja edges). `rm -rf third_party/wasm-sysroot` forces the
 full path. Caveat: headers under Source/WebCore (e.g. EmptyFrameLoaderClient.h)
 are legitimately wide — touching one still costs a broad rebuild; so does anything that
-freshens WebKit-tree mtimes (why `--sync-webkit` restores them for files the switch leaves
+freshens WebKit-tree mtimes (why a WebKit-tree switch restores them for files it leaves
 unchanged: 960 ninja edges / 13 min vs 9 edges / 1.5 min, measured 2026-08-13).
 
 cmake does not track `--pre-js` inputs: build-engine.sh stamps `sha256(src/embedder/engine-pre.js)` at

@@ -17,12 +17,17 @@
 # 24 threads at BIB_JOBS=12). Incremental embedder-only change: ~2-3 min;
 # "nothing changed here" (source hash matches a snapshot): seconds.
 #
+# The shared third_party/WebKit tree holds ONE checkout's patch at a time.
+# A build that needs it takes it over automatically and losslessly: the
+# previous owner's live tree edits are first captured into that owner's
+# src/patches/webkit-emscripten.patch (their branch keeps their work), then
+# the tree is reloaded with this checkout's patch. No coordination needed;
+# two branches with divergent patches just pay ~1.5 min per switch.
+#
 # Flags:
 #   --snapshot-only  skip the build, just snapshot the current build output
-#   --sync-webkit    reset the shared third_party/WebKit tree to THIS checkout's
-#                    src/patches/webkit-emscripten.patch (discards uncommitted
-#                    WebKit-tree edits) — needed when another branch's patch is
-#                    loaded there
+#   --sync-webkit    take over the shared WebKit tree NOW even if no build is
+#                    needed — run before live-editing third_party/WebKit
 #   --force          skip the "already built" fast path and run ninja anyway
 set -euo pipefail
 
@@ -67,7 +72,9 @@ if ! flock -n 9; then
 fi
 printf '%s pid=%s %s\n' "$CHECKOUT_ROOT" "$$" "$(date -u +%FT%TZ)" > "$HERE/.build.owner"
 
-sha_of() { sha256sum "$1" 2>/dev/null | cut -d' ' -f1; }
+# Empty (not fatal) for a missing file: pipefail + set -e would otherwise kill
+# the script silently from inside a $() assignment.
+sha_of() { sha256sum "$1" 2>/dev/null | cut -d' ' -f1 || true; }
 
 # Copy (not link) build output into an immutable, stamped snapshot dir; a
 # later relink can rewrite build output in place, snapshots never change.
@@ -88,7 +95,8 @@ snapshot() {
       const m = JSON.parse(fs.readFileSync(p, "utf8")), h = process.argv[2];
       if (m.source_hash === h || (m.also_source_hashes ?? []).includes(h)) process.exit(0);
       m.also_source_hashes = [...(m.also_source_hashes ?? []), h];
-      fs.writeFileSync(p, JSON.stringify(m, null, 2) + "\n");
+      fs.writeFileSync(p + ".tmp", JSON.stringify(m, null, 2) + "\n");
+      fs.renameSync(p + ".tmp", p); // atomic: stage-engine may be reading it
       console.log("    (also matches source_hash " + h + ")");
     ' "$(readlink -f "$LATEST")" "$SRC_HASH" 2>/dev/null || true
     return 0
@@ -116,7 +124,10 @@ snapshot() {
 }
 EOF
   ln -sfn "$STAMP" "$LATEST"
-  ls -1d "$HERE/artifacts"/2* 2>/dev/null | head -n -5 | xargs -r rm -rf
+  # Retention sized for several checkouts building in parallel; a staged copy
+  # survives pruning anyway (hardlinks), and stage-engine keeps a still-matching
+  # staged copy even after its snapshot is gone.
+  ls -1d "$HERE/artifacts"/2* 2>/dev/null | head -n -12 | xargs -r rm -rf
   echo "OK — snapshot $DEST"
 }
 
@@ -175,6 +186,41 @@ sync_webkit_tree() { # reload the shared WebKit tree with this checkout's patch
   echo "    applied ${WANT:0:12} ($(wc -l < "$PATCH") lines, $RESTORED/$TOTAL files unchanged)"
 }
 
+take_webkit_tree() { # lossless takeover: capture the owner's work, then sync
+  # The tree's live edits belong to the recorded owner. If the tree drifted
+  # since that owner's last export, write the drift into the owner's patch
+  # file so their branch keeps their work; if no checkout accounts for the
+  # content, save a rescue patch. Only then reload with our patch.
+  local LIVE LIVE_SHA OWNER_ROOT OWNER_PATCH ACCOUNTED p
+  LIVE="$(mktemp)"
+  git -C "$WK" add --intent-to-add --all
+  git -C "$WK" diff > "$LIVE"
+  LIVE_SHA="$(sha_of "$LIVE")"
+  if [ -n "$HAVE" ] && [ "$LIVE_SHA" != "$HAVE" ] && [ -s "$LIVE" ]; then
+    ACCOUNTED=""
+    for p in "$MAIN_ROOT/engine/WebkitWasm/src/patches/webkit-emscripten.patch" \
+             "$MAIN_ROOT"/.worktrees/*/engine/WebkitWasm/src/patches/webkit-emscripten.patch; do
+      [ "$(sha_of "$p")" = "$LIVE_SHA" ] && ACCOUNTED=1 && break
+    done
+    OWNER_ROOT="$(cut -d' ' -f1 "$OWNER_F" 2>/dev/null || true)"
+    OWNER_PATCH="$OWNER_ROOT/engine/WebkitWasm/src/patches/webkit-emscripten.patch"
+    if [ -n "$ACCOUNTED" ]; then
+      : # live content already tracked by some checkout's patch — nothing to save
+    elif [ -n "$OWNER_ROOT" ] && [ -f "$OWNER_PATCH" ] \
+         && [ "$(sha_of "$OWNER_PATCH")" = "$HAVE" ]; then
+      cp "$LIVE" "$OWNER_PATCH"
+      echo "==> captured live WebKit-tree edits into $OWNER_PATCH"
+    else
+      local RESCUE="$HERE/webkit-rescue-$(date -u +%Y%m%d-%H%M%S).patch"
+      cp "$LIVE" "$RESCUE"
+      echo "WARNING: live WebKit-tree edits match no checkout's patch (owner:"
+      echo "         $(cat "$OWNER_F" 2>/dev/null || echo '?')) — saved to $RESCUE"
+    fi
+  fi
+  rm -f "$LIVE"
+  sync_webkit_tree
+}
+
 # Do we own the tree's WebKit state? (Equal patch = live edits there are ours.)
 OWNED=0
 if [ "$WK_OK" = 1 ]; then
@@ -184,7 +230,7 @@ if [ "$WK_OK" = 1 ]; then
   elif [ "$HAVE" = "$WANT" ]; then
     OWNED=1
   elif [ "$SYNC_WEBKIT" = 1 ]; then
-    sync_webkit_tree; OWNED=1
+    take_webkit_tree; OWNED=1
   fi
 elif [ "$SYNC_WEBKIT" = 1 ]; then
   echo "note: --sync-webkit ignored — no WebKit checkout yet (bootstrap will clone + patch)"
@@ -207,7 +253,12 @@ fi
 
 SRC_HASH="$(node "$CHECKOUT_ROOT/tools/lib/engine-src-hash.mjs" "$CHECKOUT_ROOT")"
 
-if [ "$SNAPSHOT_ONLY" = 1 ]; then snapshot; exit; fi
+if [ "$SNAPSHOT_ONLY" = 1 ]; then
+  # The bin/ output was produced by whichever checkout built last; stamping it
+  # with OUR source hash is only honest if the tree state is ours.
+  [ "$OWNED" = 1 ] || { echo "ERROR: --snapshot-only but the last build was another checkout's (WebKit tree ${HAVE:0:12}); it would be stamped with this checkout's source hash. Run a real build instead."; exit 1; }
+  snapshot; exit
+fi
 
 # --- fast path: an existing snapshot already matches these sources -------
 MATCH=""
@@ -226,14 +277,12 @@ if [ -n "$MATCH" ] && [ "$FORCE" = 0 ]; then
 fi
 
 # A build compiles against the shared WebKit tree, so its state must be ours.
+# Not ours -> take it over (lossless: the owner's work is captured first).
 if [ "$WK_OK" = 1 ] && [ "$OWNED" = 0 ]; then
-  echo "ERROR: third_party/WebKit currently holds a different checkout's patch."
-  echo "  tree:  ${HAVE:0:12}   this checkout: ${WANT:0:12}"
-  echo "  loaded by:  $(cat "$OWNER_F" 2>/dev/null || echo '?')"
-  echo "  Building now would compile another branch's WebKit sources. To take the"
-  echo "  tree over (resets third_party/WebKit, discarding uncommitted edits there):"
-  echo "      bash tools/build-engine.sh --sync-webkit"
-  exit 1
+  echo "==> shared WebKit tree holds another checkout's patch (${HAVE:0:12}," \
+       "loaded by $(cut -d' ' -f1 "$OWNER_F" 2>/dev/null || echo '?')) — taking it over"
+  take_webkit_tree
+  OWNED=1
 fi
 
 # --- 1. host toolchain fixes --------------------------------------------

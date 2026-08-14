@@ -325,6 +325,24 @@ struct PerfAccum {
     double pumpCycle = 0;    // sum of bib_pump RunLoop::cycle ms
     double pumpMax = 0;      // largest single bib_pump cycle ms (the decider)
     int pumps = 0;           // bib_pump cycles this window
+    // Scroll-path probe (2026-08-13, issues/engine-renders-stale-input-state.md):
+    // wheel handling runs as a PROXIED TASK, i.e. OUTSIDE bib_tick, so none of
+    // it showed up in busy% before. wheelMs = engine-thread time inside
+    // handleWheelEvent (WebCore scroll machinery + bibScrollBlit); blitMs =
+    // bibScrollBlit, split into its two mirrors (blitMoveMs = the g_blitPixels
+    // memmove, blitWriteMs = the writePixels alpha-converting copy onto the
+    // surface — they differ by ~9x, which is the whole finding); blitRows =
+    // device rows shifted, per mirror; queueMax = deepest wheel backlog seen
+    // (no backpressure exists, so this is how far behind the engine ran).
+    double wheelMs = 0;
+    int wheels = 0;
+    double blitMs = 0;
+    double blitMoveMs = 0;   // g_blitPixels row-walk memmove
+    double blitWriteMs = 0;  // SkCanvas::writePixels mirror onto the surface
+    int blits = 0;
+    double blitRows = 0;
+    int blitFallbacks = 0;
+    int queueMax = 0;
 };
 PerfAccum g_perf;
 }
@@ -440,7 +458,22 @@ static constexpr double kScrollSettleMs = 200.0;
 // (snapped, see above). Damage bookkeeping stays logical, inflated by 1
 // logical px at dpr != 1 so snap misalignment repaints a hair extra rather
 // than smearing.
+static void bibScrollBlitImpl(const WebCore::IntSize&, const WebCore::IntRect&, const WebCore::IntRect&);
 static void bibScrollBlit(const WebCore::IntSize& delta, const WebCore::IntRect& rectToScroll, const WebCore::IntRect& clipRect)
+{
+    if (!g_perfLog) {
+        bibScrollBlitImpl(delta, rectToScroll, clipRect);
+        return;
+    }
+    const double t0 = bibNowMs();
+    const double rows0 = g_perf.blitRows;
+    bibScrollBlitImpl(delta, rectToScroll, clipRect);
+    g_perf.blitMs += bibNowMs() - t0;
+    g_perf.blits++;
+    if (g_perf.blitRows == rows0)
+        g_perf.blitFallbacks++; // bailed to a plain repaint, no pixels reused
+}
+static void bibScrollBlitImpl(const WebCore::IntSize& delta, const WebCore::IntRect& rectToScroll, const WebCore::IntRect& clipRect)
 {
     WebCore::IntRect scrollRect = WebCore::intersection(WebCore::intersection(rectToScroll, clipRect), bibLogicalFrameRect());
     if (!g_engine || g_inPaint || scrollRect.isEmpty()) {
@@ -559,6 +592,9 @@ static void bibScrollBlit(const WebCore::IntSize& delta, const WebCore::IntRect&
     // Overlap-safe row walk over g_blitPixels (memmove handles x overlap).
     // devDst/devSrc/ndx/ndy: everything here is DEVICE px.
     const size_t rowBytes = static_cast<size_t>(devDst.width()) * 4;
+    const double _moveT0 = g_perfLog ? bibNowMs() : 0;
+    if (g_perfLog)
+        g_perf.blitRows += devDst.height(); // x2: buffer walk + surface writePixels
     if (ndy > 0) {
         for (int y = devDst.height() - 1; y >= 0; --y)
             memmove(g_blitPixels + ((static_cast<size_t>(devDst.y() + y)) * g_fbWidth + devDst.x()) * 4,
@@ -573,6 +609,9 @@ static void bibScrollBlit(const WebCore::IntSize& delta, const WebCore::IntRect&
     // mirrors have DIVERGED (buffer shifted, surface not) — full-frame
     // damage repaints and re-reads everything, resyncing both; never leave
     // it silent (Codex confirmed finding, 2026-06-11).
+    const double _writeT0 = g_perfLog ? bibNowMs() : 0;
+    if (g_perfLog)
+        g_perf.blitMoveMs += _writeT0 - _moveT0;
     auto info = SkImageInfo::Make(devDst.width(), devDst.height(), kRGBA_8888_SkColorType, kUnpremul_SkAlphaType);
     if (!g_engine->surface->getCanvas()->writePixels(info, g_blitPixels + (static_cast<size_t>(devDst.y()) * g_fbWidth + devDst.x()) * 4, g_fbWidth * 4, devDst.x(), devDst.y())) {
         g_scrollResidX = g_scrollResidY = 0.0;
@@ -580,6 +619,8 @@ static void bibScrollBlit(const WebCore::IntSize& delta, const WebCore::IntRect&
         return;
     }
 
+    if (g_perfLog)
+        g_perf.blitWriteMs += bibNowMs() - _writeT0;
     // Host re-uploads everything that moved…
     BIB::g_uploadRect.unite(scrollRect);
     // …WebCore repaints only the exposed strips (scrollRect minus dst): a
@@ -1002,17 +1043,23 @@ EMSCRIPTEN_KEEPALIVE void bib_tick()
             double pushOther = g_perf.pushTotal - g_perf.layout - g_perf.paint - g_perf.present;
             if (pushOther < 0)
                 pushOther = 0;
+            // wheelMs runs OUTSIDE bib_tick (proxied task) — count it or busy%
+            // lies about a scroll-saturated thread.
             const double busy = g_perf.runloop + g_perf.renderUpdate + g_perf.layout
-                + g_perf.paint + g_perf.present + g_perf.persist + pushOther;
+                + g_perf.paint + g_perf.present + g_perf.persist + pushOther + g_perf.wheelMs;
             WTFLogAlways("BIBPERF/s ticks=%d painted=%d elapsed=%.0fms busy=%.0f%% heap=%.0fMB jsc=%.0fMB | "
                 "runloop(JS)=%.0f renderUpd=%.0f layout=%.0f paint=%.0f present=%.0f pushOther=%.0f persist=%.0f ms | "
                 "pump=%.0f(max%.0f n%d) | "
+                "wheel=%.0f(n%d q%d) blit=%.0f(mv%.0f wr%.0f n%d fb%d rows%.0f) | "
                 "avgPaintedFrame=%.1fms",
                 g_perf.ticks, g_perf.painted, elapsed, 100.0 * busy / elapsed,
                 emscripten_get_heap_size() / 1048576.0, WebCore::commonVM().heap.size() / 1048576.0,
                 g_perf.runloop, g_perf.renderUpdate, g_perf.layout, g_perf.paint,
                 g_perf.present, pushOther, g_perf.persist,
                 g_perf.pumpCycle, g_perf.pumpMax, g_perf.pumps,
+                g_perf.wheelMs, g_perf.wheels, g_perf.queueMax,
+                g_perf.blitMs, g_perf.blitMoveMs, g_perf.blitWriteMs,
+                g_perf.blits, g_perf.blitFallbacks, g_perf.blitRows,
                 g_perf.painted ? (g_perf.layout + g_perf.paint + g_perf.present) / g_perf.painted : 0.0);
             g_perf = PerfAccum { };
             g_perf.windowStart = _perfT4;
@@ -1742,16 +1789,25 @@ static void bibRunMouseButton(void* p)
 
 struct BibWheelTask { double x; double y; double dx; double dy; int mods; };
 static void bibRunWheel(void*);
+// Wheel tasks in flight (enqueued, not yet run). There is NO backpressure on
+// this queue: the host posts one coalesced wheel per rAF whatever the engine
+// is doing, so a saturated engine thread just falls further behind. perflog
+// reports the high-water mark.
+static std::atomic<int> g_wheelQueued { 0 };
 EMSCRIPTEN_KEEPALIVE void bib_wheel(double deviceX, double deviceY, double deltaX, double deltaY, int modifierBits)
 {
     if (!bibOnEngineThread()) {
         auto* task = new BibWheelTask { deviceX, deviceY, deltaX, deltaY, modifierBits };
-        if (!bibProxyToEngine(bibRunWheel, task))
+        g_wheelQueued.fetch_add(1, std::memory_order_relaxed);
+        if (!bibProxyToEngine(bibRunWheel, task)) {
+            g_wheelQueued.fetch_sub(1, std::memory_order_relaxed);
             delete task;
+        }
         return;
     }
     if (!g_engine)
         return;
+    const double _wheelT0 = g_perfLog ? bibNowMs() : 0;
     auto modifiers = modifiersFromBits(modifierBits);
     // Deltas are already LOGICAL px (DOM wheel deltas are CSS px, which is
     // the same space) — only the position needs unscaling. DOM wheel deltas
@@ -1766,9 +1822,16 @@ EMSCRIPTEN_KEEPALIVE void bib_wheel(double deviceX, double deviceY, double delta
         modifiers.contains(WebCore::PlatformEvent::Modifier::MetaKey));
     g_engine->mainFrame->eventHandler().handleWheelEvent(event,
         { WebCore::WheelEventProcessingSteps::SynchronousScrolling, WebCore::WheelEventProcessingSteps::BlockingDOMEventDispatch });
+    if (g_perfLog) {
+        g_perf.wheelMs += bibNowMs() - _wheelT0;
+        g_perf.wheels++;
+    }
 }
 static void bibRunWheel(void* p)
 {
+    const int depth = g_wheelQueued.fetch_sub(1, std::memory_order_relaxed);
+    if (g_perfLog && depth > g_perf.queueMax)
+        g_perf.queueMax = depth;
     auto* t = static_cast<BibWheelTask*>(p);
     bib_wheel(t->x, t->y, t->dx, t->dy, t->mods);
     delete t;

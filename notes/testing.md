@@ -27,6 +27,9 @@ Fixture pages are assertion-friendly by construction:
   into a field that repaints a checksum color. Lets input tests assert via pixels alone.
 - `app.bstest` — small JS SPA: DOM manipulation, fetch to same/cross fixture origin, setTimeout,
   history.pushState, a redirect chain, Set-Cookie + cookie echo page.
+- `scroll.bstest` — 4000 x 120 px text sections, each with a colour-coded left border encoding
+  its index, so `__bs.probe(4, 4)` decodes the engine's scroll offset (perf probes;
+  notes/perf-measurement.md).
 - `hostile.bstest` — tries everything it shouldn't: fetch to `localhost`/RFC1918/bad ports,
   `file:` links, window.open spam, oversized responses. Exists so guard tests are one navigation.
 

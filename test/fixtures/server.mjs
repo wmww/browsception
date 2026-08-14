@@ -157,6 +157,7 @@ function handle(req, res, scheme) {
     'input.bstest': 'input.html',
     'app.bstest': 'app.html',
     'hostile.bstest': 'hostile.html',
+    'scroll.bstest': 'scroll.html',
   }[host];
   try {
     if (path === '/' && fixture) return send(res, 200, page(fixture));

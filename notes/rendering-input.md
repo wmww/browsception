@@ -79,10 +79,23 @@ boot-size, grow, shrink, and post-resize input.
   skips invisible fixed layers in scrollContentsFastPath (NotCompositedForNoVisibleContent), so
   an opacity:0 100vw/100vh fixed overlay doesn't force slow scrolling. Probes:
   `tools/perf-scroll-probe.mjs` (BIBPERF/BIBSCROLL via `?perflog=1`),
-  `tools/scroll-roundtrip.mjs` (pixel-exactness). loginasroot.net @1600x860: 2-5ms strip
-  repaints / ~12% busy at any dpr (was ~100ms/98% at dpr≠1). Shadow-heavy full paints remain ~3x
-  a text page (~100ms vs ~30ms per 1.4Mpx) — matters for load/resize/settle only; Skia blur
-  caching is the lead if it ever hurts.
+  `tools/scroll-speed-probe.mjs` (speed / framebuffer / event-rate sweeps),
+  `tools/scroll-roundtrip.mjs` (pixel-exactness); see notes/perf-measurement.md.
+  loginasroot.net @1600x860: 2-5ms strip repaints / ~12% busy at any dpr (was ~100ms/98% at dpr≠1).
+  Shadow-heavy full paints remain ~3x a text page (~100ms vs ~30ms per 1.4Mpx) — matters for
+  load/resize/settle only; Skia blur caching is the lead if it ever hurts.
+- **Input below the viewer boundary is applied one event at a time, so the engine renders scroll
+  positions it already knows are stale** (2026-08-13). `bib_wheel` posts one proxied task per event
+  with no collapse (unlike `bib_tick`'s `g_tickQueued`) and no backpressure, so with events queued
+  behind a paint the engine shifts the framebuffer through every intermediate position — measured
+  ~4 full-framebuffer shifts per presented frame, 3 discarded by construction. The rule: positional
+  input (wheel, mouse move, resize) must collapse to the latest known value before rendering; only
+  discrete input (keys, clicks) replays one by one. `bib_mouse_move` has the same shape and is
+  saved only by being cheap.
+- What makes that visible rather than merely wasteful: `bibScrollBlit` costs ~15 ms per event at
+  5.6 Mpx, ~90% of it `SkCanvas::writePixels` mirroring the shift onto the SkSurface — a per-pixel
+  unpremul→premul conversion of nearly the whole framebuffer, not a memcpy. The 08-11 numbers above
+  only ever timed the paint. Write-up + fix: issues/engine-renders-stale-input-state.md.
 - **Keyboard**: `keydown/keyup` with code/key/modifiers forwarded; prevent default for keys the
   page consumes, but pass through browser-level combos (Cmd/Ctrl+L jumps to our fake URL bar;
   Cmd/Ctrl+T/W, Alt+←/→, F5 etc. left to the real browser). Maintain a small routing table.

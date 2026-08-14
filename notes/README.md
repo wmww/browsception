@@ -28,6 +28,7 @@ surface for speed (no WebGPU for the nested engine, no nested-wasm-runs-natively
 | [bridge-probe.md](bridge-probe.md) | Spike 0.2 results: verified platform behaviors the bridge rests on + redirect/cookie design decisions |
 | [engine-build.md](engine-build.md) | Reproducible engine build (pins, fixes, sizes, divergences, build traps); incremental-iteration recipe |
 | [engine-internals.md](engine-internals.md) | Hard limits of the wasm engine, WebKit-internals gotchas that re-bite on rebases, perf constraints |
+| [perf-measurement.md](perf-measurement.md) | How to get trustworthy engine perf numbers: BIBPERF counters, pixel-encoded page state, exact input rates, and the traps that faked results |
 | [rendering-input.md](rendering-input.md) | Blit paths, input forwarding, IME, find-in-page, clipboard, audio, popups |
 | [security.md](security.md) | Threat model, trust boundaries, what we must enforce ourselves |
 | [testing.md](testing.md) | Automated test tiers (unit/bridge/full-integration), fixture+oracle design, agent iteration loop |

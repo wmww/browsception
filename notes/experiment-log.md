@@ -180,3 +180,38 @@ dpr 1/1.25/1.5/2; scroll-roundtrip byte-identical at 1.5/1.25 (settle path;
 dpr 1/2 leave the pre-existing header text-AA specks); post pages fine
 (opacity:0 fixed overlay skipped via NotCompositedForNoVisibleContent).
 Tier 0-1: 28/28, tier 2: 13/13.
+
+## 2026-08-13 — Fast-scroll collapse: the engine renders stale scroll positions (user report)
+
+User: "scroll is smoothish until I start scrolling faster, then it really slows down… it should not
+drop to ~1fps". Reproduced and attributed with new instrumentation
+(`experiments/scroll-speed-probe.mjs` + `scroll.bstest` fixture + BIBPERF wheel/blit counters).
+
+Cause (design, not cost): `bib_wheel` applies one queued event at a time with no collapse and no
+backpressure, so with events queued behind a paint the engine walks the framebuffer through every
+intermediate scroll position — ~4 full-framebuffer shifts per presented frame, 3 of them computed
+from input already known to be superseded. What makes that visible: `bibScrollBlit` does
+O(framebuffer) work per event, and ~90% of it is
+`SkCanvas::writePixels` mirroring the shift onto the SkSurface — an unpremul→premul per-pixel
+conversion of nearly the whole framebuffer (9x the cost of the identical-size memmove into
+`g_blitPixels`). The viewer's own per-rAF coalescing is verified working; nothing coalesces below
+that boundary. At 60 events/s × ~15 ms (5.6 Mpx) that's ~900 ms/s of blitting whatever the frame
+rate, and HiDPI multiplies the per-event constant by 4.
+
+Numbers (fixture, plain text page, dpr 1, no sampler): 1600x860 holds ~59 fps to 14400 px/s but
+already burns 190-210 ms/s in the blit vs 104-173 ms/s painting; 3200x1760 gives **15 fps at 900
+px/s** with 749 ms/s in the blit vs 79 ms/s painting. Decisive control at 3600 px/s / 5.6 Mpx:
+56 wheel events/s → 96% busy, 9 events/s (same distance) → **28% busy**. Real site
+(en.wikipedia.org/wiki/Web_browser @1600x860, 3600 px/s): 10 fps at 96% busy.
+
+Also found: BIBPERF's `busy%` excluded every proxied input task (all of `bib_wheel`), so a
+scroll-saturated thread reported ~50% idle — now folded in. Measurement traps that faked earlier
+results are in notes/perf-measurement.md (readback sampling was 70% of the signal; inherited input
+backlog swung runs 2-8x; wheel at a canvas corner scrolled Wikipedia's sticky sidebar instead;
+`Emulation.setDeviceMetricsOverride` left the framebuffer size unchanged so the dpr sweep measured
+nothing).
+
+Filed issues/engine-renders-stale-input-state.md. Fix: collapse pending positional input (wheel,
+mouse move) to the latest known state before rendering — discrete input (keys, clicks) still
+replays one by one. Secondary: shift the surface in place via `peekPixels` instead of
+`writePixels`, or wrap the surface over `g_blitPixels` and drop the second mirror. Not fixed here.

@@ -84,18 +84,47 @@ boot-size, grow, shrink, and post-resize input.
   loginasroot.net @1600x860: 2-5ms strip repaints / ~12% busy at any dpr (was ~100ms/98% at dpr≠1).
   Shadow-heavy full paints remain ~3x a text page (~100ms vs ~30ms per 1.4Mpx) — matters for
   load/resize/settle only; Skia blur caching is the lead if it ever hurts.
-- **Input below the viewer boundary is applied one event at a time, so the engine renders scroll
-  positions it already knows are stale** (2026-08-13). `bib_wheel` posts one proxied task per event
-  with no collapse (unlike `bib_tick`'s `g_tickQueued`) and no backpressure, so with events queued
-  behind a paint the engine shifts the framebuffer through every intermediate position — measured
-  ~4 full-framebuffer shifts per presented frame, 3 discarded by construction. The rule: positional
-  input (wheel, mouse move, resize) must collapse to the latest known value before rendering; only
-  discrete input (keys, clicks) replays one by one. `bib_mouse_move` has the same shape and is
-  saved only by being cheap.
-- What makes that visible rather than merely wasteful: `bibScrollBlit` costs ~15 ms per event at
-  5.6 Mpx, ~90% of it `SkCanvas::writePixels` mirroring the shift onto the SkSurface — a per-pixel
-  unpremul→premul conversion of nearly the whole framebuffer, not a memcpy. The 08-11 numbers above
-  only ever timed the paint. Write-up + fix: issues/engine-renders-stale-input-state.md.
+- **Positional input collapses below the viewer boundary too** (2026-08-14). *Never apply — and so
+  never render — a state the pending input already supersedes.* `bib_wheel`/`bib_mouse_move` no
+  longer post one proxied task per event: while a task is still queued its argument pack stays
+  **open** and later events merge into it (wheel sums deltas, move keeps the latest position).
+  Discrete input (keys, buttons) is never merged — each one means something on its own.
+  - The merge window is "queued and nothing posted behind it": `bibProxyToEngine` **seals** the
+    open batches whenever any other task is posted (the one place every cross-thread task goes
+    through), so order is preserved against every other proxied task — a wheel arriving after a
+    click can't be merged into a batch that runs before it. The viewer does the host half of the
+    same rule (`flushPendingWheel()` before a mousedown).
+  - **Collapse is proportional to how far behind the engine is**, for free: keeping up, the rAF
+    tick posted between two wheels seals the first, so each event is still delivered on its own
+    and the guest sees exactly what it saw before; saturated, `g_tickQueued` collapses ticks too,
+    a frame's worth of wheels arrive as one event, and the blit is bounded at ~1 per painted
+    frame. That is also the backpressure: batch backlog went 74 → 2 (below).
+  - A batch breaks on anything that changes the meaning of the sum: modifier change (ctrl+wheel is
+    zoom), direction reversal on either axis, dominant-axis change, or a guest handler that
+    `preventDefault()`s wheels (`EventHandling::DefaultPrevented` from `handleWheelEvent` latches
+    `g_wheelConsumed`, one event stale — the best a non-blocking answer can be). Dominance rather
+    than an exact axis signature: trackpads put cross-axis noise on nearly every event.
+  - Guest-visible semantics change under load only (fewer wheel events, larger deltas — what
+    Chrome does with its rAF-aligned wheel batches). ABI documents it; tier-2 scenario 19 guards
+    both invariants (distance conserved, nothing merged past a click).
+- The other half of the same finding: `bibScrollBlit` mirrored its shift onto the SkSurface with
+  `SkCanvas::writePixels` **from `g_blitPixels`**, which is `kUnpremul` where the surface is
+  `kPremul` — a per-pixel alpha conversion of nearly the whole framebuffer, ~9x the memmove it was
+  mirroring (13 ms vs 1.4 ms at 5.6 Mpx) and the reason one blit ever cost 15 ms. The hook is
+  raster-only, so it now shifts the **surface's own pixels** with the identical row walk
+  (`notifyContentWillChange` + `peekPixels`; the notify is the copy-on-write handshake that
+  writing through `peekPixels` would otherwise skip). Same bytes, no format in play.
+- Still on the table (not needed after the above, but it removes the mirror rather than cheapening
+  it): wrap the SkSurface over `g_blitPixels` (`SkSurfaces::WrapPixels`) so paint and host upload
+  share one buffer — that drops both the blit's second walk and the per-paint `readPixels`
+  unpremultiply. Blocked on the premul/unpremul split: the host presenter wants unpremultiplied
+  RGBA and WebCore paints premultiplied.
+- Measured (fixture, plain text, dpr 1, `tools/scroll-speed-probe.mjs`, before → after, same
+  session): **5.6 Mpx** at 3600 px/s: 2 → 18 fps, wheel 968 → 111 ms/s, blit 913 → 90 ms/s, queue
+  74 → 2, and the tail — how long the page keeps scrolling after input stops — 1.7 s → 0.16 s. At
+  14400 px/s: 0.5 → 12 fps, tail 4.5 s → 0.3 s. **1.4 Mpx** was never backlogged, so it shows the
+  cost, not the frame rate: at 3600 px/s busy 49% → 32%, blit 209 → 42 ms/s, fps ~59 either way.
+  Scroll distance is conserved exactly (probe `efficiency` 1.0) in both.
 - **Keyboard**: `keydown/keyup` with code/key/modifiers forwarded; prevent default for keys the
   page consumes, but pass through browser-level combos (Cmd/Ctrl+L jumps to our fake URL bar;
   Cmd/Ctrl+T/W, Alt+←/→, F5 etc. left to the real browser). Maintain a small routing table.

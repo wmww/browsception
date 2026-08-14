@@ -2,7 +2,7 @@
 
 How to get trustworthy numbers out of the nested engine, and the traps that produced *untrustworthy*
 ones. Written up from the 2026-08-13 scroll investigation, which turned out to be an input-handling
-design defect rather than a perf problem (issues/engine-renders-stale-input-state.md).
+design defect rather than a perf problem (fixed 2026-08-14; rendering-input.md § scrolling).
 
 ## BIBPERF (`?perflog=1`)
 
@@ -16,12 +16,14 @@ body, so it used to be invisible: a thread saturated by wheel handling reported 
 is now folded into busy%; **any new proxied entry point needs the same treatment or busy% lies.**
 
 Counters added 2026-08-13 (all `g_perfLog`-gated, engine-thread-only, no atomics):
-- `wheel=<ms>(n<count> q<maxdepth>)` — time inside `handleWheelEvent`, event count, and the
-  high-water depth of the **wheel task queue**. `q` is the backlog gauge: there is no backpressure
-  on proxied input, so a saturated engine shows q climbing into the tens.
+- `wheel=<ms>(n<applied> ev<hostevents> q<maxdepth>)` — time inside `handleWheelEvent`, events
+  actually applied, host events they carry (`ev > n` = batches merged), and the high-water depth
+  of the **wheel batch queue**. `q` is the backlog gauge: it hit 74 when every event got its own
+  task, and sits at 1-3 now that merging supplies the backpressure.
 - `blit=<ms>(mv<ms> wr<ms> n<count> fb<fallbacks> rows<devrows>)` — `bibScrollBlit` split into its
-  two mirrors (`g_blitPixels` memmove vs `SkCanvas::writePixels` onto the surface), plus how often
-  it bailed to a plain repaint. The mv/wr split is what identified the premultiply conversion.
+  two mirrors (`g_blitPixels` row walk vs the surface's), plus how often it bailed to a plain
+  repaint. The mv/wr split is what identified the premultiply conversion when `wr` was a
+  `writePixels`; the two are within ~1.5x of each other now that both are memmoves.
 
 Pattern worth reusing: **time the two halves of anything that copies the framebuffer twice.** A
 single combined number hides which mirror is expensive, and here they differed by 9x.

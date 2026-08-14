@@ -279,3 +279,47 @@ Trap found while wiring the stack hook: Emscripten proxies the page Module's `on
 pthread worker, but only into a slot that is empty or `.proxy`-marked — a plain assignment in
 pre-js swallowed the crash notification outright (crashed-UI never appeared, tier-2 scenario 12
 caught it). The hook is an accessor that captures the stub and chains it.
+
+## 2026-08-14 — Fix: collapse positional input; shift the surface in place
+
+**Hypothesis** (from the 08-13 write-up): the scroll defect is *rendering superseded states*, not
+slow scrolling. Merging queued positional input should raise the frame rate without touching the
+paint path, and shifting the SkSurface's own pixels should remove the unpremul→premul conversion
+that made each blit expensive.
+
+**Changes** (engine `src/embedder/main.cpp`): wheel/mouse-move argument packs stay *open* for
+merging while their proxied task is queued; `bibProxyToEngine` seals them when any other task is
+posted (order preserved, discrete input never merged). Batch breaks on modifier change, direction
+reversal, dominant-axis change, or a guest `preventDefault()` (`EventHandling::DefaultPrevented`).
+`bibScrollBlit` mirrors its row walk onto the surface via `notifyContentWillChange` +
+`peekPixels` instead of `SkCanvas::writePixels`.
+
+**A/B** — same session, staging the pre-change artifact and the new one alternately
+(`tools/scroll-speed-probe.mjs`, `scroll.bstest`, dpr 1). Note the 5.6 Mpx rows are *sampled*
+runs (the sampler costs a full-frame readback per sample — it perturbs both sides equally and is
+what exposes the backlog):
+
+| fb | px/frame | fps before → after | busy | wheel ms/s | blit ms/s (mv/wr) | queue max | tail ms |
+|---|---|---|---|---|---|---|---|
+| 3200x1760 | 60 | **2.0 → 18.1** | 96 → 56% | 968 → 111 | 913 → 90 (97/816 → 38/52) | 74 → 2 | 1684 → 160 |
+| 3200x1760 | 240 | **0.5 → 12.0** | 80 → 86% | 984 → 71 | 905 → 53 (234/669 → 25/28) | 47 → 3 | 4538 → 296 |
+| 1600x860 | 60 | 58.6 → 57.2 (60 cap) | 49 → 32% | 274 → 106 | 209 → 42 (18/190 → 22/19) | 2 → 1 | — |
+| 1600x860 | 240 | 57.2 → 57.7 | 75 → 69% | 232 → 112 | 176 → 49 (21/155 → 19/29) | 2 → 2 | — |
+| 1600x860 | 960 | 39 → 34 | 99 → 99% | 46 → 34 | all fallbacks (full repaints) | 3 → 2 | — |
+
+`efficiency` (scrolled px / dispatched px) stays **1.0** on both sides: merging loses no distance.
+The 960 px/frame row is paint-bound — every delta exceeds the viewport, so the blit never runs and
+the fix has nothing to do there (the 39 vs 34 spread is run-to-run noise; a repeat of the same
+pair gave 33.6/33.7 new vs 39.2/28.0 old). 1.4 Mpx never backlogged, so it shows the *cost*
+falling, not the frame rate rising — and the second old-engine run of each pair degraded (45 fps
+at 85% busy, 26 fps at 91%) where the new engine repeated within 0.5 fps, which is the headroom
+showing up as stability.
+
+**Care needed**: a neighbouring worktree built + staged its own artifact mid-run, and the first A/B
+round silently measured *its* engine (identical numbers to the old one, since it lacked this
+change). Stage by explicit `--from <stamp>` and check `src/engine/.staged-meta.json` when another
+agent may be building.
+
+**Also**: tier-2 scenario 19 (wheel burst → click) guards the two invariants no perf number covers
+— distance conserved, and nothing merged past a discrete event. `bib_abi.h` documents the
+coalescing as guest-visible.

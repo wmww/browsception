@@ -6,7 +6,9 @@
 //
 // Scenarios here: 7 render, 8 execute, 9 input, 10 navigation chrome, 11
 // invariants, 12 crash/recovery, 13 startup budget, 14 resize, 15 guest
-// WebSocket, 16 engine-side load failure, 17 view transitions absent.
+// WebSocket, 16 engine-side load failure, 17 view transitions absent, 19
+// positional-input coalescing (18 HiDPI has its own file — dpr is a
+// browser-launch property).
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -34,7 +36,7 @@ const BOOT_TIMEOUT = 120000;
 // Suite posture: dev-style blacklist covering every fixture domain, so a
 // sandboxed viewer's domain always HAS sandbox disposition — required since
 // 2.4's boundary policy natives nested navigations to unlisted domains.
-const FIXTURE_BLACKLIST = ['grid.bstest', 'input.bstest', 'app.bstest', 'other.bstest', 'hostile.bstest'];
+const FIXTURE_BLACKLIST = ['grid.bstest', 'input.bstest', 'app.bstest', 'other.bstest', 'hostile.bstest', 'scroll.bstest'];
 
 async function configure(patch, ready) {
   const cfg = await session.context.newPage();
@@ -268,6 +270,38 @@ test('input: input.bstest full battery through the viewer canvas', { timeout: 30
   await until(page, 100, 350, is([209, 209, 209]), 60000, 'type checksum');
   await page.mouse.click(...at(320, 350)); // #nav link
   await until(page, 400, 300, is([102, 51, 153]), 120000, 'link navigation');
+  await page.close();
+});
+
+// --- Scenario 18: positional-input coalescing ------------------------------
+// The engine merges wheel events it has queued but not applied yet, instead
+// of walking the framebuffer through positions it already knows are stale
+// (notes/rendering-input.md § scrolling). Two properties have to survive the
+// merge, and neither is visible in a perf number:
+//   - nothing is lost: the page ends up where the summed deltas put it;
+//   - nothing crosses a discrete event: the click sees the WHOLE burst,
+//     because posting it sealed the batch (engine side) and flushed the
+//     pending wheel (viewer side).
+// Sent with no settling waits, so a broken seal shows up as a click that
+// hit-tested a half-scrolled page.
+test('input coalescing: a wheel burst keeps its distance and lands before a click', { timeout: 300000 }, async () => {
+  const page = await bootViewer('https://scroll.bstest/');
+  const box = await (await page.$('#screen')).boundingBox();
+  // scroll.bstest paints every 120px section a left border encoding its
+  // index (r = idx & 255, g = idx >> 8), so x=4 reads back the scroll offset.
+  await until(page, 4, 4, is([0, 0, 128]), 120000, 'scroll fixture at top');
+  await page.evaluate(() =>
+    __bs.eval("window.__click = null; addEventListener('click', (e) => { window.__click = scrollY + ',' + e.clientY; })"),
+  );
+
+  const N = 20, PER = 300, TOTAL = N * PER; // 6000px = section 50
+  await page.mouse.move(box.x + 400, box.y + 300);
+  for (let i = 0; i < N; i++) await page.mouse.wheel(0, PER);
+  await page.mouse.click(box.x + 400, box.y + 300);
+
+  await evalProbe(page, 'window.__click', new RegExp(`^${TOTAL},`), 20);
+  await evalProbe(page, 'scrollY', new RegExp(`^${TOTAL}\\b`), 20); // console adds a " (:1)" suffix
+  await until(page, 4, 4, is([TOTAL / 120, 0, 128]), 60000, 'frame shows the summed offset');
   await page.close();
 });
 

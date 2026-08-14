@@ -64,6 +64,7 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSFunction.h>
 #include <atomic>
+#include <cmath>
 #include <emscripten.h>
 #include <emscripten/heap.h> // emscripten_get_heap_size(): total wasm linear memory (4GB ceiling gauge)
 #ifdef __EMSCRIPTEN_PTHREADS__
@@ -93,6 +94,7 @@ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 
 #include <cstdio>
 #include <cstdlib>
+#include <mutex>
 #include <utility> // std::exchange
 
 namespace BIB {
@@ -325,20 +327,20 @@ struct PerfAccum {
     double pumpCycle = 0;    // sum of bib_pump RunLoop::cycle ms
     double pumpMax = 0;      // largest single bib_pump cycle ms (the decider)
     int pumps = 0;           // bib_pump cycles this window
-    // Scroll-path probe (2026-08-13, issues/engine-renders-stale-input-state.md):
+    // Scroll-path probe (2026-08-13, notes/perf-measurement.md § BIBPERF):
     // wheel handling runs as a PROXIED TASK, i.e. OUTSIDE bib_tick, so none of
     // it showed up in busy% before. wheelMs = engine-thread time inside
     // handleWheelEvent (WebCore scroll machinery + bibScrollBlit); blitMs =
     // bibScrollBlit, split into its two mirrors (blitMoveMs = the g_blitPixels
-    // memmove, blitWriteMs = the writePixels alpha-converting copy onto the
-    // surface — they differ by ~9x, which is the whole finding); blitRows =
-    // device rows shifted, per mirror; queueMax = deepest wheel backlog seen
-    // (no backpressure exists, so this is how far behind the engine ran).
+    // memmove, blitWriteMs = the surface mirror); blitRows = device rows
+    // shifted, per mirror; queueMax = deepest wheel-batch backlog seen (~1-2
+    // now that batches merge; it was the pre-2026-08-14 pile-up gauge).
     double wheelMs = 0;
     int wheels = 0;
+    int wheelEvents = 0;     // host wheel events those applied events carry (>= wheels once merging bites)
     double blitMs = 0;
     double blitMoveMs = 0;   // g_blitPixels row-walk memmove
-    double blitWriteMs = 0;  // SkCanvas::writePixels mirror onto the surface
+    double blitWriteMs = 0;  // the surface's own in-place row walk (mirror of the above)
     int blits = 0;
     double blitRows = 0;
     int blitFallbacks = 0;
@@ -589,35 +591,50 @@ static void bibScrollBlitImpl(const WebCore::IntSize& delta, const WebCore::IntR
             BIB::addDamage(pending[i]); // re-merges + re-arms g_frameDirty
     }
 
-    // Overlap-safe row walk over g_blitPixels (memmove handles x overlap).
-    // devDst/devSrc/ndx/ndy: everything here is DEVICE px.
+    // Overlap-safe row walk (memmove handles x overlap), done once per
+    // mirror. devDst/devSrc/ndx/ndy: everything here is DEVICE px.
     const size_t rowBytes = static_cast<size_t>(devDst.width()) * 4;
+    auto shiftRows = [&](uint8_t* base, size_t stride) {
+        if (ndy > 0) {
+            for (int y = devDst.height() - 1; y >= 0; --y)
+                memmove(base + (devDst.y() + y) * stride + static_cast<size_t>(devDst.x()) * 4,
+                    base + (devSrc.y() + y) * stride + static_cast<size_t>(devSrc.x()) * 4, rowBytes);
+        } else {
+            for (int y = 0; y < devDst.height(); ++y)
+                memmove(base + (devDst.y() + y) * stride + static_cast<size_t>(devDst.x()) * 4,
+                    base + (devSrc.y() + y) * stride + static_cast<size_t>(devSrc.x()) * 4, rowBytes);
+        }
+    };
     const double _moveT0 = g_perfLog ? bibNowMs() : 0;
     if (g_perfLog)
-        g_perf.blitRows += devDst.height(); // x2: buffer walk + surface writePixels
-    if (ndy > 0) {
-        for (int y = devDst.height() - 1; y >= 0; --y)
-            memmove(g_blitPixels + ((static_cast<size_t>(devDst.y() + y)) * g_fbWidth + devDst.x()) * 4,
-                g_blitPixels + ((static_cast<size_t>(devSrc.y() + y)) * g_fbWidth + devSrc.x()) * 4, rowBytes);
-    } else {
-        for (int y = 0; y < devDst.height(); ++y)
-            memmove(g_blitPixels + ((static_cast<size_t>(devDst.y() + y)) * g_fbWidth + devDst.x()) * 4,
-                g_blitPixels + ((static_cast<size_t>(devSrc.y() + y)) * g_fbWidth + devSrc.x()) * 4, rowBytes);
-    }
-    // Mirror the shift onto the surface — via the CANVAS writePixels, which
-    // (unlike SkSurface::writePixels) reports failure. On failure the two
-    // mirrors have DIVERGED (buffer shifted, surface not) — full-frame
-    // damage repaints and re-reads everything, resyncing both; never leave
-    // it silent (Codex confirmed finding, 2026-06-11).
+        g_perf.blitRows += devDst.height(); // x2: buffer walk + surface walk
+    shiftRows(g_blitPixels, static_cast<size_t>(g_fbWidth) * 4);
+
+    // Mirror the shift onto the surface, IN ITS OWN PIXELS. This hook is
+    // raster-only (GPU mode installs no scroll blit), so the surface's bytes
+    // are right there and the identical row walk moves them — no format in
+    // play, so no conversion. It used to go through the canvas writePixels
+    // from g_blitPixels, which is unpremultiplied where the surface is
+    // premultiplied: a per-pixel alpha conversion of nearly the whole
+    // framebuffer, ~9x the cost of the memmove it was mirroring (13 ms vs
+    // 1.4 ms at 5.6 Mpx) and the reason a scroll blit ever cost 15 ms.
+    // notifyContentWillChange first — writing through peekPixels bypasses
+    // Skia's copy-on-write handshake, so the surface has to be told.
     const double _writeT0 = g_perfLog ? bibNowMs() : 0;
     if (g_perfLog)
         g_perf.blitMoveMs += _writeT0 - _moveT0;
-    auto info = SkImageInfo::Make(devDst.width(), devDst.height(), kRGBA_8888_SkColorType, kUnpremul_SkAlphaType);
-    if (!g_engine->surface->getCanvas()->writePixels(info, g_blitPixels + (static_cast<size_t>(devDst.y()) * g_fbWidth + devDst.x()) * 4, g_fbWidth * 4, devDst.x(), devDst.y())) {
+    SkPixmap surfacePixels;
+    g_engine->surface->notifyContentWillChange(SkSurface::kRetain_ContentChangeMode);
+    if (!g_engine->surface->peekPixels(&surfacePixels) || surfacePixels.info().bytesPerPixel() != 4) {
+        // No direct pixel access (can't happen for a raster surface). The
+        // mirrors have DIVERGED here — buffer shifted, surface not — so
+        // repaint and re-read the whole frame to resync them rather than
+        // failing silently (Codex confirmed finding, 2026-06-11).
         g_scrollResidX = g_scrollResidY = 0.0;
         BIB::addDamage(bibLogicalFrameRect());
         return;
     }
+    shiftRows(static_cast<uint8_t*>(surfacePixels.writable_addr()), surfacePixels.rowBytes());
 
     if (g_perfLog)
         g_perf.blitWriteMs += bibNowMs() - _writeT0;
@@ -692,11 +709,22 @@ static bool bibOnEngineThread()
 // every caller IS the engine thread (bibOnEngineThread() true — emscripten
 // stubs pthread_self/pthread_equal) and this path is unreachable; before
 // main() it returns false, matching the pthread build's pre-ready drop.
+//
+// Positional-input coalescing (§ Input forwarding): a queued wheel/mouse-move
+// task stays OPEN for merging until something else is posted behind it.
+// Sealing here — the one place every cross-thread task goes through — is what
+// keeps order: an event that arrives after a click, a key, or a tick can never
+// be merged into a batch that runs before them.
+static void bibRunWheel(void*);
+static void bibRunMouseMove(void*);
+static void bibSealPendingInput(void (*posted)(void*));
+
 static bool bibProxyToEngine(void (*task)(void*), void* arg)
 {
 #ifdef __EMSCRIPTEN_PTHREADS__
     if (!g_engineThreadReady.load(std::memory_order_acquire))
         return false;
+    bibSealPendingInput(task);
     return emscripten_proxy_async(emscripten_proxy_get_system_queue(), g_engineThread, task, arg);
 #else
     (void)task;
@@ -1050,14 +1078,14 @@ EMSCRIPTEN_KEEPALIVE void bib_tick()
             WTFLogAlways("BIBPERF/s ticks=%d painted=%d elapsed=%.0fms busy=%.0f%% heap=%.0fMB jsc=%.0fMB | "
                 "runloop(JS)=%.0f renderUpd=%.0f layout=%.0f paint=%.0f present=%.0f pushOther=%.0f persist=%.0f ms | "
                 "pump=%.0f(max%.0f n%d) | "
-                "wheel=%.0f(n%d q%d) blit=%.0f(mv%.0f wr%.0f n%d fb%d rows%.0f) | "
+                "wheel=%.0f(n%d ev%d q%d) blit=%.0f(mv%.0f wr%.0f n%d fb%d rows%.0f) | "
                 "avgPaintedFrame=%.1fms",
                 g_perf.ticks, g_perf.painted, elapsed, 100.0 * busy / elapsed,
                 emscripten_get_heap_size() / 1048576.0, WebCore::commonVM().heap.size() / 1048576.0,
                 g_perf.runloop, g_perf.renderUpdate, g_perf.layout, g_perf.paint,
                 g_perf.present, pushOther, g_perf.persist,
                 g_perf.pumpCycle, g_perf.pumpMax, g_perf.pumps,
-                g_perf.wheelMs, g_perf.wheels, g_perf.queueMax,
+                g_perf.wheelMs, g_perf.wheels, g_perf.wheelEvents, g_perf.queueMax,
                 g_perf.blitMs, g_perf.blitMoveMs, g_perf.blitWriteMs,
                 g_perf.blits, g_perf.blitFallbacks, g_perf.blitRows,
                 g_perf.painted ? (g_perf.layout + g_perf.paint + g_perf.present) / g_perf.painted : 0.0);
@@ -1725,15 +1753,70 @@ extern "C" EMSCRIPTEN_KEEPALIVE void bib_gpu_test_lose_restore()
 // --- Input forwarding (canvas events -> WebCore EventHandler) ---
 // W-B1: each entry self-proxies with a heap-copied argument pack; events
 // run on the engine thread in arrival order (single FIFO proxy queue).
+//
+// POSITIONAL input (wheel, mouse move) additionally COALESCES into the task
+// already queued for it: never apply — and so never render — a state the
+// pending input already supersedes. A wheel batch sums its deltas, a move
+// batch keeps the latest position; DISCRETE input (buttons, keys) is never
+// merged, because each one means something on its own.
+//
+// The merge window is exactly "while this task is still queued and nothing
+// else has been posted behind it" (bibSealPendingInput, called from
+// bibProxyToEngine). Two consequences worth knowing:
+//   - Order is preserved against every other proxied task, input or not.
+//   - Collapse is proportional to how far behind the engine is. Keeping up,
+//     each host event still gets its own task (the rAF tick posted between
+//     them sealed the batch) and the guest sees exactly what it saw before;
+//     saturated, ticks collapse too and a frame's worth of wheels arrive as
+//     one event, which is what bounds the blit to ~1 per painted frame.
+// Batch state is host-thread-written, engine-thread-read: g_inputMutex covers
+// both, and the open pointer is published BEFORE the task is posted so the
+// drain (which clears it under the lock) can never race a merge into memory
+// it is about to free.
+static std::mutex g_inputMutex;
 
 struct BibMouseMoveTask { double x; double y; int mods; };
-static void bibRunMouseMove(void*);
+static BibMouseMoveTask* g_openMove; // g_inputMutex
+
+// events = host wheel events summed into this one (perf log only).
+struct BibWheelTask { double x; double y; double dx; double dy; int mods; int events; };
+static BibWheelTask* g_openWheel; // g_inputMutex
+
+// Close every batch except the one whose task is being posted right now
+// (that one is open precisely because its task is queued).
+static void bibSealPendingInput(void (*posted)(void*))
+{
+    std::lock_guard<std::mutex> lock(g_inputMutex);
+    if (posted != bibRunWheel)
+        g_openWheel = nullptr;
+    if (posted != bibRunMouseMove)
+        g_openMove = nullptr;
+}
+
 EMSCRIPTEN_KEEPALIVE void bib_mouse_move(double deviceX, double deviceY, int modifierBits)
 {
     if (!bibOnEngineThread()) {
+        {
+            std::lock_guard<std::mutex> lock(g_inputMutex);
+            if (g_openMove && g_openMove->mods == modifierBits) {
+                g_openMove->x = deviceX; // latest position wins
+                g_openMove->y = deviceY;
+                return;
+            }
+        }
         auto* task = new BibMouseMoveTask { deviceX, deviceY, modifierBits };
-        if (!bibProxyToEngine(bibRunMouseMove, task))
+        {
+            std::lock_guard<std::mutex> lock(g_inputMutex);
+            g_openMove = task;
+        }
+        if (!bibProxyToEngine(bibRunMouseMove, task)) {
+            {
+                std::lock_guard<std::mutex> lock(g_inputMutex);
+                if (g_openMove == task)
+                    g_openMove = nullptr;
+            }
             delete task; // pre-main: drop, matches !g_engine
+        }
         return;
     }
     if (!g_engine)
@@ -1747,8 +1830,15 @@ EMSCRIPTEN_KEEPALIVE void bib_mouse_move(double deviceX, double deviceY, int mod
 static void bibRunMouseMove(void* p)
 {
     auto* t = static_cast<BibMouseMoveTask*>(p);
-    bib_mouse_move(t->x, t->y, t->mods);
+    BibMouseMoveTask ev;
+    {
+        std::lock_guard<std::mutex> lock(g_inputMutex);
+        if (g_openMove == t)
+            g_openMove = nullptr; // closed: later moves start a new batch
+        ev = *t;
+    }
     delete t;
+    bib_mouse_move(ev.x, ev.y, ev.mods);
 }
 
 struct BibMouseButtonTask { int down; int jsButton; double x; double y; int clicks; int mods; };
@@ -1787,24 +1877,72 @@ static void bibRunMouseButton(void* p)
     delete t;
 }
 
-struct BibWheelTask { double x; double y; double dx; double dy; int mods; };
-static void bibRunWheel(void*);
-// Wheel tasks in flight (enqueued, not yet run). There is NO backpressure on
-// this queue: the host posts one coalesced wheel per rAF whatever the engine
-// is doing, so a saturated engine thread just falls further behind. perflog
-// reports the high-water mark.
+// Wheel batches in flight (enqueued, not yet run). Merging IS the
+// backpressure: a saturated engine sums a frame's events into the batch it
+// has not run yet instead of queueing them, so this stays at ~1-2 however
+// fast the user scrolls. perflog reports the high-water mark.
 static std::atomic<int> g_wheelQueued { 0 };
+// Set from the last applied wheel's EventHandling: a guest handler that
+// preventDefault()s wheels is doing something per-event with them (custom
+// scroller, carousel, zoom widget), so stop summing and let it see each one.
+// Engine writes, host reads — one event stale by construction, which is the
+// best any non-blocking answer can be.
+static std::atomic<bool> g_wheelConsumed { false };
+
+// May a (dx, dy, mods) event be summed into the still-open batch `open`?
+static bool bibWheelMergeable(const BibWheelTask& open, double dx, double dy, int mods)
+{
+    if (open.mods != mods) // ctrl+wheel is zoom, not scroll
+        return false;
+    if (g_wheelConsumed.load(std::memory_order_acquire))
+        return false;
+    if (open.dx * dx < 0 || open.dy * dy < 0)
+        return false; // direction reversal: a sum that cancels renders a state nobody asked for
+    // Dominant axis must agree — a vertical batch must not absorb a
+    // horizontal flick (WebCore latches a gesture to one scroller by its
+    // direction). Dominance, not an exact axis match: trackpads put a little
+    // cross-axis noise on nearly every event, and requiring the signature to
+    // match would mean never merging.
+    return (std::abs(open.dx) > std::abs(open.dy)) == (std::abs(dx) > std::abs(dy));
+}
+
+static void bibApplyWheel(double deviceX, double deviceY, double deltaX, double deltaY, int modifierBits, int events);
 EMSCRIPTEN_KEEPALIVE void bib_wheel(double deviceX, double deviceY, double deltaX, double deltaY, int modifierBits)
 {
     if (!bibOnEngineThread()) {
-        auto* task = new BibWheelTask { deviceX, deviceY, deltaX, deltaY, modifierBits };
+        {
+            std::lock_guard<std::mutex> lock(g_inputMutex);
+            if (g_openWheel && bibWheelMergeable(*g_openWheel, deltaX, deltaY, modifierBits)) {
+                g_openWheel->x = deviceX; // latest position wins
+                g_openWheel->y = deviceY;
+                g_openWheel->dx += deltaX;
+                g_openWheel->dy += deltaY;
+                g_openWheel->events++;
+                return;
+            }
+        }
+        auto* task = new BibWheelTask { deviceX, deviceY, deltaX, deltaY, modifierBits, 1 };
+        {
+            std::lock_guard<std::mutex> lock(g_inputMutex);
+            g_openWheel = task;
+        }
         g_wheelQueued.fetch_add(1, std::memory_order_relaxed);
         if (!bibProxyToEngine(bibRunWheel, task)) {
             g_wheelQueued.fetch_sub(1, std::memory_order_relaxed);
+            {
+                std::lock_guard<std::mutex> lock(g_inputMutex);
+                if (g_openWheel == task)
+                    g_openWheel = nullptr;
+            }
             delete task;
         }
         return;
     }
+    bibApplyWheel(deviceX, deviceY, deltaX, deltaY, modifierBits, 1);
+}
+
+static void bibApplyWheel(double deviceX, double deviceY, double deltaX, double deltaY, int modifierBits, int events)
+{
     if (!g_engine)
         return;
     const double _wheelT0 = g_perfLog ? bibNowMs() : 0;
@@ -1820,11 +1958,15 @@ EMSCRIPTEN_KEEPALIVE void bib_wheel(double deviceX, double deviceY, double delta
         modifiers.contains(WebCore::PlatformEvent::Modifier::ControlKey),
         modifiers.contains(WebCore::PlatformEvent::Modifier::AltKey),
         modifiers.contains(WebCore::PlatformEvent::Modifier::MetaKey));
-    g_engine->mainFrame->eventHandler().handleWheelEvent(event,
+    auto [handled, handling] = g_engine->mainFrame->eventHandler().handleWheelEvent(event,
         { WebCore::WheelEventProcessingSteps::SynchronousScrolling, WebCore::WheelEventProcessingSteps::BlockingDOMEventDispatch });
+    (void)handled;
+    g_wheelConsumed.store(handling.contains(WebCore::EventHandling::DefaultPrevented),
+        std::memory_order_release);
     if (g_perfLog) {
         g_perf.wheelMs += bibNowMs() - _wheelT0;
         g_perf.wheels++;
+        g_perf.wheelEvents += events;
     }
 }
 static void bibRunWheel(void* p)
@@ -1833,8 +1975,15 @@ static void bibRunWheel(void* p)
     if (g_perfLog && depth > g_perf.queueMax)
         g_perf.queueMax = depth;
     auto* t = static_cast<BibWheelTask*>(p);
-    bib_wheel(t->x, t->y, t->dx, t->dy, t->mods);
+    BibWheelTask ev;
+    {
+        std::lock_guard<std::mutex> lock(g_inputMutex);
+        if (g_openWheel == t)
+            g_openWheel = nullptr; // closed: later wheels start a new batch
+        ev = *t;
+    }
     delete t;
+    bibApplyWheel(ev.x, ev.y, ev.dx, ev.dy, ev.mods, ev.events);
 }
 
 // browsception 1.4 (ABI bib_set_focus): host canvas focus/blur -> page focus.

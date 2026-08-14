@@ -147,8 +147,12 @@ whole machine, end to end:
 18. **HiDPI** (`test/tier2/hidpi.test.mjs`, own file — dpr is a browser-launch property): render
     geometry, the full mouse battery and post-resize alignment at **dpr 2 and 1.5**. ~9 s, two
     extra browser launches.
+19. **Positional-input coalescing**: a 20-event wheel burst on `scroll.bstest` sent with no
+    settling waits, immediately followed by a click. The page must end up at the *summed* offset
+    (nothing lost to merging) and the click must report that same `scrollY` (nothing merged past a
+    discrete event). Guards the engine-side batch/seal rules — see rendering-input.md § scrolling.
 
-That's ~18 scenarios total. Growth policy: a new test requires a new *class* of failure it would
+That's ~19 scenarios total. Growth policy: a new test requires a new *class* of failure it would
 catch (or a regression that escaped); prefer extending an existing scenario's probes over adding
 scenarios.
 

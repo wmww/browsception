@@ -115,7 +115,16 @@ void bib_wasm_free(char* ptr);
  * ========================================================================
  * Positions are framebuffer DEVICE pixels: the shim maps CSS px → device px
  * (backing/CSS ratio) and the engine maps device px → logical px (÷ its live
- * dpr) before hit-testing. All input exports are fire-and-forget. */
+ * dpr) before hit-testing. All input exports are fire-and-forget.
+ *
+ * COALESCING: positional input (bib_wheel, bib_mouse_move) may be merged by
+ * the engine while it is behind — consecutive wheels summed into one event,
+ * consecutive moves reduced to the latest position — so the guest can see
+ * fewer events than were sent (real browsers batch wheel the same way). The
+ * merge never crosses another input event, and never applies to keys or
+ * buttons: relative order and every discrete event are preserved. Callers
+ * that need an event delivered on its own (a synthetic gesture under test)
+ * get that by not sending another one before the engine drains. */
 
 #define BIB_MOD_SHIFT 1
 #define BIB_MOD_CTRL 2

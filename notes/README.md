@@ -63,8 +63,8 @@ lives in [roadmap.md](roadmap.md). Phase summaries:
   gate: tools/smoke-mvp.mjs real-site pass — sandboxed example.com/wikipedia, whitelist→native
   sweep (experiment-log.md 2026-08-10).
 
-Tests: `npm test` = tiers 0–1, pure headless, per-commit (78 tests). `npm run test:tier2` = 22
-scenarios (incl. 6 HiDPI at dpr 2/1.5) against the staged engine artifact (~29 s; restage with
+Tests: `npm test` = tiers 0–1, pure headless, per-commit (78 tests). `npm run test:tier2` = 23
+scenarios (incl. 6 HiDPI at dpr 2/1.5) against the staged engine artifact (~32 s; restage with
 tools/stage-engine.mjs after engine rebuilds — src/engine/ is gitignored). Engine iteration is
 genuinely incremental (~90 s for embedder-only changes; engine-build.md fix 6) and works from any
 worktree branch (worktrees.md § Engine work).
@@ -149,8 +149,15 @@ Fallout tooling from that hunt: **an engine abort now logs a stack with named C+
 from `abort()`; the wasm carries a name section). A no-ASSERTIONS `RELEASE_ASSERT` used to be an
 empty `Aborted()` with nowhere to start — testing.md § Crash triage.
 
-Open issues in issues/ (guest-JS wedge, engine renders stale input, rcap dynamic budget, viewer
-URL-scheme allowlist). Next work: [roadmap.md](roadmap.md).
+*Scroll input stops re-deriving superseded states* (2026-08-14) — `bib_wheel`/`bib_mouse_move`
+packs stay open for merging while their proxied task is queued (sealed by any other posted task,
+so order and discrete input are untouched), and `bibScrollBlit` shifts the SkSurface's own pixels
+instead of `writePixels`-ing an unpremul→premul conversion of the framebuffer onto it. At 5.6 Mpx
+fast scrolling went 2 → 18 fps with the input backlog 74 → 2 and the post-input tail 1.7 s →
+0.16 s; distance is conserved exactly (rendering-input.md § scrolling, tier-2 scenario 19).
+
+Open issues in issues/ (guest-JS wedge, rcap dynamic budget, viewer URL-scheme allowlist). Next
+work: [roadmap.md](roadmap.md).
 
 ## Key decisions
 

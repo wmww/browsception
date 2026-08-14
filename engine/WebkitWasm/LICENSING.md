@@ -8,8 +8,8 @@ This directory is a squashed hard-fork import of
 - Upstream base: `825c260c03bb2bd84f10fd1ebcda63660d9200ec` (upstream `main`).
 - Imported 2026-08-12 from our fork branch head `af6f559fa3bd334c89df03ef191714db57fbe932`
   (8 fork commits, history not preserved).
-- Rewritten since the fork: networking (curl/wisp transport replaced by the host-fetch
-  bridge, `BibNetBridge`), presentation (runtime-sized shared-heap framebuffer /
+- Rewritten since the fork: networking (curl/wisp transport deleted outright and replaced
+  by the host-fetch bridge, `BibNetBridge`), presentation (runtime-sized shared-heap framebuffer /
   `bibFrame`), history/back-forward, input, crash & heartbeat recovery, plus pruning of
   upstream docs/spikes/gates at import time.
 
@@ -34,8 +34,10 @@ repo with invited collaborators it's lower-stakes, but read this first.)
   choose the license for these.
 - **`src/patches/webkit-emscripten.patch`** — a diff against WebKit source. It
   is a **derivative of WebKit** and inherits the license of each file it modifies.
-- It does **not** contain WebKit, Skia, curl, ICU, OpenSSL, etc. Those are
+- It does **not** contain WebKit, Skia, ICU, OpenSSL, etc. Those are
   fetched from upstream by `tools/bootstrap.sh` and never committed here.
+  (libcurl and nghttp2 are no longer fetched at all — the engine has no
+  in-wasm network transport.)
 
 ## Upstream licenses (fetched, not redistributed by us)
 
@@ -44,8 +46,9 @@ repo with invited collaborators it's lower-stakes, but read this first.)
 | WebCore | **LGPL-2.1** |
 | JavaScriptCore, WTF, bmalloc | **BSD-2-Clause** |
 | Skia | BSD-3-Clause |
-| curl | curl (MIT-like) · OpenSSL | Apache-2.0 · ICU | Unicode/ICU |
-| zlib, libpng, libjpeg-turbo, libwebp, freetype, harfbuzz, libxml2, sqlite, nghttp2, brotli, libpsl, fontconfig | individual permissive licenses |
+| OpenSSL | Apache-2.0 |
+| ICU | Unicode/ICU |
+| zlib, libpng, libjpeg-turbo, libwebp, freetype, harfbuzz, libxml2, sqlite, brotli, libpsl, fontconfig | individual permissive licenses |
 
 All permissive and mutually compatible. The one with copyleft reach is **WebCore
 (LGPL-2.1)** — the embedder statically links it.

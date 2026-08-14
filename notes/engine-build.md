@@ -2,8 +2,9 @@
 
 **Result: reproduced.** WebkitWasm's pthread engine builds from a fresh clone on our host
 and runs: hello-demo gate PASS (exact pixel counts) in headless Chromium, and
-https://example.com renders through the engine (Wisp networking, TLS in-engine,
-`crossOriginIsolated: true`, rAF alive). Answers open-questions #3.
+https://example.com renders through the engine (`crossOriginIsolated: true`, rAF alive).
+Answers open-questions #3. (Networking at the time was Wisp with TLS in-engine; that whole
+tier was deleted 2026-08-13 — the engine's only transport is now the host-fetch bridge.)
 
 ## How to build
 
@@ -32,17 +33,26 @@ PORT=8090 node tools/dev-server.mjs web --mount /engine=build/webcore/bin
 | WebKit | branch `webkitglib/2.52` @ `aec9d2ad958e716ab4bca4bf03007e6edac7323f` (blobless clone; pin lives in `engine/WebkitWasm/tools/bootstrap.sh`) |
 | Emscripten | 6.0.0 via emsdk (installed into `third_party/emsdk`) |
 | Host CMake | **must be < 4.0** — we pin 3.31.7 locally (`engine/cmake-3.31.7-linux-x86_64/`) |
-| Build config | `PORT=Emscripten`, CLoop (`ENABLE_JIT=OFF`), static JSC, pthread + `-msimd128`, Skia, curl+OpenSSL+Wisp networking |
+| Build config | `PORT=Emscripten`, CLoop (`ENABLE_JIT=OFF`), static JSC, pthread + `-msimd128`, Skia; networking = host-fetch bridge only (no libcurl/libssl/nghttp2; `USE_CURL=ON` still selects the port's platform types + CookieJarDB, and libcrypto stays for PAL's digests) |
 
 Sizes/times on our box (24 threads, `BIB_JOBS=12`): `third_party/` 12 GB (WebKit clone
 ~9 GB of it), `build/` 0.5 GB; dep tier ~40 min, WebCore 7,444 ninja targets ≈ 45 min,
-`embedder.wasm` **103 MB** (uncompressed, includes embedded ICU data + fonts + CA bundle).
+`embedder.wasm` **100 MB** / 104,110,338 B (uncompressed, includes embedded ICU data +
+fonts). Was 107,490,338 B before the curl/wisp cut (2026-08-13) — **−3.38 MB / −3.1%**
+from dropping libcurl + libssl + nghttp2 + the embedded CA bundle.
+
+Rebuild-cost warning learned in that cut: `platform/network/curl/ResourceResponse.h` and
+`ResourceError.h` are not transport files — under `USE(CURL)` they ARE the port's
+`<WebCore/ResourceResponse.h>`/`ResourceError.h`, copied into `build/webcore/WebCore/
+PrivateHeaders/` and included by most of WebCore. Editing either costs ~876 TUs (~2 h),
+not the ~90 s embedder loop. Same for `NetworkStorageSession.h`, `CertificateInfo.h`,
+`AuthenticationChallenge.h`.
 
 ## Five fixes a fresh clone needs (all encoded in tools/build-engine.sh)
 
-1. **brotli ordering**: bootstrap runs webcore-deps → curl-tier, but freetype
-   (webcore-deps) now `FT_REQUIRE_BROTLI=ON` while brotli is built by curl-tier.
-   Fix: run curl-tier.sh once first (dies at fontconfig, expected), then bootstrap.
+1. **brotli ordering**: bootstrap runs webcore-deps → ssl-tier, but freetype
+   (webcore-deps) now `FT_REQUIRE_BROTLI=ON` while brotli is built by ssl-tier.
+   Fix: run ssl-tier.sh once first (dies at fontconfig, expected), then bootstrap.
 2. **libbrotlidec.pc**: declares libbrotlicommon only in `Requires.private` → dropped by
    non-static pkg-config → fc-cache link failure in a static-only sysroot. Promote to
    `Requires:`.
@@ -60,11 +70,12 @@ Sizes/times on our box (24 threads, `BIB_JOBS=12`): `third_party/` 12 GB (WebKit
 
 ## Divergences from upstream WebKit
 
-Single patch `src/patches/webkit-emscripten.patch`: 68 files, ~3.5k lines. Breakdown:
-~32 files in `Source/WebCore/platform` (the port's platform glue), 7 `WTF/wtf`,
-4 loader, 4 workers, 4 JSC runtime, plus the 3-file port pattern
-(`OptionsEmscripten.cmake`/`PlatformEmscripten.cmake` additions) and small
-accessibility/editing/crypto touches. The real port logic (embedder, Wisp bridge, host
+Single patch `src/patches/webkit-emscripten.patch`: 67 files, ~3.1k lines (was 68/~3.5k
+before the curl cut — deleting the transport files took their patch hunks with them).
+Breakdown: 31 files in `Source/WebCore/platform` (the port's platform glue), 7 `Source/WTF`,
+7 `Source/JavaScriptCore`, 4 loader, 4 workers, 3 accessibility, 2 Modules, plus the
+port pattern (`OptionsEmscripten.cmake`/`PlatformEmscripten.cmake` additions) and small
+editing/crypto/bindings/fileapi touches. The real port logic (embedder, net bridge, host
 page) lives in WebkitWasm's own `src/`, outside the WebKit tree. Tracks a WebKit
 **release branch** (webkitglib/2.52), consistent with our rebase-on-tags policy.
 
@@ -72,8 +83,9 @@ page) lives in WebkitWasm's own `src/`, outside the WebKit tree. Tracks a WebKit
 
 engine/WebkitWasm is a squashed hard-fork import into this repo (2026-08-12; provenance
 in engine/WebkitWasm/LICENSING.md — upstream base `825c260`, our pre-import head
-`af6f559`, no inner git anymore). Host-fetch bridge replaces curl/wisp for resource
-loads; dev harness = web/browser.html + web/bib-net.js + dev-server `/__bibproxy`.
+`af6f559`, no inner git anymore). The host-fetch bridge is the only transport — the curl/wisp
+tier was deleted from the code, the link and the dep tier on 2026-08-13; dev harness =
+web/browser.html + web/bib-net.js + dev-server `/__bibproxy`.
 Rebuilds: `tools/build-engine.sh` (embedder-only changes are a ~2 min compile+relink).
 Milestone smoke: `node tools/smoke-bridge.mjs` (real sites — not CI). Engine sources are
 edited in the main checkout only (worktrees.md). Build RAM is mild on this box: 12 jobs
@@ -101,9 +113,9 @@ fine; unified TUs ~1.2 GB clang RSS each.
   compiled-in absolute path.
 - **Fontconfig cannot be patched out** (FontCacheSkia + vendored skia CMake REQUIRE it). Runtime:
   `/etc/fonts` staged and `/var/cache/fontconfig` writable in MEMFS or no text paints. WOFF2 web
-  fonts need FreeType built WITH brotli, or all web fonts silently fall back. curl-tier.sh builds
-  brotli **and** fontconfig — if the dead curl/OpenSSL stages are ever deleted, those two (and
-  their ordering vs freetype) must survive.
+  fonts need FreeType built WITH brotli, or all web fonts silently fall back. brotli and
+  fontconfig are why the dep tier outlived libcurl: `ssl-tier.sh` (ex `curl-tier.sh`) still
+  builds openssl → brotli → libpsl → fontconfig, and that ordering vs freetype is load-bearing.
 - **Silent traps**: `WEBKIT_OPTION_DEFAULT_PORT_VALUE` changes only apply to a *fresh* CMake
   cache (verify via cmakeconfig.h or pass `-D` explicitly); stale dep-build CMakeCaches likewise
   pin old options (remove the dep build dir). New embedder `.cpp` must `#include "config.h"`

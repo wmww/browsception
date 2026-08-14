@@ -65,9 +65,6 @@
     </div>
   </div>
   <pre id="log"></pre>
-  <!-- wisp-js client polyfill (global `wisp_client`), vendored from
-       node_modules/@mercuryworkshop/wisp-js@0.4.1/dist/wisp-client.js -->
-  <script src="vendor/wisp-client.js"></script>
   <script src="bib-net.js"></script>
   <!-- Build-stamped engine-threading mode (window.BIB_PTHREAD_BUILD). Emitted
        into build/webcore/bin by embedder.cmake; served at /engine/. The host
@@ -246,21 +243,6 @@
         if (Module._bib_pump) Module._bib_pump();
       }, Math.max(0, ms));
     };
-    // Socket-data poke: wisp stream bytes arrived; SOCKFS only buffers them,
-    // curl needs a multi pass to consume. Dedupe via its own channel so a
-    // burst of messages drains fully before one combined pump runs.
-    const netPumpChannel = new MessageChannel();
-    let netPumpScheduled = false;
-    netPumpChannel.port1.onmessage = () => {
-      netPumpScheduled = false;
-      if (bib.dead) return;
-      if (Module._bib_pump_network) Module._bib_pump_network();
-    };
-    const scheduleNetPump = () => {
-      if (netPumpScheduled) return;
-      netPumpScheduled = true;
-      netPumpChannel.port2.postMessage(0);
-    };
 
     // A live engine instance is huge (256 MB wasm heap + compiled code for
     // an ~89 MB module). NEVER let this page enter the back/forward cache:
@@ -292,8 +274,8 @@
     // verdict computed on frame 0 — used by gate2-browser-test.mjs).
     // Default is the interactive Phase 3 page (script ON, driven by
     // gate3-browser-test.mjs through real input).
-    // ?url=http://... navigates to a REAL page over Wisp once the engine is
-    // live (Phase 4).
+    // ?url=http://... navigates to a REAL page over the host-fetch bridge
+    // once the engine is live.
     const params = new URLSearchParams(location.search);
     const demo = params.get("demo") ?? "interactive";
     const navigateURL = params.get("url");
@@ -378,8 +360,8 @@
     // --- Media bridge (M-A, audio-only, ?media=1) -------------------------
     // The engine's BibMediaPlayer mirrors guest <audio> elements to host
     // Audio() elements living HERE: host does fetch + decode + clock,
-    // engine does DOM semantics. NOTE the flagged wisp exception: these
-    // elements fetch media URLs directly from the host browser.
+    // engine does DOM semantics. The host elements never fetch: the engine
+    // hands them completed bytes (see bibMediaLoadBytes).
     // Event/op codes mirror src/embedder/BibMediaPlayer.cpp — keep in sync.
     const mediaEnabled = params.get("media") === "1";
     const mediaPlayers = new Map();
@@ -414,9 +396,9 @@
       el.addEventListener("seeked", () => send(11, el.currentTime));
       mediaPlayers.set(id, { el, send });
     };
-    // WISP INVARIANT: the engine fetched these bytes itself (guest curl
-    // over wisp, guest cookies); the host element only decodes a Blob —
-    // it never touches the network.
+    // BRIDGE INVARIANT: the engine fetched these bytes itself (guest loader
+    // strategy -> host-fetch bridge, guest cookies); the host element only
+    // decodes a Blob — it never touches the network.
     const bibMediaLoadBytes = (id, bytes, mime) => {
       const p = mediaPlayers.get(id);
       if (!p) return;
@@ -467,66 +449,7 @@
     // invisible to querySelectorAll, only reachable through this map.
     window.__bibMedia = mediaPlayers;
 
-    // --- Wisp transport (Phase 4) ---------------------------------------
-    // The engine's BSD sockets surface as SOCKFS WebSockets. With
-    // Module.websocket.url = 'ws://', SOCKFS builds exactly
-    // 'ws://<host>:<port>/' — the destination hostname survives, because
-    // Emscripten maps its fake DNS IPs back via DNS.lookup_addr before
-    // connect. The dispatcher reroutes those URLs onto Wisp streams
-    // (one shared mux connection per wisp endpoint); everything else gets
-    // the page's native WebSocket. TLS terminates inside the engine — the
-    // Wisp stream is a plain byte pipe.
-    const wispServer = params.get("wisp") ?? "ws://127.0.0.1:5001/";
-    const NativeWebSocket = window.WebSocket;
-    const sockfsURL = /^ws:\/\/([^:/]+):(\d+)\/$/;
-    // Discriminator: only sockets carrying the engine's marker subprotocol
-    // (Module.websocket.subprotocol below — only SOCKFS sends it) are
-    // rerouted; a stray page-level `new WebSocket("ws://x:1/")` stays
-    // native (Codex 2026-06-10). WispWebSocket ignores subprotocols.
-    const isEngineSocket = (protocols) =>
-      protocols === "bib-sockfs" ||
-      (Array.isArray(protocols) && protocols.includes("bib-sockfs"));
-    window.WebSocket = function (url, protocols) {
-      const m = sockfsURL.exec(url);
-      if (m && isEngineSocket(protocols)) {
-        log(`wisp: stream -> ${m[1]}:${m[2]}`);
-        const ws = new wisp_client.client.WispWebSocket(`${wispServer}${m[1]}:${m[2]}`);
-        // W-B1 wedge diagnostics: count payload bytes that REACHED the page
-        // so a stalled load splits into "bytes never arrived" (wisp/server)
-        // vs "engine never consumed" (pump/proxy). Cheap; kept.
-        ws.addEventListener("message", (e) => {
-          const n = e.data?.byteLength || e.data?.length || 0;
-          window.__bibWispBytes = (window.__bibWispBytes || 0) + n;
-          // #78: per-host byte accounting. These are TLS-encrypted stream bytes
-          // (TLS terminates in-engine), so the count ≈ the compressed payload
-          // size per host — enough to size Discord's gateway READY and validate
-          // the payload-reduction levers (IDB client_state, large_threshold).
-          // null-proto: a host literally named "constructor"/"__proto__" must
-          // not collide with Object.prototype keys (Codex LOW).
-          const sb = (window.__bibStreamBytes || (window.__bibStreamBytes = Object.create(null)));
-          sb[m[1]] = (sb[m[1]] || 0) + n;
-        });
-        // Surface non-voluntary stream closes with the wisp reason name.
-        // A failed dial otherwise dies inside TLS as a phantom curl=35
-        // "SSL connect error" — e.g. hosts an ad-blocking DNS resolves to
-        // 0.0.0.0 land here as NetworkError/ConnRefused.
-        ws.addEventListener("close", (e) => {
-          if (e.code === 2) return; // Voluntary
-          const names = wisp_client.packet.close_reasons;
-          const name = Object.keys(names).find((k) => names[k] === e.code) ?? "?";
-          log(`wisp: stream CLOSED ${m[1]}:${m[2]} reason=${e.code} (${name})`);
-        });
-        // Data arrived for an engine socket — give curl a pass promptly
-        // instead of waiting out the pump's polling re-arm.
-        ws.addEventListener("message", scheduleNetPump);
-        ws.addEventListener("open", scheduleNetPump);
-        return ws;
-      }
-      return new NativeWebSocket(url, protocols);
-    };
-    window.WebSocket.prototype = NativeWebSocket.prototype;
-
-    // --- #78/#79 host-side freeze UX + gateway payload accounting ---------
+    // --- #78/#79 host-side freeze UX ---------------------------------------
     // The engine runs on a pthread; the host main thread stays responsive while
     // the engine is blocked in a long no-JIT RunLoop::cycle (e.g. Discord's
     // ~10s gateway READY hydration — task #77). Watch window.__bib.frames; a
@@ -606,15 +529,6 @@
         if (inFreeze)
           set("Working…", "", false);
       }, 150);
-      // #78: periodic per-host wisp byte dump (perflog only) to size the payload.
-      if (params.get("perflog") === "1") {
-        setInterval(() => {
-          const sb = window.__bibStreamBytes; if (!sb) return;
-          const top = Object.keys(sb).sort((a, c) => sb[c] - sb[a]).slice(0, 5)
-            .map((h) => h + "=" + (sb[h] / 1048576).toFixed(2) + "MB").join("  ");
-          if (top) log("wisp bytes/host: " + top);
-        }, 2000);
-      }
     })();
 
     // MUST stay byte-identical to kTestHTML in src/embedder/main.cpp so the
@@ -1087,13 +1001,6 @@
       // above). bibWasmPolyfill is filled in by the boot gate below.
       bibWasm2js,
       bibWasmPolyfill: "",
-      // SOCKFS websocket config: bare prefix => 'ws://<host>:<port>/',
-      // which the dispatcher above reroutes onto Wisp streams. The
-      // subprotocol is the dispatcher's engine-socket marker.
-      websocket: { url: "ws://", subprotocol: "bib-sockfs" },
-      // ?curldebug=1 -> libcurl verbose tracing via printErr. Read from C
-      // in main() via setenv — Module.ENV-based getenv proved unreliable.
-      bibCurlDebug: !!params.get("curldebug"),
       // ?noblock=1 -> disable the analytics/ads request blocklist (A/B knob;
       // the loader strategy reads this once at boot). Strict "1" so
       // ?noblock=0 doesn't silently disable it (Codex).
@@ -1184,7 +1091,7 @@
     // skips injection — the old no-wasm, no-Audio behavior.
     Promise.all([wasmShimReady, persistSeedReady]).then(([polyfillText, seedState]) => {
       // browsception 1.2b: resource loads go through the host-fetch bridge
-      // (bib-net.js -> dev-server /__bibproxy), not curl/wisp.
+      // (bib-net.js -> dev-server /__bibproxy) — the engine has no transport.
       installBibNet(Module);
       Module.bibWasmPolyfill = polyfillText;
       // Read ONCE by C main() before the first load; cookies seed the jar,

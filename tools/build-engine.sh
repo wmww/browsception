@@ -100,18 +100,18 @@ ruby -e "require 'erb'" 2>/dev/null || gem install --user-install erb
 READY=1
 [ -d "$W/third_party/WebKit/.git" ] || READY=0
 [ -x "$W/third_party/emsdk/upstream/emscripten/emcc" ] || READY=0
-for lib in libicuuc.a libbrotlidec.a libcurl.a libfontconfig.a libwebp.a; do
+for lib in libicuuc.a libbrotlidec.a libcrypto.a libfontconfig.a libwebp.a; do
   [ -f "$W/third_party/wasm-sysroot/lib/$lib" ] || READY=0
 done
 
 if [ "$READY" != 1 ]; then
-  # --- 2a. dep-order workaround: brotli lives in curl-tier but freetype
+  # --- 2a. dep-order workaround: brotli lives in ssl-tier but freetype
   #        (webcore-deps, which bootstrap runs FIRST) requires it. Run
-  #        curl-tier once up front; it builds openssl->nghttp2->brotli->libpsl
-  #        ->curl and dies at fontconfig (missing freetype) — expected. ------
+  #        ssl-tier once up front; it builds openssl->brotli->libpsl and dies
+  #        at fontconfig (missing freetype) — expected. --------------------
   if [ ! -f "$W/third_party/wasm-sysroot/lib/libbrotlidec.a" ]; then
     bash "$W/tools/bootstrap.sh" || true # gets WebKit+emsdk cloned first if needed
-    bash "$W/tools/build-deps/curl-tier.sh" || true
+    bash "$W/tools/build-deps/ssl-tier.sh" || true
   fi
 
   # brotli's libbrotlidec.pc hides libbrotlicommon in Requires.private, which

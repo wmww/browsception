@@ -24,8 +24,6 @@
 #include "BibStorage.h"
 #include "CommonAtomStrings.h"
 #include "CookieJar.h"
-#include "CurlContext.h"
-#include "CurlRequestScheduler.h" // bib_pump_network -> scheduler().hostPump()
 #include "Document.h"
 #include "DocumentLoader.h"
 #include "DocumentView.h" // inline LocalFrame::view() lives here, not in LocalFrame.h
@@ -288,17 +286,14 @@ struct PerfAccum {
     double persist = 0;      // bibMaybePersist
     int ticks = 0;           // bib_tick bodies run this window
     int painted = 0;         // frames that actually painted >=1 rect
-    // #77 burst-shape probe: bib_pump / bib_pump_network RunLoop::cycle costs.
-    // These run OUTSIDE bib_tick (no paint), so their total ~= the page-side
+    // #77 burst-shape probe: bib_pump RunLoop::cycle costs. These run
+    // OUTSIDE bib_tick (no paint), so their total ~= the page-side
     // "pumpGap". max/count tell us the SHAPE: one giant cycle (max~=total ->
     // pacing between pumps useless, need mid-cycle break) vs many small cycles
     // (max<<total -> interleaving a paint per N pumps works).
     double pumpCycle = 0;    // sum of bib_pump RunLoop::cycle ms
     double pumpMax = 0;      // largest single bib_pump cycle ms (the decider)
     int pumps = 0;           // bib_pump cycles this window
-    double netCycle = 0;     // sum of bib_pump_network (hostPump+cycle) ms
-    double netMax = 0;       // largest single net cycle ms
-    int nets = 0;            // bib_pump_network cycles this window
 };
 PerfAccum g_perf;
 }
@@ -980,14 +975,13 @@ EMSCRIPTEN_KEEPALIVE void bib_tick()
                 + g_perf.paint + g_perf.present + g_perf.persist + pushOther;
             WTFLogAlways("BIBPERF/s ticks=%d painted=%d elapsed=%.0fms busy=%.0f%% heap=%.0fMB jsc=%.0fMB | "
                 "runloop(JS)=%.0f renderUpd=%.0f layout=%.0f paint=%.0f present=%.0f pushOther=%.0f persist=%.0f ms | "
-                "pump=%.0f(max%.0f n%d) net=%.0f(max%.0f n%d) | "
+                "pump=%.0f(max%.0f n%d) | "
                 "avgPaintedFrame=%.1fms",
                 g_perf.ticks, g_perf.painted, elapsed, 100.0 * busy / elapsed,
                 emscripten_get_heap_size() / 1048576.0, WebCore::commonVM().heap.size() / 1048576.0,
                 g_perf.runloop, g_perf.renderUpdate, g_perf.layout, g_perf.paint,
                 g_perf.present, pushOther, g_perf.persist,
                 g_perf.pumpCycle, g_perf.pumpMax, g_perf.pumps,
-                g_perf.netCycle, g_perf.netMax, g_perf.nets,
                 g_perf.painted ? (g_perf.layout + g_perf.paint + g_perf.present) / g_perf.painted : 0.0);
             g_perf = PerfAccum { };
             g_perf.windowStart = _perfT4;
@@ -1032,43 +1026,6 @@ static void bibRunPump(void*)
 {
     g_pumpQueued.store(false, std::memory_order_release);
     bib_pump();
-}
-
-// Socket-data poke: one curl multi pass right now (the wisp shim calls this
-// when WebSocket bytes arrive — SOCKFS can't signal curl), then a RunLoop
-// cycle so completions dispatched via callOnMainThread run immediately
-// instead of waiting for the next wake-up. The wisp dispatcher lives on the
-// browser main thread (W-B0: sockets proxy there), so this entry is ALWAYS
-// cross-thread in browser mode.
-static std::atomic<bool> g_netPumpQueued { false };
-static void bibRunNetPump(void*);
-EMSCRIPTEN_KEEPALIVE void bib_pump_network()
-{
-    if (!bibOnEngineThread()) {
-        if (g_netPumpQueued.exchange(true, std::memory_order_acq_rel))
-            return;
-        if (!bibProxyToEngine(bibRunNetPump, nullptr))
-            g_netPumpQueued.store(false, std::memory_order_release);
-        return;
-    }
-    if (!g_perfLog) {
-        WebCore::CurlContext::singleton().scheduler().hostPump();
-        WTF::RunLoop::cycle();
-        return;
-    }
-    const double t0 = bibNowMs();
-    WebCore::CurlContext::singleton().scheduler().hostPump();
-    WTF::RunLoop::cycle();
-    const double dt = bibNowMs() - t0;
-    g_perf.netCycle += dt;
-    if (dt > g_perf.netMax)
-        g_perf.netMax = dt;
-    g_perf.nets++;
-}
-static void bibRunNetPump(void*)
-{
-    g_netPumpQueued.store(false, std::memory_order_release);
-    bib_pump_network();
 }
 
 EMSCRIPTEN_KEEPALIVE const int* bib_dirty_box() { return g_dirtyBox; }
@@ -2074,7 +2031,7 @@ void BIB::injectWasmPolyfill(WebCore::LocalFrame& frame, WebCore::DOMWrapperWorl
 extern "C" {
 
 // Phase 4: real navigation. Drives FrameLoader::load -> DocumentLoader ->
-// CachedResourceLoader -> EmbedderLoaderStrategy -> CurlRequest -> Wisp.
+// CachedResourceLoader -> EmbedderLoaderStrategy -> BibNetBridge.
 static void bibRunLoadUrl(void*);
 EMSCRIPTEN_KEEPALIVE void bib_load_url(const char* url)
 {
@@ -2167,19 +2124,11 @@ int main()
     });
     printf("EMBEDDER: engine thread=%p browser-main=%d\n",
         reinterpret_cast<void*>(g_engineThread), emscripten_is_main_browser_thread());
-    // Verbose libcurl tracing (?curldebug=1 on the host page). Set from C
-    // because Module.ENV-based getenv proved unreliable here. MUST happen
-    // before installEmbedderStrategies(): the cookie-session setup
-    // constructs the CurlContext singleton, which reads DEBUG_CURL exactly
-    // once in its constructor.
-    // W-B1: all boot flags live on the PAGE's Module — the engine pthread's
-    // worker Module does not inherit them (W-B0 finding). MAIN_THREAD_EM_ASM
-    // blocks this thread briefly while the main thread answers; safe at
-    // boot, before the page starts driving us.
-    if (MAIN_THREAD_EM_ASM_INT({ return Module.bibCurlDebug ? 1 : 0; }))
-        setenv("DEBUG_CURL", "1", 1);
-    printf("EMBEDDER: curldebug=%s\n", getenv("DEBUG_CURL") ? "on" : "off");
-
+    // W-B1: all boot flags below live on the PAGE's Module — the engine
+    // pthread's worker Module does not inherit them (W-B0 finding).
+    // MAIN_THREAD_EM_ASM blocks this thread briefly while the main thread
+    // answers; safe at boot, before the page starts driving us.
+    //
     // ?perflog=1 on the host page: emit a per-second engine-thread phase
     // breakdown (BIBPERF/s). Read straight from the host URL so no
     // browser.html wiring is needed — purely a diagnostic knob, off by
@@ -2217,18 +2166,12 @@ int main()
     bool noBlock = MAIN_THREAD_EM_ASM_INT({ return Module.bibNoBlock ? 1 : 0; });
     BIB::setRequestBlocklistEnabled(!noBlock);
     printf("EMBEDDER: request blocklist=%s\n", noBlock ? "off" : "on");
-    if (getenv("DEBUG_CURL")) {
-        // Constructs the CurlContext singleton NOW (post-setenv) and reports
-        // whether the verbose flag actually latched — splits env plumbing
-        // from curl-output plumbing when tracing goes missing.
-        printf("EMBEDDER: curl verbose=%d\n", WebCore::CurlContext::singleton().isVerbose());
-    }
 
     // ?gclog=1 (host URL): turn on JSC GC pause logging (JSC_logGC=Basic) to
     // confirm whether the periodic ~1fps stutter is GC stop-the-world vs slow
     // CLoop JS. MUST be set BEFORE JSC::initialize() — Options::initialize()
-    // reads JSC_-prefixed env once there. setenv from C (Module.ENV getenv is
-    // unreliable here, same reason as DEBUG_CURL). Diagnostic, off by default.
+    // reads JSC_-prefixed env once there. setenv from C (Module.ENV-based
+    // getenv proved unreliable here). Diagnostic, off by default.
     if (MAIN_THREAD_EM_ASM_INT({
         try { return new URLSearchParams(location.search).get("gclog") === "1" ? 1 : 0; }
         catch (e) { return 0; }
@@ -2246,9 +2189,10 @@ int main()
     // Event-driven pump: every main-RunLoop wake-up (dispatch, timer start)
     // pokes the host page, which schedules a macrotask calling bib_pump().
     // Without this the engine only made progress once per host display
-    // frame (rAF -> bib_tick), quantizing EVERY async hop — curl passes,
-    // callOnMainThread chains, setTimeout(0) — to ~16.7ms each (measured:
-    // 13.9ms per setTimeout(0) hop, 93ms for a warm same-origin fetch).
+    // frame (rAF -> bib_tick), quantizing EVERY async hop — bridge
+    // completions, callOnMainThread chains, setTimeout(0) — to ~16.7ms each
+    // (measured: 13.9ms per setTimeout(0) hop, 93ms for a warm same-origin
+    // fetch).
     // The callback fires while the RunLoop lock is held: bibWakeUp must
     // only schedule, never call back into the engine synchronously.
     // W-B1: this EM_ASM executes in the ENGINE pthread's worker scope —
@@ -2265,7 +2209,7 @@ int main()
     // caches for the session.
     BIB::g_mediaEnabled = interactive && MAIN_THREAD_EM_ASM_INT({ return Module.bibMedia ? 1 : 0; });
     if (BIB::g_mediaEnabled)
-        printf("EMBEDDER: media bridge ENABLED (audio-only, wisp-routed fetch)\n");
+        printf("EMBEDDER: media bridge ENABLED (audio-only, bridge-fetched)\n");
 
     // Skia GPU boot (decision-005 G2, opt-in via Module.bibGPU / ?gpu=1).
     // Must run before ANY paint: GraphicsContextSkia consults the shared
@@ -2363,12 +2307,12 @@ int main()
     // (discord.com/login went blank exactly there). WebKitLegacy's
     // InProcessIDBServer recipe, in-memory backing store.
     pageConfiguration.databaseProvider = BIB::BibDatabaseProvider::create();
-    // Fail-fast WebSocket provider (WS-0): the empty-clients SocketProvider
-    // returns a null channel and WebSocket::create RELEASE_ASSERTs on it —
-    // any guest `new WebSocket()` aborted the engine (discord.com/login dies
-    // on its remote-auth gateway socket). This one fails the connection like
-    // an unreachable server (error event + close 1006) instead. WS-1 (real
-    // channel over curl-ws) replaces the channel, not this wiring.
+    // Fail-fast WebSocket provider: the empty-clients SocketProvider returns
+    // a null channel and WebSocket::create RELEASE_ASSERTs on it — any guest
+    // `new WebSocket()` aborted the engine (discord.com/login dies on its
+    // remote-auth gateway socket). This one fails the connection like an
+    // unreachable server instead. A future channel over a host WebSocket
+    // replaces the channel, not this wiring.
     pageConfiguration.socketProvider = BIB::BibSocketProvider::create();
 
     // pageConfigurationWithEmptyClients hardcodes SandboxFlags::all() on the
@@ -2409,7 +2353,7 @@ int main()
     page->settings().setRequestIdleCallbackEnabled(true);
     // Raw-WebCore MemoryCache default is 8MB total — one modern page evicts
     // everything, so every in-engine navigation refetched all subresources
-    // over wisp. Still in-memory; sized like a small browser profile.
+    // over the bridge. Still in-memory; sized like a small browser profile.
     WebCore::MemoryCache::singleton().setCapacities(0, 16 * 1024 * 1024, 64 * 1024 * 1024);
 
     // Persistence seed (cookies + guest localStorage from a previous host

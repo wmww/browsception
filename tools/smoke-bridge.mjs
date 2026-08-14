@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 1.2b milestone check: the engine loads real sites through the host-fetch
-// bridge (no wisp server running!) in the dev harness page, with redirects
+// bridge — the engine's only transport — in the dev harness page, with redirects
 // and cookies working. Usage: node tools/smoke-bridge.mjs [--headed]
 //
 // Not CI (touches real websites — see notes/testing.md); run manually or as
@@ -18,7 +18,7 @@ const W = join(engineRoot, 'WebkitWasm');
 const PORT = PORT_BASE + 5;
 const headed = process.argv.includes('--headed');
 
-// --- dev server (serves harness + /__bibproxy; no wisp) ------------------
+// --- dev server (serves harness + /__bibproxy) ---------------------------
 const server = spawn('node', ['tools/dev-server.mjs', 'web', '--mount', '/engine=build/webcore/bin'], {
   cwd: W,
   env: { ...process.env, PORT: String(PORT) },

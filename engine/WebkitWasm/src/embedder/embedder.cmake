@@ -27,7 +27,7 @@ target_include_directories(BibEmbedder SYSTEM PRIVATE
     ${WebCore_SYSTEM_INCLUDE_DIRECTORIES}
 )
 
-# WebCore is static: its PRIVATE link deps (JSC/WTF/PAL/curl tier/ICU) reach
+# WebCore is static: its PRIVATE link deps (JSC/WTF/PAL/ssl tier/ICU) reach
 # the final link as $<LINK_ONLY:> interface entries. Skia is linked directly
 # for its INTERFACE include dirs (<skia/...> resolves via symlinked headers).
 target_link_libraries(BibEmbedder PRIVATE WebCore Skia::Skia)
@@ -38,10 +38,9 @@ target_link_libraries(BibEmbedder PRIVATE WebCore Skia::Skia)
 # W-B1: the engine runs on a dedicated pthread (-sPROXY_TO_PTHREAD moves
 # main() off the browser main thread). The whole tree compiles -pthread
 # (CMAKE_C/CXX_FLAGS at configure; sysroot deps were always -pthread).
-# W-B0 spike (2497a89) proved: SOCKFS sockets proxy to MAIN scope (wisp
-# dispatcher unchanged), 4GB growable shared memory instantiates, abort
-# stacks stay symbolized. POOL_SIZE=4: 1 taken by proxied main + headroom
-# for W-C real workers / future curl threads.
+# W-B0 spike (2497a89) proved: 4GB growable shared memory instantiates and
+# abort stacks stay symbolized. POOL_SIZE=4: 1 taken by proxied main +
+# headroom for W-C real workers.
 # BIB_PTHREAD=OFF (tools/build-webcore.sh knob): single-threaded engine for
 # no-SAB deployments. The TREE's compile flags must match (the script keeps
 # them in sync — a -pthread-compiled tree links fine either way, but a
@@ -109,8 +108,7 @@ target_link_options(BibEmbedder PRIVATE
     # ccall: browser.html marshals bib_key()'s string args. stringToUTF8/
     # lengthBytesUTF8: main.cpp reads Module.bibHTML inside EM_ASM — export
     # forces them into the runtime so the EM_ASM block can call them.
-    # ENV: lets the host page set engine env vars in preRun (e.g.
-    # DEBUG_CURL=1 turns on libcurl verbose tracing -> printErr).
+    # ENV: lets the host page set engine env vars in preRun.
     # UTF8ToString: the persistence push (bibMaybePersist) reads the JSON
     # blob out of the shared heap on the MAIN thread inside an EM_ASM block.
     "SHELL:-sEXPORTED_RUNTIME_METHODS=FS,HEAPU8,ccall,stringToUTF8,lengthBytesUTF8,UTF8ToString,ENV"
@@ -147,11 +145,4 @@ endif ()
 if (BIB_FONTS_DIR)
     target_link_options(BibEmbedder PRIVATE
         "SHELL:--embed-file ${BIB_FONTS_DIR}@/usr/share/fonts")
-endif ()
-
-# CA bundle for in-engine TLS verification (Phase 4) — the path is
-# compiled into CurlSSLHandleEmscripten.cpp.
-if (BIB_CA_BUNDLE)
-    target_link_options(BibEmbedder PRIVATE
-        "SHELL:--embed-file ${BIB_CA_BUNDLE}@/etc/ssl/cacert.pem")
 endif ()

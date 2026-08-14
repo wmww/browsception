@@ -5,8 +5,8 @@
 // not per-commit).
 //
 // Scenarios here: 7 render, 8 execute, 9 input, 14 resize, 12
-// crash/recovery, 13 startup budget. 10 (navigation chrome) and 11
-// (invariants) land with 2.3/2.5.
+// crash/recovery, 13 startup budget, 15 guest WebSocket. 10 (navigation
+// chrome) and 11 (invariants) land with 2.3/2.5.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -144,6 +144,32 @@ test('execute: app.bstest JS/timer/fetch/xfetch/cookie/pushState + redirect chai
   );
   await page.evaluate(() => __bs.eval("document.getElementById('redirlink').click()"));
   await evalProbe(page, 'location.href', /^https:\/\/app\.bstest\/final\b/);
+  await page.close();
+});
+
+// --- Guest WebSocket: fails cleanly, never aborts the engine ---------------
+// The engine has no WS transport (the curl/wisp tier is gone). BibSocketProvider
+// hands out a fail-fast channel; without one WebSocket::create RELEASE_ASSERTs
+// on the empty provider's null channel and the whole engine dies.
+test('guest WebSocket fails cleanly and the engine keeps running', { timeout: 300000 }, async () => {
+  const page = await bootViewer('https://app.bstest/');
+  await evalProbe(page, 'document.title', /BSTEST-APP/);
+  await page.evaluate(() =>
+    __bs.eval(`
+      window.__ws = 'pending';
+      try {
+        const s = new WebSocket('wss://app.bstest/socket');
+        s.onerror = () => { if (window.__ws === 'pending') window.__ws = 'error'; };
+        s.onclose = () => { if (window.__ws === 'pending') window.__ws = 'close'; };
+        window.__wsCtor = 'ok';
+      } catch (e) { window.__wsCtor = 'threw:' + e.name; }
+    `),
+  );
+  await evalProbe(page, 'window.__wsCtor', /^ok\b/);
+  await evalProbe(page, 'window.__ws', /^(error|close)\b/);
+  // Engine still alive: guest script runs and the page still paints.
+  await evalProbe(page, '1 + 1', /^2\b/);
+  await until(page, 25, 425, is([0, 255, 0]), 60000, 'still painting after WS failure');
   await page.close();
 });
 

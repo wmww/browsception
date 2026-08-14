@@ -31,9 +31,12 @@ re-bite on rebases or bound future features.
   to our viewer; video never implemented. Gotcha: a Page without `PageIdentifier` has no
   mediaSessionManager → every `play()` parks forever; keep passing `PageIdentifier::generate()`.
 - **Guest `new WebSocket()`**: WebKit ≥2.46 has no in-WebCore channel; a null provider channel
-  hits `RELEASE_ASSERT(m_channel)` and kills the engine. Fork's `BibSocketProvider` channel rode
-  CurlStream (deleted) — re-check what we ship now; a fail-fast channel (error + close 1006)
-  reads as unreachable-server and sites take offline paths.
+  hits `RELEASE_ASSERT(m_channel)` and kills the engine, so `BibSocketProvider` must always hand
+  out *something*. What we ship (since the curl cut, 2026-08-13): `BibWebSocketChannel`, a
+  fail-fast channel whose `connect()` returns KO → WebKit's own `failAsynchronously()` → `error`
+  event, socket CLOSED. Reads as unreachable-server; sites take offline paths. Tier-2 scenario 15
+  is the crash tripwire. WebSocketHandshake/Frame/DeflateFramer are still compiled in for the
+  future host-WS bridge.
 - **Unfixed intermittent JSC Release abort under CLoop**: `Structure::materializePropertyTable`
   offset-inconsistency (off by one; PropertyDeletion replay suspected). `checkOffsetConsistency`
   is ALWAYS_INLINE, not assert-gated, no build-flag escape; patching it out = silently wrong

@@ -12,12 +12,8 @@ by pinned script for engine bulk):
   node_modules by the dev server. Note: the blob is already in history (df282cd), so removal
   doesn't shrink clones — the win is integrity-pinned updates and diff hygiene. Becomes more
   important if roadmap item 2 (ship the wasm shim in the extension) lands.
-- **wisp-client.js (16 KB)** — provenance comment exists (`@mercuryworkshop/wisp-js@0.4.1`)
-  but the minified file has no license header and its license is recorded nowhere; verify it
-  (MercuryWorkshop repos vary MIT vs AGPL — AGPL would matter if it ever ships).
 - **LICENSING.md** — its third-party table is framed "fetched, not redistributed by us", which
-  is now wrong for both vendor files (binaryen.js at least carries an inline Apache-2.0
-  header). Needs rows for the two redistributed files.
+  is wrong for binaryen.js (it carries an inline Apache-2.0 header). Needs a row for it.
 
 Everything else is consistent: package-lock tracked, node_modules/third_party/build ignored,
 no other copied-in third-party code in src/.

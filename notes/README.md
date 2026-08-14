@@ -46,7 +46,8 @@ lives in [roadmap.md](roadmap.md). Phase summaries:
 - **Phase 1 engine⇄shim**: versioned ABI (`src/abi/bib_abi.h` + abi.mjs mirror); engine fork
   (engine/WebkitWasm — absorbed into this repo 2026-08-12, sources tracked, no inner git;
   provenance in its LICENSING.md) transplanted networking onto the host-fetch bridge
-  (BibNetBridge, no curl/wisp in the path), rendering to a runtime-sized shared-heap framebuffer
+  (BibNetBridge; the curl/wisp transport was later deleted outright), rendering to a
+  runtime-sized shared-heap framebuffer
   (`bibFrame` zero-copy present), input through WebCore's EventHandler, crash/heartbeat recovery,
   flat-heap leak check. Exit gate: 10.2-min crash-free real-site browse (experiments/log.md).
 - **Phase 2 extension**: viewer hosts the engine (src/ext/viewer.mjs + blit.mjs, OPFS persistence,
@@ -92,8 +93,16 @@ viewer wheel coalescing, 2-5ms strips at any dpr (rendering-input.md § scrollin
 (squashed import, upstream docs/spikes pruned, gems distilled into engine-internals.md);
 build state stays a main-checkout singleton (worktrees.md).
 
+*Wisp + curl transport removed* (2026-08-13) — the engine has no network transport at all:
+libcurl, libssl, nghttp2, SOCKFS and the harness wisp dispatcher are gone from the code, the
+link and the dep tier (`curl-tier.sh` → `ssl-tier.sh`). embedder.wasm 103 MB → 100 MB, WebKit
+patch 68 files/3.5k lines → 67/3.1k. `USE(CURL)` stays ON for the port's platform types +
+CookieJarDB; libcrypto stays for PAL digests. Guest `new WebSocket()` now fails cleanly
+everywhere (tier-2 scenario 15); engine-side WS-over-host-WS is the only future path.
+
 Open issues in issues/ (first-nav race residual, guest-JS wedge, engine-side load failures
-silent). Next work: [roadmap.md](roadmap.md).
+silent, vendored web-dep hygiene, smoke-bridge cookie case 404s). Next work:
+[roadmap.md](roadmap.md).
 
 ## Key decisions
 

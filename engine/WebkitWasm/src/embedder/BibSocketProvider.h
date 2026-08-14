@@ -3,16 +3,17 @@
 // pageConfigurationWithEmptyClients installs EmptySocketProvider, whose
 // createWebSocketChannel returns nullptr — and WebSocket::create RELEASE_
 // ASSERTs on that ("Every ScriptExecutionContext should have a
-// SocketProvider"), so ANY guest `new WebSocket()` aborted the whole engine
-// before WS-0 (discord.com/login died on its remote-auth gateway socket).
+// SocketProvider"), so without a channel of our own ANY guest
+// `new WebSocket()` aborts the whole engine (discord.com/login died on its
+// remote-auth gateway socket).
 // WebKit ≥2.46 has no in-WebCore channel implementation left to borrow (it
 // moved to the WebKit2 network process); SocketProvider::
 // createWebSocketChannel is pure virtual, so the channel is ours — same
 // situation as IndexedDB (BibIDBServer).
 //
-// WS-0 (d95feaf) failed every connection like an unreachable server; WS-1
-// replaces that with BibWebSocketChannel, a real RFC 6455 client over
-// CurlStream (see BibWebSocketChannel.h).
+// BibWebSocketChannel fails every connection cleanly instead (error event,
+// no engine abort). A real channel over a HOST WebSocket would replace it
+// here; see BibWebSocketChannel.h.
 
 #pragma once
 

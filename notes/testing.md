@@ -101,8 +101,13 @@ whole machine, end to end:
 12. **Crash/recovery**: kill the engine worker → viewer shows crashed state → reload recovers.
 13. **Startup budget**: warm start to interactive under threshold (regression tripwire, generous
     bound).
+14. **Resize**: canvas fills the window, the engine framebuffer follows resizes, input stays
+    aligned.
+15. **Guest WebSocket**: `new WebSocket(...)` in the guest fires `error`/`close` and the engine
+    keeps running — the engine has no WS transport, and the *absence* of a channel is an engine
+    abort (RELEASE_ASSERT in WebSocket::create), so this is a crash tripwire, not a feature test.
 
-That's ~13 scenarios total. Growth policy: a new test requires a new *class* of failure it would
+That's ~15 scenarios total. Growth policy: a new test requires a new *class* of failure it would
 catch (or a regression that escaped); prefer extending an existing scenario's probes over adding
 scenarios.
 

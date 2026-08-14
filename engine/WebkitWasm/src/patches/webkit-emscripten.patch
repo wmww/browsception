@@ -353,10 +353,10 @@ index 203d38335a5..a98b0bad494 100644
          // Dispatch scheduled timers.
          while (!firedTimers.isEmpty()) {
 diff --git a/Source/WTF/wtf/generic/WorkQueueGeneric.cpp b/Source/WTF/wtf/generic/WorkQueueGeneric.cpp
-index 97c8e9dd2e9..fe6f954fa46 100644
+index 97c8e9dd2e9..8e09050728d 100644
 --- a/Source/WTF/wtf/generic/WorkQueueGeneric.cpp
 +++ b/Source/WTF/wtf/generic/WorkQueueGeneric.cpp
-@@ -42,6 +42,20 @@ WorkQueueBase::WorkQueueBase(RunLoop& runLoop)
+@@ -42,6 +42,19 @@ WorkQueueBase::WorkQueueBase(RunLoop& runLoop)
  
  void WorkQueueBase::platformInitialize(ASCIILiteral name, Type, QOS qos)
  {
@@ -365,8 +365,7 @@ index 97c8e9dd2e9..fe6f954fa46 100644
 +    // so RunLoop::create -> Thread::create would RELEASE_ASSERT (this was
 +    // an instant abort() the first time a page contained an <img> —
 +    // ImageFrameWorkQueue). Back EVERY WorkQueue with the main RunLoop
-+    // instead: dispatch() becomes a deferred main-loop task, the same
-+    // single-threading treatment CurlRequestScheduler got. The
++    // instead: dispatch() becomes a deferred main-loop task. The
 +    // BinarySemaphore handshake must be skipped too — waiting on the only
 +    // thread can never be signalled.
 +    UNUSED_PARAM(name);
@@ -377,7 +376,7 @@ index 97c8e9dd2e9..fe6f954fa46 100644
      m_runLoop = RunLoop::create(name, ThreadType::Unknown, qos);
      BinarySemaphore semaphore;
      m_runLoop->dispatch([&] {
-@@ -49,10 +63,15 @@ void WorkQueueBase::platformInitialize(ASCIILiteral name, Type, QOS qos)
+@@ -49,10 +62,15 @@ void WorkQueueBase::platformInitialize(ASCIILiteral name, Type, QOS qos)
          semaphore.signal();
      });
      semaphore.wait();
@@ -393,7 +392,7 @@ index 97c8e9dd2e9..fe6f954fa46 100644
      if (m_runLoop) {
          Ref<RunLoop> protector = m_runLoop.releaseNonNull();
          protector->stop();
-@@ -60,6 +79,7 @@ void WorkQueueBase::platformInvalidate()
+@@ -60,6 +78,7 @@ void WorkQueueBase::platformInvalidate()
              RunLoop::currentSingleton().stop();
          });
      }
@@ -470,10 +469,10 @@ index f90708bddce..6f88c5a831b 100644
  
  } // namespace IDBServer
 diff --git a/Source/WebCore/Modules/websockets/WebSocket.cpp b/Source/WebCore/Modules/websockets/WebSocket.cpp
-index d6483e73d39..940aed93756 100644
+index d6483e73d39..fff03cbc52b 100644
 --- a/Source/WebCore/Modules/websockets/WebSocket.cpp
 +++ b/Source/WebCore/Modules/websockets/WebSocket.cpp
-@@ -177,6 +177,20 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
+@@ -177,6 +177,21 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
      if (url.isNull())
          return Exception { ExceptionCode::SyntaxError };
  
@@ -485,8 +484,9 @@ index d6483e73d39..940aed93756 100644
 +    // 2026-06-11). Deferring the peer instead would leave sockets silently
 +    // CONNECTING forever (connect() no-ops without a peer). Fail the
 +    // constructor catchably; page-level WebSockets keep their existing
-+    // clean-error behavior (CurlStream stub). Real worker WebSockets come
-+    // with Phase W-B threads, where the semaphore wait is legal.
++    // clean-error behavior (the embedder's fail-fast channel). Real worker
++    // WebSockets come with Phase W-B threads, where the semaphore wait is
++    // legal.
 +    if (is<WorkerGlobalScope>(context))
 +        return Exception { ExceptionCode::NotSupportedError, "WebSocket inside workers is not supported in this single-threaded engine"_s };
 +#endif
@@ -514,27 +514,66 @@ index 00000000000..0fc6a680f4b
 +list(APPEND PAL_LIBRARIES OpenSSL::Crypto)
 diff --git a/Source/WebCore/PlatformEmscripten.cmake b/Source/WebCore/PlatformEmscripten.cmake
 new file mode 100644
-index 00000000000..5b736678f50
+index 00000000000..60cf206a3af
 --- /dev/null
 +++ b/Source/WebCore/PlatformEmscripten.cmake
-@@ -0,0 +1,99 @@
+@@ -0,0 +1,137 @@
 +# WebCore platform file for PORT=Emscripten.
 +# Structure cribbed from PlatformPlayStation.cmake / PlatformWin.cmake:
-+# curl networking + ImageDecoders + OpenSSL crypto, Skia for graphics.
-+# No EGL/libwpe/TextureMapper — Phase 2 renders via Skia CPU raster into a
-+# memory buffer that the embedder blits to the host <canvas>.
-+
-+include(platform/Curl.cmake)
++# ImageDecoders + Skia for graphics, the curl port's platform TYPES for
++# networking. No EGL/libwpe/TextureMapper — Phase 2 renders via Skia CPU
++# raster into a memory buffer that the embedder blits to the host <canvas>.
++#
++# NETWORKING: there is no transport in the engine. Every load goes out over
++# the embedder's host-fetch bridge (src/embedder/BibNetBridge.*), so libcurl,
++# libssl and nghttp2 are NOT linked and platform/Curl.cmake is deliberately
++# NOT included — we take only the subset below. USE_CURL stays ON because
++# ResourceRequest/ResourceResponse/ResourceError/CertificateInfo/
++# ProtectionSpace/AuthenticationChallenge *are* the port's platform types
++# under USE(CURL), as is the CookieJarDB cookie jar.
 +include(platform/ImageDecoders.cmake)
 +
-+# Static libcurl's transitive deps are not carried by CMake's CURL::libcurl
-+# imported target — HTTP/2 (nghttp2) and Content-Encoding: br (brotli) must
-+# reach the final link explicitly.
-+find_library(NGHTTP2_LIBRARY nghttp2 REQUIRED)
++list(APPEND WebCore_PRIVATE_INCLUDE_DIRECTORIES
++    "${WEBCORE_DIR}/platform/network/curl"
++)
++
++list(APPEND WebCore_SOURCES
++    # Cookie jar (sqlite, self-contained; feeds OPFS persistence).
++    platform/network/curl/CookieJarDB.cpp
++    platform/network/curl/CookieStorageCurl.cpp
++    platform/network/curl/CookieUtil.cpp
++    platform/network/curl/NetworkStorageSessionCurl.cpp
++    platform/network/curl/PublicSuffixStoreCurl.cpp     # libpsl: cookie-domain security
++
++    # Platform types for the loader (no libcurl symbols left in these).
++    platform/network/curl/CertificateInfoCurl.cpp
++    platform/network/curl/DNSResolveQueueCurl.cpp
++    platform/network/curl/ProtectionSpaceCurl.cpp
++    platform/network/curl/ResourceErrorCurl.cpp
++    platform/network/curl/ResourceRequestCurl.cpp
++    platform/network/curl/ResourceResponseCurl.cpp
++)
++
++list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
++    platform/network/curl/AuthenticationChallenge.h
++    platform/network/curl/CertificateInfo.h
++    platform/network/curl/CookieJarDB.h
++    platform/network/curl/CookieUtil.h
++    platform/network/curl/DNSResolveQueueCurl.h
++    platform/network/curl/ProtectionSpaceCurl.h
++    platform/network/curl/ResourceError.h
++    platform/network/curl/ResourceRequest.h
++    platform/network/curl/ResourceResponse.h
++)
++
++list(APPEND WebCore_LIBRARIES
++    LibPSL::LibPSL
++)
++
++# brotli: a freetype dep (WOFF2 decoding), not a curl one — it stays.
 +find_library(BROTLIDEC_LIBRARY brotlidec REQUIRED)
 +find_library(BROTLICOMMON_LIBRARY brotlicommon REQUIRED)
 +list(APPEND WebCore_LIBRARIES
-+    ${NGHTTP2_LIBRARY}
 +    ${BROTLIDEC_LIBRARY}
 +    ${BROTLICOMMON_LIBRARY}
 +)
@@ -584,7 +623,6 @@ index 00000000000..5b736678f50
 +    platform/emscripten/ThemeEmscripten.cpp
 +    platform/emscripten/UserAgentEmscripten.cpp
 +
-+    platform/network/emscripten/CurlSSLHandleEmscripten.cpp
 +    platform/network/emscripten/NetworkStateNotifierEmscripten.cpp
 +
 +    platform/generic/KeyedDecoderGeneric.cpp
@@ -1085,7 +1123,7 @@ index 5ebee25c414..46caa5e7c76 100644
  
  } // namespace WebCore
 diff --git a/Source/WebCore/loader/WorkerThreadableLoader.cpp b/Source/WebCore/loader/WorkerThreadableLoader.cpp
-index 34cce582179..716a0c34720 100644
+index 34cce582179..bdc65e41198 100644
 --- a/Source/WebCore/loader/WorkerThreadableLoader.cpp
 +++ b/Source/WebCore/loader/WorkerThreadableLoader.cpp
 @@ -72,6 +72,19 @@ WorkerThreadableLoader::~WorkerThreadableLoader()
@@ -1096,8 +1134,8 @@ index 34cce582179..716a0c34720 100644
 +    // PORT=Emscripten Phase W-A (decision-004): workers share the main
 +    // thread (WorkerThreadMode::UseMainThread), where the wait loop below
 +    // becomes WorkerMainRunLoop::runInMode -> RunLoop::cycle() spinning —
-+    // but response bytes arrive via host JS WebSocket events that can never
-+    // fire while wasm spins. Guaranteed hang (same root as the port-wide
++    // but response bytes arrive via host JS callbacks that can never fire
++    // while wasm spins. Guaranteed hang (same root as the port-wide
 +    // sync-XHR limitation). Fail fast and catchably: importScripts() gets
 +    // a NetworkError, sync XHR in a worker errors out.
 +    UNUSED_PARAM(workerOrWorkletGlobalScope);
@@ -2323,806 +2361,378 @@ index 134a1cf11d3..5fdbf8fa072 100644
      if (!s_skiaGLContext) {
          s_skiaGLContext = SkiaGLContext::create(*this);
          m_skiaGLContexts.add(*s_skiaGLContext);
-diff --git a/Source/WebCore/platform/network/curl/CurlContext.cpp b/Source/WebCore/platform/network/curl/CurlContext.cpp
-index 145c3e2b04c..21835186851 100644
---- a/Source/WebCore/platform/network/curl/CurlContext.cpp
-+++ b/Source/WebCore/platform/network/curl/CurlContext.cpp
-@@ -134,7 +134,7 @@ CurlContext::CurlContext()
-     m_isHttp3Enabled = (info->features & CURL_VERSION_HTTP3) && m_isAltSvcEnabled;
- #endif
+diff --git a/Source/WebCore/platform/network/NetworkStorageSession.h b/Source/WebCore/platform/network/NetworkStorageSession.h
+index 0708ea1a644..2549b60f9bb 100644
+--- a/Source/WebCore/platform/network/NetworkStorageSession.h
++++ b/Source/WebCore/platform/network/NetworkStorageSession.h
+@@ -85,7 +85,6 @@ class NetworkStorageSession;
  
--#ifndef NDEBUG
-+#if !defined(NDEBUG) || defined(__EMSCRIPTEN__) // BIB: keep runtime-gated curl tracing in release wasm builds
-     m_verbose = envVar.defined("DEBUG_CURL");
- 
-     auto logFile = envVar.read("CURL_LOG_FILE");
-@@ -145,7 +145,7 @@ CurlContext::CurlContext()
- 
- CurlContext::~CurlContext()
- {
--#ifndef NDEBUG
-+#if !defined(NDEBUG) || defined(__EMSCRIPTEN__) // BIB: keep runtime-gated curl tracing in release wasm builds
-     if (m_logFile)
-         fclose(m_logFile);
- #endif
-@@ -289,6 +289,13 @@ CURLMsg* CurlMultiHandle::readInfo(int& messagesInQueue)
-     return curl_multi_info_read(m_multiHandle, &messagesInQueue);
- }
- 
-+#if defined(__EMSCRIPTEN__)
-+CURLMcode CurlMultiHandle::getTimeout(long& timeoutMs)
-+{
-+    return curl_multi_timeout(m_multiHandle, &timeoutMs);
-+}
-+#endif
-+
- // CurlHandle -------------------------------------------------
- 
- CurlHandle::CurlHandle()
-@@ -308,7 +315,7 @@ CurlHandle::CurlHandle()
- 
-     enableProxyIfExists();
- 
--#ifndef NDEBUG
-+#if !defined(NDEBUG) || defined(__EMSCRIPTEN__) // BIB: keep runtime-gated curl tracing in release wasm builds
-     enableVerboseIfUsed();
-     enableStdErrIfUsed();
- #endif
-@@ -935,7 +942,7 @@ std::optional<CertificateInfo> CurlHandle::certificateInfo() const
-     return std::nullopt;
- }
- 
--#ifndef NDEBUG
-+#if !defined(NDEBUG) || defined(__EMSCRIPTEN__) // BIB: keep runtime-gated curl tracing in release wasm builds
- 
- void CurlHandle::enableVerboseIfUsed()
- {
-diff --git a/Source/WebCore/platform/network/curl/CurlContext.h b/Source/WebCore/platform/network/curl/CurlContext.h
-index e673140e1d5..26a38daa3ed 100644
---- a/Source/WebCore/platform/network/curl/CurlContext.h
-+++ b/Source/WebCore/platform/network/curl/CurlContext.h
-@@ -132,7 +132,7 @@ public:
-     Seconds connectTimeout() const { return m_connectTimeout; }
-     Seconds defaultTimeoutInterval() const { return m_defaultTimeoutInterval; }
- 
--#ifndef NDEBUG
-+#if !defined(NDEBUG) || defined(__EMSCRIPTEN__) // BIB: keep runtime-gated curl tracing in release wasm builds
-     FILE* getLogFile() const { return m_logFile; }
-     bool isVerbose() const { return m_verbose; }
- #endif
-@@ -156,7 +156,7 @@ private:
- 
-     String m_alternativeServicesStorageFile;
- 
--#ifndef NDEBUG
-+#if !defined(NDEBUG) || defined(__EMSCRIPTEN__) // BIB: keep runtime-gated curl tracing in release wasm builds
-     FILE* m_logFile { nullptr };
-     bool m_verbose { false };
- #endif
-@@ -183,6 +183,12 @@ public:
-     CURLMcode wakeUp();
-     CURLMcode perform(int&);
-     CURLMsg* readInfo(int&);
-+#if defined(__EMSCRIPTEN__)
-+    // BIB: curl_multi_timeout — how soon libcurl wants another perform()
-+    // pass (0 = immediately, -1 = only waiting on socket activity). The
-+    // single-threaded main-RunLoop pump uses this to pick its re-arm delay.
-+    CURLMcode getTimeout(long&);
-+#endif
- 
- private:
-     CURLM* m_multiHandle { nullptr };
-@@ -316,7 +322,7 @@ public:
-     CURLcode send(const uint8_t*, size_t, size_t&);
-     CURLcode receive(uint8_t*, size_t, size_t&);
- 
--#ifndef NDEBUG
-+#if !defined(NDEBUG) || defined(__EMSCRIPTEN__) // BIB: keep runtime-gated curl tracing in release wasm builds
-     void enableVerboseIfUsed();
-     void enableStdErrIfUsed();
- #endif
-diff --git a/Source/WebCore/platform/network/curl/CurlRequest.cpp b/Source/WebCore/platform/network/curl/CurlRequest.cpp
-index d867e529097..ef71bd5e2e8 100644
---- a/Source/WebCore/platform/network/curl/CurlRequest.cpp
-+++ b/Source/WebCore/platform/network/curl/CurlRequest.cpp
-@@ -173,7 +173,16 @@ void CurlRequest::callClient(Function<void(CurlRequest&, CurlRequestClient&)>&&
- 
- void CurlRequest::runOnMainThread(Function<void()>&& task)
- {
-+#if defined(__EMSCRIPTEN__)
-+    // Single-threaded wasm: transfer callbacks already run on the main
-+    // thread, inside curl_multi_perform. ensureOnMainThread would run the
-+    // client task inline — re-entering WebCore (and possibly curl itself,
-+    // via cancel/pause) from inside a curl callback. Always defer to the
-+    // next RunLoop cycle to keep the upstream async contract.
-+    callOnMainThread(WTF::move(task));
-+#else
-     ensureOnMainThread(WTF::move(task));
-+#endif
- }
- 
- void CurlRequest::runOnWorkerThreadIfRequired(Function<void()>&& task)
-@@ -511,6 +520,18 @@ int CurlRequest::didReceiveDebugInfo(curl_infotype type, std::span<const char> d
-     if (!data.data())
-         return 0;
- 
-+#if !defined(NDEBUG) || defined(__EMSCRIPTEN__)
-+    // BIB: this callback REPLACES curl's default stderr verbose output, so
-+    // DEBUG_CURL was silently swallowed for every CurlRequest transfer.
-+    // Re-emit the informational lines when verbose tracing is requested.
-+    if (type == CURLINFO_TEXT && CurlContext::singleton().isVerbose()) {
-+        auto size = data.size();
-+        while (size && (data[size - 1] == '\n' || data[size - 1] == '\r'))
-+            --size;
-+        WTFLogAlways("curl: %.*s", static_cast<int>(size), data.data());
-+    }
-+#endif
-+
-     if (type == CURLINFO_HEADER_OUT) {
-         String requestHeader(data);
-         auto headerFields = requestHeader.split("\r\n"_s);
-diff --git a/Source/WebCore/platform/network/curl/CurlRequestScheduler.cpp b/Source/WebCore/platform/network/curl/CurlRequestScheduler.cpp
-index 43dce2f2ad2..66082e90317 100644
---- a/Source/WebCore/platform/network/curl/CurlRequestScheduler.cpp
-+++ b/Source/WebCore/platform/network/curl/CurlRequestScheduler.cpp
-@@ -33,6 +33,10 @@
- 
- #include "CurlRequestSchedulerClient.h"
- 
-+#if defined(__EMSCRIPTEN__)
-+#include <wtf/RunLoop.h>
-+#endif
-+
  namespace WebCore {
  
- WTF_MAKE_TZONE_ALLOCATED_IMPL(CurlRequestScheduler);
-@@ -65,6 +69,12 @@ void CurlRequestScheduler::cancel(CurlRequestSchedulerClient* client)
-         return;
+-class CurlProxySettings;
+ class NetworkingContext;
+ class ResourceRequest;
  
-     cancelTransfer(client);
-+
-+#if defined(__EMSCRIPTEN__)
-+    // No parked worker thread will notice the queued finalize task; make
-+    // sure the main-thread pump is armed to drain it.
-+    startOrWakeUpThread();
-+#endif
- }
+@@ -192,9 +191,6 @@ public:
+     WEBCORE_EXPORT void setCookieDatabase(UniqueRef<CookieJarDB>&&);
+     WEBCORE_EXPORT void setCookiesFromHTTPResponse(const URL& firstParty, const URL&, const String&) const;
+     WEBCORE_EXPORT void setCookieAcceptPolicy(CookieAcceptPolicy) const;
+-    WEBCORE_EXPORT void setProxySettings(const CurlProxySettings&);
+-
+-    WEBCORE_EXPORT void clearAlternativeServices();
+ #else
+     WEBCORE_EXPORT NetworkStorageSession(PAL::SessionID, NetworkingContext*);
+     ~NetworkStorageSession();
+diff --git a/Source/WebCore/platform/network/curl/AuthenticationChallenge.h b/Source/WebCore/platform/network/curl/AuthenticationChallenge.h
+index 79ae90c2656..b8df4e42868 100644
+--- a/Source/WebCore/platform/network/curl/AuthenticationChallenge.h
++++ b/Source/WebCore/platform/network/curl/AuthenticationChallenge.h
+@@ -31,8 +31,6 @@
  
- void CurlRequestScheduler::callOnWorkerThread(Function<void()>&& task)
-@@ -81,6 +91,30 @@ void CurlRequestScheduler::startOrWakeUpThread()
- {
-     ASSERT(isMainThread());
+ namespace WebCore {
  
-+#if defined(__EMSCRIPTEN__)
-+    // Single-threaded wasm: no worker thread exists. Lazily create the
-+    // multi handle, then arm a self-rescheduling RunLoop pump that makes
-+    // one non-blocking pass per cycle while work is pending (the
-+    // libcurl.js pattern — curl_multi over non-blocking websocket
-+    // sockets never needs to block).
-+    {
-+        Locker locker { m_multiHandleMutex };
-+        if (!m_curlMultiHandle) {
-+            m_curlMultiHandle.emplace();
-+            m_curlMultiHandle->setMaxConnects(m_maxConnects);
-+            m_curlMultiHandle->setMaxTotalConnections(m_maxTotalConnections);
-+            m_curlMultiHandle->setMaxHostConnections(m_maxHostConnections);
-+        }
-+    }
-+
-+    if (m_pumpScheduled)
-+        return;
-+
-+    m_pumpScheduled = true;
-+    RunLoop::mainSingleton().dispatch([this] {
-+        pumpMainThread();
-+    });
-+#else
+-class CurlResponse;
+-
+ class AuthenticationChallenge final : public AuthenticationChallengeBase {
+ public:
+     AuthenticationChallenge()
+@@ -44,19 +42,11 @@ public:
      {
-         Locker locker { m_mutex };
-         if (m_runThread) {
-@@ -100,8 +134,83 @@ void CurlRequestScheduler::startOrWakeUpThread()
-     m_thread = Thread::create("curlThread"_s, [this] {
-         workerThread();
-     }, ThreadType::Network);
-+#endif
- }
- 
-+#if defined(__EMSCRIPTEN__)
-+void CurlRequestScheduler::pumpMainThread()
-+{
-+    ASSERT(isMainThread());
-+
-+    m_pumpScheduled = false;
-+
-+    // hostPump() can poke before any transfer ever created the handle.
-+    {
-+        Locker locker { m_multiHandleMutex };
-+        if (!m_curlMultiHandle)
-+            return;
-+    }
-+
-+    executeTasks();
-+
-+    int activeCount = 0;
-+    while (m_curlMultiHandle->perform(activeCount) == CURLM_CALL_MULTI_PERFORM) { }
-+
-+    while (true) {
-+        int messagesInQueue = 0;
-+        CURLMsg* msg = m_curlMultiHandle->readInfo(messagesInQueue);
-+        if (!msg)
-+            break;
-+
-+        ASSERT(msg->msg == CURLMSG_DONE);
-+        if (auto client = m_clientMaps.inlineGet(msg->easy_handle))
-+            completeTransfer(client, msg->data.result);
-+    }
-+
-+    bool moreWork;
-+    {
-+        Locker locker { m_mutex };
-+        moreWork = m_activeJobs.size() || m_taskQueue.size() || activeCount;
-+    }
-+    if (!moreWork)
-+        return;
-+
-+    // Adaptive re-arm. curl_multi_timeout says how soon libcurl wants the
-+    // next pass: 0 = it has immediate work (re-dispatch now — with the
-+    // embedder's RunLoop wake-up hook this runs at macrotask rate, not
-+    // once per display frame); -1 = it is only waiting on socket activity,
-+    // which SOCKFS cannot signal into curl, so poll. The poll delay is
-+    // capped at 8ms; the host page additionally pokes hostPump() when
-+    // WebSocket data actually arrives, so the cap is a fallback, not the
-+    // expected read latency.
-+    long timeoutMs = -1;
-+    m_curlMultiHandle->getTimeout(timeoutMs);
-+
-+    // Cycle-breaker (Codex 2026-06-10, high): if libcurl keeps answering
-+    // "perform again now", chaining immediate dispatches would saturate the
-+    // host event loop at macrotask rate with no code-level guarantee of a
-+    // yield. Allow a short immediate burst, then force one pass through a
-+    // 1ms timer before the next burst.
-+    static constexpr int maxImmediatePumpBurst = 16;
-+    if (!timeoutMs && ++m_immediatePumpBurst <= maxImmediatePumpBurst) {
-+        startOrWakeUpThread();
-+        return;
-+    }
-+    m_immediatePumpBurst = 0;
-+
-+    if (m_pumpTimerArmed || m_pumpScheduled)
-+        return;
-+
-+    static constexpr long maxPollDelayMs = 8;
-+    long delayMs = timeoutMs < 0 ? maxPollDelayMs : std::min(std::max(timeoutMs, 1L), maxPollDelayMs);
-+    m_pumpTimerArmed = true;
-+    RunLoop::mainSingleton().dispatchAfter(Seconds::fromMilliseconds(delayMs), [this] {
-+        m_pumpTimerArmed = false;
-+        pumpMainThread();
-+    });
-+}
-+#endif
-+
- void CurlRequestScheduler::wakeUpThreadIfPossible()
- {
-     Locker locker { m_multiHandleMutex };
-@@ -138,7 +247,9 @@ void CurlRequestScheduler::stopThread()
- 
- void CurlRequestScheduler::executeTasks()
- {
-+#if !defined(__EMSCRIPTEN__)
-     ASSERT(!isMainThread());
-+#endif
- 
-     Vector<Function<void()>> taskQueue;
- 
-diff --git a/Source/WebCore/platform/network/curl/CurlRequestScheduler.h b/Source/WebCore/platform/network/curl/CurlRequestScheduler.h
-index fc5b225a8b7..3998a7ee71d 100644
---- a/Source/WebCore/platform/network/curl/CurlRequestScheduler.h
-+++ b/Source/WebCore/platform/network/curl/CurlRequestScheduler.h
-@@ -51,6 +51,13 @@ public:
- 
-     void callOnWorkerThread(Function<void()>&&);
- 
-+#if defined(__EMSCRIPTEN__)
-+    // BIB: host-page poke. The wisp WebSocket shim calls this (through the
-+    // embedder's bib_pump_network export) the moment socket data arrives,
-+    // so reads don't have to wait out the polling re-arm delay below.
-+    void hostPump() { pumpMainThread(); }
-+#endif
-+
- private:
-     void startOrWakeUpThread();
-     void wakeUpThreadIfPossible();
-@@ -61,6 +68,13 @@ private:
- 
-     void workerThread();
- 
-+#if defined(__EMSCRIPTEN__)
-+    // PORT=Emscripten is single-threaded: the multi handle is pumped from
-+    // the main RunLoop (one non-blocking pass per cycle) instead of a
-+    // dedicated thread parked in poll(). See CurlRequestScheduler.cpp.
-+    void pumpMainThread();
-+#endif
-+
-     void startTransfer(CurlRequestSchedulerClient*);
-     void completeTransfer(CurlRequestSchedulerClient*, CURLcode);
-     void cancelTransfer(CurlRequestSchedulerClient*);
-@@ -77,6 +91,17 @@ private:
-     Lock m_multiHandleMutex;
-     std::optional<CurlMultiHandle> m_curlMultiHandle;
- 
-+#if defined(__EMSCRIPTEN__)
-+    bool m_pumpScheduled { false };
-+    // BIB: a delayed re-arm (dispatchAfter) is pending. Kept separate from
-+    // m_pumpScheduled so a new request can still schedule an immediate pass
-+    // while a poll timer is in flight; the spare pass is idempotent.
-+    bool m_pumpTimerArmed { false };
-+    // BIB: consecutive curl_multi_timeout==0 immediate re-arms; reset when
-+    // a pass goes through the timer path (cycle-breaker, see .cpp).
-+    int m_immediatePumpBurst { 0 };
-+#endif
-+
-     long m_maxConnects;
-     long m_maxTotalConnections;
-     long m_maxHostConnections;
-diff --git a/Source/WebCore/platform/network/curl/CurlStream.cpp b/Source/WebCore/platform/network/curl/CurlStream.cpp
-index e7708fd8bf2..19472b05b7b 100644
---- a/Source/WebCore/platform/network/curl/CurlStream.cpp
-+++ b/Source/WebCore/platform/network/curl/CurlStream.cpp
-@@ -41,6 +41,34 @@ CurlStream::CurlStream(CurlStreamScheduler& scheduler, CurlStreamID streamID, UR
-     : m_scheduler(scheduler)
-     , m_streamID(streamID)
- {
-+#if defined(__EMSCRIPTEN__)
-+    // Single-threaded port: upstream's blocking CONNECT_ONLY perform()
-+    // (the #else branch) can never complete here — the SOCKFS WebSocket
-+    // underneath needs the JS event loop to open, and that loop is starved
-+    // while perform() spins. Drive the connect through a private multi
-+    // handle instead: the scheduler's main-thread pump calls tryToConnect()
-+    // (via tryToTransfer) until libcurl reports the TCP+TLS connect
-+    // finished, after which the easy handle serves curl_easy_recv/send
-+    // exactly like upstream (the documented connect-only-via-multi
-+    // pattern). This replaces the WS-0-era stub that failed every stream
-+    // with CURLE_COULDNT_CONNECT at creation.
-+    m_curlHandle = makeUnique<CurlHandle>();
-+
-+    url.setProtocol(url.protocolIs("wss"_s) ? "https"_s : "http"_s);
-+    m_curlHandle->setURL(WTF::move(url), localhostAlias);
-+
-+    if (serverTrustEvaluation == ServerTrustEvaluation::Disable)
-+        m_curlHandle->disableServerTrustEvaluation();
-+
-+    m_curlHandle->enableConnectionOnly();
-+
-+    m_connectMulti = makeUnique<CurlMultiHandle>();
-+    if (m_connectMulti->addHandle(m_curlHandle->handle()) != CURLM_OK) {
-+        notifyFailure(CURLE_COULDNT_CONNECT);
-+        return;
-+    }
-+    tryToConnect();
-+#else
-     ASSERT(!isMainThread());
- 
-     m_curlHandle = makeUnique<CurlHandle>();
-@@ -62,16 +90,75 @@ CurlStream::CurlStream(CurlStreamScheduler& scheduler, CurlStreamID streamID, UR
-     m_scheduler.callClientOnMainThread(m_streamID, [streamID = m_streamID](Client& client) {
-         client.didOpen(streamID);
-     });
-+#endif
- }
- 
- CurlStream::~CurlStream()
- {
-+#if !defined(__EMSCRIPTEN__)
-     ASSERT(!isMainThread());
-+#endif
-     destroyHandle();
- }
- 
-+#if defined(__EMSCRIPTEN__)
-+void CurlStream::tryToConnect()
-+{
-+    if (!m_connecting || !m_curlHandle || !m_connectMulti)
-+        return;
-+
-+    int activeCount = 0;
-+    CURLMcode performResult;
-+    while ((performResult = m_connectMulti->perform(activeCount)) == CURLM_CALL_MULTI_PERFORM) { }
-+    if (performResult != CURLM_OK) {
-+        // A multi-level failure never produces a CURLMSG_DONE, which would
-+        // otherwise strand the channel in CONNECTING forever (Codex).
-+        m_connecting = false;
-+        notifyFailure(CURLE_COULDNT_CONNECT);
-+        return;
-+    }
-+
-+    while (true) {
-+        int messagesInQueue = 0;
-+        CURLMsg* msg = m_connectMulti->readInfo(messagesInQueue);
-+        if (!msg)
-+            break;
-+        if (msg->msg != CURLMSG_DONE || msg->easy_handle != m_curlHandle->handle())
-+            continue;
-+
-+        auto result = msg->data.result;
-+        // The multi handle must stay alive (and the easy handle in it) for
-+        // the stream's whole life: the multi owns the connection cache, so
-+        // curl_multi_cleanup here would close the just-established
-+        // CONNECT_ONLY connection out from under curl_easy_recv/send
-+        // (observed: "closing connection #0" + ACTIVESOCKET going BAD).
-+        // destroyHandle() tears both down in the required order.
-+        m_connecting = false;
-+
-+        if (result != CURLE_OK) {
-+            notifyFailure(result);
-+            return;
-+        }
-+
-+        m_scheduler.callClientOnMainThread(m_streamID, [streamID = m_streamID](Client& client) {
-+            client.didOpen(streamID);
-+        });
-+        return;
-+    }
-+}
-+#endif
-+
- void CurlStream::destroyHandle()
- {
-+#if defined(__EMSCRIPTEN__)
-+    // Teardown order required by curl: remove the easy handle from the
-+    // multi, destroy the easy handle, then destroy the multi.
-+    if (m_connectMulti && m_curlHandle)
-+        m_connectMulti->removeHandle(m_curlHandle->handle());
-+    m_curlHandle = nullptr;
-+    m_connectMulti = nullptr;
-+#endif
-+
-     if (!m_curlHandle)
-         return;
- 
-@@ -80,7 +167,9 @@ void CurlStream::destroyHandle()
- 
- void CurlStream::send(UniqueArray<uint8_t>&& buffer, size_t length)
- {
-+#if !defined(__EMSCRIPTEN__)
-     ASSERT(!isMainThread());
-+#endif
- 
-     if (!m_curlHandle)
-         return;
-@@ -90,17 +179,33 @@ void CurlStream::send(UniqueArray<uint8_t>&& buffer, size_t length)
- 
- void CurlStream::appendMonitoringFd(fd_set& readfds, fd_set& writefds, fd_set& exceptfds, int& maxfd)
- {
-+#if !defined(__EMSCRIPTEN__)
-     ASSERT(!isMainThread());
-+#endif
- 
-     if (!m_curlHandle)
-         return;
- 
-+#if defined(__EMSCRIPTEN__)
-+    // No usable ACTIVESOCKET until the multi-driven connect completes —
-+    // asking for it now would read as a failure and kill the stream.
-+    if (m_connecting)
-+        return;
-+#endif
-+
-     auto socket = m_curlHandle->getActiveSocket();
-     if (!socket.has_value()) {
-         notifyFailure(socket.error());
-         return;
      }
  
-+    // CURLINFO_ACTIVESOCKET reports CURL_SOCKET_BAD (-1) as a "success"
-+    // when the connection is gone — FD_SET on it corrupts memory.
-+    if (*socket == CURL_SOCKET_BAD || *socket >= FD_SETSIZE) {
-+        notifyFailure(CURLE_RECV_ERROR);
-+        return;
-+    }
-+
-     FD_SET(*socket, &readfds);
-     FD_SET(*socket, &exceptfds);
- 
-@@ -113,17 +218,33 @@ void CurlStream::appendMonitoringFd(fd_set& readfds, fd_set& writefds, fd_set& e
- 
- void CurlStream::tryToTransfer(const fd_set& readfds, const fd_set& writefds, const fd_set& exceptfds)
- {
-+#if !defined(__EMSCRIPTEN__)
-     ASSERT(!isMainThread());
-+#endif
- 
-     if (!m_curlHandle)
-         return;
- 
-+#if defined(__EMSCRIPTEN__)
-+    // The pump calls this every pass regardless of fd readiness; while the
-+    // multi-driven connect is still in flight, give it the cycle instead.
-+    if (m_connecting) {
-+        tryToConnect();
-+        return;
-+    }
-+#endif
-+
-     auto socket = m_curlHandle->getActiveSocket();
-     if (!socket.has_value()) {
-         notifyFailure(socket.error());
-         return;
-     }
- 
-+    if (*socket == CURL_SOCKET_BAD || *socket >= FD_SETSIZE) {
-+        notifyFailure(CURLE_RECV_ERROR);
-+        return;
-+    }
-+
-     if (FD_ISSET(*socket, &readfds) || FD_ISSET(*socket, &exceptfds))
-         tryToReceive();
- 
-@@ -185,9 +306,13 @@ void CurlStream::tryToSend()
- 
- void CurlStream::notifyFailure(CURLcode errorCode)
- {
-+    // m_curlHandle can already be gone (or never have existed) on failure
-+    // paths that run after destroyHandle().
-     CertificateInfo certificateInfo;
--    if (auto info = m_curlHandle->certificateInfo())
--        certificateInfo = WTF::move(*info);
-+    if (m_curlHandle) {
-+        if (auto info = m_curlHandle->certificateInfo())
-+            certificateInfo = WTF::move(*info);
-+    }
- 
-     destroyHandle();
- 
-diff --git a/Source/WebCore/platform/network/curl/CurlStream.h b/Source/WebCore/platform/network/curl/CurlStream.h
-index af04c9f7ac0..a2d897c643c 100644
---- a/Source/WebCore/platform/network/curl/CurlStream.h
-+++ b/Source/WebCore/platform/network/curl/CurlStream.h
-@@ -77,6 +77,12 @@ private:
- 
-     void notifyFailure(CURLcode);
- 
-+#if defined(__EMSCRIPTEN__)
-+    // Single-threaded port: non-blocking connect driven by the scheduler
-+    // pump (see the constructor comment in CurlStream.cpp).
-+    void tryToConnect();
-+#endif
-+
-     static const size_t kReceiveBufferSize = 16 * 1024;
- 
-     CurlStreamScheduler& m_scheduler;
-@@ -86,6 +92,11 @@ private:
- 
-     Vector<std::pair<UniqueArray<uint8_t>, size_t>> m_sendBuffers;
-     size_t m_sendBufferOffset { 0 };
-+
-+#if defined(__EMSCRIPTEN__)
-+    std::unique_ptr<CurlMultiHandle> m_connectMulti;
-+    bool m_connecting { true };
-+#endif
+-    WEBCORE_EXPORT AuthenticationChallenge(const CurlResponse&, unsigned, const ResourceResponse&);
+-    WEBCORE_EXPORT AuthenticationChallenge(const URL&, const CertificateInfo&, const ResourceError&);
+-
++    // The curl transport's challenge constructors (password-based from a
++    // CurlResponse, server-trust from a CertificateInfo) went with the
++    // transport: this port never raises an auth challenge. See
++    // AuthenticationChallengeCurl.cpp, dropped from the build.
+     AuthenticationClient* authenticationClient() const { return nullptr; }
+-
+-private:
+-    ProtectionSpace::ServerType protectionSpaceServerTypeFromURI(const URL&, bool isForProxy);
+-    ProtectionSpace protectionSpaceForPasswordBased(const CurlResponse&, const ResourceResponse&);
+-    ProtectionSpace protectionSpaceForServerTrust(const URL&, const CertificateInfo&);
+-    std::optional<uint16_t> determineProxyPort(const URL&);
+-    ProtectionSpace::AuthenticationScheme authenticationSchemeFromCurlAuth(long);
+-    String parseRealm(const ResourceResponse&);
+-    void removeLeadingAndTrailingQuotes(String&);
  };
  
  } // namespace WebCore
-diff --git a/Source/WebCore/platform/network/curl/CurlStreamScheduler.cpp b/Source/WebCore/platform/network/curl/CurlStreamScheduler.cpp
-index 0fdc759290b..62bd87067db 100644
---- a/Source/WebCore/platform/network/curl/CurlStreamScheduler.cpp
-+++ b/Source/WebCore/platform/network/curl/CurlStreamScheduler.cpp
-@@ -27,6 +27,10 @@
- #include "CurlStreamScheduler.h"
- #include <wtf/TZoneMallocInlines.h>
+diff --git a/Source/WebCore/platform/network/curl/CertificateInfo.h b/Source/WebCore/platform/network/curl/CertificateInfo.h
+index 063c1fcf71c..d926f7e948b 100644
+--- a/Source/WebCore/platform/network/curl/CertificateInfo.h
++++ b/Source/WebCore/platform/network/curl/CertificateInfo.h
+@@ -47,7 +47,6 @@ public:
+     WEBCORE_EXPORT CertificateInfo isolatedCopy() const;
  
-+#if defined(__EMSCRIPTEN__)
-+#include <wtf/RunLoop.h>
-+#endif
-+
+     int verificationError() const { return m_verificationError; }
+-    WEBCORE_EXPORT String verificationErrorDescription() const;
+     const Vector<Certificate>& certificateChain() const { return m_certificateChain; }
+ 
+     bool containsNonRootSHA1SignedCertificate() const { notImplemented(); return false; }
+diff --git a/Source/WebCore/platform/network/curl/CertificateInfoCurl.cpp b/Source/WebCore/platform/network/curl/CertificateInfoCurl.cpp
+index 5076ddb3f9b..bfac4f1dcc5 100644
+--- a/Source/WebCore/platform/network/curl/CertificateInfoCurl.cpp
++++ b/Source/WebCore/platform/network/curl/CertificateInfoCurl.cpp
+@@ -28,8 +28,6 @@
+ 
  #if USE(CURL)
  
+-#include "OpenSSLHelper.h"
+-#include <openssl/ssl.h>
+ #include <wtf/CrossThreadCopier.h>
+ 
  namespace WebCore {
-@@ -98,7 +102,11 @@ void CurlStreamScheduler::callOnWorkerThread(Function<void()>&& task)
- 
- void CurlStreamScheduler::callClientOnMainThread(CurlStreamID streamID, Function<void(CurlStream::Client&)>&& task)
- {
-+#if !defined(__EMSCRIPTEN__)
-+    // Single-threaded port: the pump runs ON the main thread; the deferred
-+    // callOnMainThread below keeps the upstream async delivery contract.
-     ASSERT(!isMainThread());
-+#endif
- 
-     callOnMainThread([this, streamID, task = WTF::move(task)]() {
-         if (auto client = m_clientList.get(streamID))
-@@ -108,6 +116,18 @@ void CurlStreamScheduler::callClientOnMainThread(CurlStreamID streamID, Function
- 
- void CurlStreamScheduler::startThreadIfNeeded()
- {
-+#if defined(__EMSCRIPTEN__)
-+    // Single-threaded wasm: no thread — arm a self-rescheduling pump on
-+    // the main RunLoop instead (the CurlRequestScheduler recipe; the
-+    // worker thread here would abort in Thread::create the moment a page
-+    // opened a WebSocket).
-+    if (m_pumpScheduled)
-+        return;
-+    m_pumpScheduled = true;
-+    RunLoop::mainSingleton().dispatch([this] {
-+        pumpMainThread();
-+    });
-+#else
-     {
-         Locker locker { m_mutex };
-         if (m_runThread)
-@@ -122,8 +142,85 @@ void CurlStreamScheduler::startThreadIfNeeded()
-     m_thread = Thread::create("curlStreamThread"_s, [this] {
-         workerThread();
-     }, ThreadType::Network);
-+#endif
+@@ -45,11 +43,6 @@ CertificateInfo CertificateInfo::isolatedCopy() const
+     return { m_verificationError, crossThreadCopy(m_certificateChain) };
  }
  
-+#if defined(__EMSCRIPTEN__)
-+void CurlStreamScheduler::pumpMainThread()
-+{
-+    ASSERT(isMainThread());
-+
-+    m_pumpScheduled = false;
-+
-+    bool hadTasks;
-+    {
-+        Locker locker { m_mutex };
-+        hadTasks = m_taskQueue.size();
-+    }
-+
-+    executeTasks();
-+
-+    // One non-blocking pass of the worker loop body: select() with a zero
-+    // timeout polls readiness of the SOCKFS-backed sockets.
-+    int rc = 0;
-+    fd_set readfds;
-+    fd_set writefds;
-+    fd_set exceptfds;
-+    int maxfd = -1;
-+
-+    FD_ZERO(&readfds);
-+    FD_ZERO(&writefds);
-+    FD_ZERO(&exceptfds);
-+
-+    for (auto& stream : m_streamList.values())
-+        stream->appendMonitoringFd(readfds, writefds, exceptfds, maxfd);
-+
-+    if (maxfd >= 0) {
-+        struct timeval timeout { 0, 0 };
-+        rc = ::select(maxfd + 1, &readfds, &writefds, &exceptfds, &timeout);
-+        if (rc == -1) {
-+            FD_ZERO(&readfds);
-+            FD_ZERO(&writefds);
-+            FD_ZERO(&exceptfds);
-+        }
-+    }
-+
-+    for (auto& stream : m_streamList.values())
-+        stream->tryToTransfer(readfds, writefds, exceptfds);
-+
-+    bool moreWork;
-+    {
-+        Locker locker { m_mutex };
-+        moreWork = m_streamList.size() || m_taskQueue.size();
-+    }
-+    if (!moreWork)
-+        return;
-+
-+    // Something happened this pass (queued tasks ran, or select() reported
-+    // readiness): pump again at macrotask rate while data is flowing.
-+    // Otherwise the streams are merely open-and-idle — a WebSocket like
-+    // Discord's gateway stays connected for the whole session, and an
-+    // immediate re-dispatch here would spin the host event loop at 100%
-+    // for its lifetime. Poll on a short timer instead; writefds is only
-+    // monitored while sends are buffered, so an idle socket really does
-+    // report rc == 0.
-+    if (hadTasks || rc > 0) {
-+        startThreadIfNeeded();
-+        return;
-+    }
-+
-+    if (m_pumpTimerArmed || m_pumpScheduled)
-+        return;
-+
-+    static constexpr long pollDelayMs = 8;
-+    m_pumpTimerArmed = true;
-+    RunLoop::mainSingleton().dispatchAfter(Seconds::fromMilliseconds(pollDelayMs), [this] {
-+        m_pumpTimerArmed = false;
-+        pumpMainThread();
-+    });
-+}
-+#endif
-+
- void CurlStreamScheduler::stopThreadIfNoMoreJobRunning()
+-String CertificateInfo::verificationErrorDescription() const
+-{
+-    return String::fromLatin1(X509_verify_cert_error_string(m_verificationError));
+-}
+-
+ CertificateInfo::Certificate CertificateInfo::makeCertificate(std::span<const uint8_t> buffer)
  {
-     ASSERT(!isMainThread());
-@@ -140,7 +237,9 @@ void CurlStreamScheduler::stopThreadIfNoMoreJobRunning()
+     Certificate certificate;
+@@ -57,12 +50,12 @@ CertificateInfo::Certificate CertificateInfo::makeCertificate(std::span<const ui
+     return certificate;
+ }
  
- void CurlStreamScheduler::executeTasks()
++// Certificate parsing lived in OpenSSLHelper, part of the deleted curl/TLS
++// tier. Nothing populates a chain on this port (TLS terminates host-side),
++// so there is never a summary to report.
+ std::optional<CertificateSummary> CertificateInfo::summary() const
  {
-+#if !defined(__EMSCRIPTEN__)
-     ASSERT(!isMainThread());
-+#endif
+-    if (!m_certificateChain.size())
+-        return std::nullopt;
+-
+-    return OpenSSL::createSummaryInfo(m_certificateChain.at(0));
++    return std::nullopt;
+ }
  
-     Vector<Function<void()>> taskQueue;
+ }
+diff --git a/Source/WebCore/platform/network/curl/NetworkStorageSessionCurl.cpp b/Source/WebCore/platform/network/curl/NetworkStorageSessionCurl.cpp
+index 565d89cd623..6b957e6fbaa 100644
+--- a/Source/WebCore/platform/network/curl/NetworkStorageSessionCurl.cpp
++++ b/Source/WebCore/platform/network/curl/NetworkStorageSessionCurl.cpp
+@@ -32,7 +32,6 @@
+ #include "CookieJarDB.h"
+ #include "CookieRequestHeaderFieldProxy.h"
+ #include "CookieStoreGetOptions.h"
+-#include "CurlContext.h"
+ #include "HTTPCookieAcceptPolicy.h"
+ #include <optional>
+ #include <wtf/FileSystem.h>
+@@ -58,13 +57,6 @@ static String defaultCookieJarPath()
+ #endif
+ }
  
-diff --git a/Source/WebCore/platform/network/curl/CurlStreamScheduler.h b/Source/WebCore/platform/network/curl/CurlStreamScheduler.h
-index 2d7a77d759a..c196005ac65 100644
---- a/Source/WebCore/platform/network/curl/CurlStreamScheduler.h
-+++ b/Source/WebCore/platform/network/curl/CurlStreamScheduler.h
-@@ -54,6 +54,15 @@ private:
+-static String alternativeServicesStorageFile(const String& alternativeServicesDirectory)
+-{
+-    static constexpr auto defaultFileName = "altsvc-cache.txt"_s;
+-
+-    return FileSystem::pathByAppendingComponent(alternativeServicesDirectory, defaultFileName);
+-}
+-
+ static std::pair<String, bool> cookiesForSession(const NetworkStorageSession& session, const URL& firstParty, const URL& url, bool forHTTPHeader, IncludeSecureCookies includeSecureCookies)
+ {
+     StringBuilder cookies;
+@@ -87,15 +79,13 @@ static std::pair<String, bool> cookiesForSession(const NetworkStorageSession& se
+     return { cookies.toString(), didAccessSecureCookies };
+ }
  
-     void workerThread();
+-NetworkStorageSession::NetworkStorageSession(PAL::SessionID sessionID, const String& alternativeServicesDirectory)
++// The alternativeServicesDirectory argument is vestigial: alt-svc lived in
++// the curl transport, which this port does not link.
++NetworkStorageSession::NetworkStorageSession(PAL::SessionID sessionID, const String&)
+     : m_sessionID(sessionID)
+     // :memory: creates in-memory database, see https://www.sqlite.org/inmemorydb.html
+     , m_cookieDatabase(makeUniqueRef<CookieJarDB>(sessionID.isEphemeral() ? ":memory:"_s : defaultCookieJarPath()))
+ {
+-    if (!alternativeServicesDirectory.isEmpty()) {
+-        FileSystem::makeAllDirectories(alternativeServicesDirectory);
+-        CurlContext::singleton().setAlternativeServicesStorageFile(alternativeServicesStorageFile(alternativeServicesDirectory));
+-    }
+ }
  
-+#if defined(__EMSCRIPTEN__)
-+    // PORT=Emscripten is single-threaded: the worker thread is replaced by
-+    // a self-rescheduling main-RunLoop pump (same recipe as
-+    // CurlRequestScheduler::pumpMainThread).
-+    void pumpMainThread();
-+    bool m_pumpScheduled { false };
-+    bool m_pumpTimerArmed { false };
-+#endif
-+
-     Lock m_mutex;
-     RefPtr<Thread> m_thread;
-     bool m_runThread { false };
-diff --git a/Source/WebCore/platform/network/emscripten/CurlSSLHandleEmscripten.cpp b/Source/WebCore/platform/network/emscripten/CurlSSLHandleEmscripten.cpp
-new file mode 100644
-index 00000000000..493312c0cd0
---- /dev/null
-+++ b/Source/WebCore/platform/network/emscripten/CurlSSLHandleEmscripten.cpp
-@@ -0,0 +1,53 @@
-+/*
-+ * PORT=Emscripten CurlSSLHandle platform half, cribbed from
-+ * platform/network/win/CurlSSLHandleWin.cpp (cipher/curve lists) with a
-+ * MEMFS CA bundle: the embedder --embed-files a Mozilla-style bundle at
-+ * /etc/ssl/cacert.pem (see src/embedder/embedder.cmake). TLS terminates
-+ * inside the engine — the Wisp transport below is a plain byte pipe.
-+ */
-+
-+#include "config.h"
-+#include "CurlSSLHandle.h"
-+
-+#include <wtf/FileSystem.h>
-+
-+namespace WebCore {
-+
-+void CurlSSLHandle::platformInitialize()
-+{
-+    constexpr auto cipherList =
-+        "TLS_AES_128_GCM_SHA256:"
-+        "TLS_CHACHA20_POLY1305_SHA256:"
-+        "TLS_AES_256_GCM_SHA384:"
-+        "ECDHE-ECDSA-AES128-GCM-SHA256:"
-+        "ECDHE-RSA-AES128-GCM-SHA256:"
-+        "ECDHE-ECDSA-CHACHA20-POLY1305:"
-+        "ECDHE-RSA-CHACHA20-POLY1305:"
-+        "ECDHE-ECDSA-AES256-GCM-SHA384:"
-+        "ECDHE-RSA-AES256-GCM-SHA384:"
-+        "ECDHE-ECDSA-AES256-SHA:"
-+        "ECDHE-ECDSA-AES128-SHA:"
-+        "ECDHE-RSA-AES128-SHA:"
-+        "ECDHE-RSA-AES256-SHA:"
-+        "AES128-GCM-SHA256:"
-+        "AES256-GCM-SHA384:"
-+        "AES128-SHA:"
-+        "AES256-SHA";
-+
-+    constexpr auto ecCurves =
-+        "X25519:"
-+        "P-256:"
-+        "P-384:"
-+        "P-521";
-+
-+    setCipherList(cipherList);
-+    setECCurves(ecCurves);
-+
-+    auto caBundlePath = "/etc/ssl/cacert.pem"_s;
-+    if (FileSystem::fileExists(caBundlePath))
-+        setCACertPath(String { caBundlePath });
-+    else
-+        WTFLogAlways("CurlSSLHandle: no CA bundle at /etc/ssl/cacert.pem — all TLS verification will fail");
-+}
-+
-+} // namespace WebCore
+ NetworkStorageSession::~NetworkStorageSession()
+@@ -254,16 +244,6 @@ std::pair<String, bool> NetworkStorageSession::cookieRequestHeaderFieldValue(con
+     return cookieRequestHeaderFieldValue(headerFieldProxy.firstParty, headerFieldProxy.sameSiteInfo, headerFieldProxy.url, headerFieldProxy.frameID, headerFieldProxy.pageID, headerFieldProxy.includeSecureCookies, ApplyTrackingPrevention::Yes, ShouldRelaxThirdPartyCookieBlocking::No, IsKnownCrossSiteTracker::No);
+ }
+ 
+-void NetworkStorageSession::setProxySettings(const CurlProxySettings& proxySettings)
+-{
+-    CurlContext::singleton().setProxySettings(proxySettings);
+-}
+-
+-void NetworkStorageSession::clearAlternativeServices()
+-{
+-    CurlContext::singleton().clearAlternativeServicesStorageFile();
+-}
+-
+ } // namespace WebCore
+ 
+ #endif // USE(CURL)
+diff --git a/Source/WebCore/platform/network/curl/ResourceError.h b/Source/WebCore/platform/network/curl/ResourceError.h
+index ace8e487243..2a2bdf41ce4 100644
+--- a/Source/WebCore/platform/network/curl/ResourceError.h
++++ b/Source/WebCore/platform/network/curl/ResourceError.h
+@@ -53,10 +53,6 @@ public:
+     WEBCORE_EXPORT static ResourceError fromIPCData(std::optional<IPCData>&&);
+     WEBCORE_EXPORT std::optional<IPCData> ipcData() const;
+ 
+-    WEBCORE_EXPORT ResourceError(int curlCode, const URL& failingURL, Type = Type::General);
+-
+-    WEBCORE_EXPORT bool isCertificationVerificationError() const;
+-
+     ErrorRecoveryMethod errorRecoveryMethod() const { return ErrorRecoveryMethod::NoRecovery; }
+ 
+     static bool platformCompare(const ResourceError& a, const ResourceError& b);
+diff --git a/Source/WebCore/platform/network/curl/ResourceErrorCurl.cpp b/Source/WebCore/platform/network/curl/ResourceErrorCurl.cpp
+index 58ed88ac895..aee6e1068c7 100644
+--- a/Source/WebCore/platform/network/curl/ResourceErrorCurl.cpp
++++ b/Source/WebCore/platform/network/curl/ResourceErrorCurl.cpp
+@@ -28,21 +28,8 @@
+ 
+ #if USE(CURL)
+ 
+-#include "CurlContext.h"
+-
+ namespace WebCore {
+ 
+-static const String& curlErrorDomain()
+-{
+-    static NeverDestroyed<const String> errorDomain(MAKE_STATIC_STRING_IMPL("CurlErrorDomain"));
+-    return errorDomain;
+-}
+-
+-ResourceError::ResourceError(int curlCode, const URL& failingURL, Type type)
+-    : ResourceErrorBase(curlErrorDomain(), curlCode, failingURL, CurlHandle::errorDescription(static_cast<CURLcode>(curlCode)), type, IsSanitized::No)
+-{
+-}
+-
+ ResourceError ResourceError::fromIPCData(std::optional<IPCData>&& ipcData)
+ {
+     if (!ipcData)
+@@ -73,11 +60,6 @@ auto ResourceError::ipcData() const -> std::optional<IPCData>
+     };
+ }
+ 
+-bool ResourceError::isCertificationVerificationError() const
+-{
+-    return domain() == curlErrorDomain() && errorCode() == CURLE_PEER_FAILED_VERIFICATION;
+-}
+-
+ void ResourceError::doPlatformIsolatedCopy(const ResourceError&)
+ {
+ }
+diff --git a/Source/WebCore/platform/network/curl/ResourceResponse.h b/Source/WebCore/platform/network/curl/ResourceResponse.h
+index 894db7dff05..3ed2ecf9ec1 100644
+--- a/Source/WebCore/platform/network/curl/ResourceResponse.h
++++ b/Source/WebCore/platform/network/curl/ResourceResponse.h
+@@ -30,8 +30,6 @@
+ 
+ namespace WebCore {
+ 
+-class CurlResponse;
+-
+ class ResourceResponse : public ResourceResponseBase {
+ public:
+     ResourceResponse()
+@@ -49,8 +47,6 @@ public:
+     {
+     }
+ 
+-    WEBCORE_EXPORT ResourceResponse(CurlResponse&);
+-
+     bool isMovedPermanently() const { return httpStatusCode() == 301; };
+     bool isFound() const { return httpStatusCode() == 302; }
+     bool isSeeOther() const { return httpStatusCode() == 303; }
+@@ -61,8 +57,6 @@ private:
+     friend class ResourceResponseBase;
+ 
+     String platformSuggestedFilename() const;
+-
+-    void appendHTTPHeaderField(const String&);
+ };
+ 
+ } // namespace WebCore
+diff --git a/Source/WebCore/platform/network/curl/ResourceResponseCurl.cpp b/Source/WebCore/platform/network/curl/ResourceResponseCurl.cpp
+index 601bf5071d1..e62ea3aa6fe 100644
+--- a/Source/WebCore/platform/network/curl/ResourceResponseCurl.cpp
++++ b/Source/WebCore/platform/network/curl/ResourceResponseCurl.cpp
+@@ -28,108 +28,10 @@
+ #if USE(CURL)
+ #include "ResourceResponse.h"
+ 
+-#include "CurlContext.h"
+-#include "CurlResponse.h"
+ #include "HTTPParsers.h"
+ 
+ namespace WebCore {
+ 
+-static bool isAppendableHeader(const String &key)
+-{
+-    static constexpr ASCIILiteral appendableHeaders[] = {
+-        "access-control-allow-headers"_s,
+-        "access-control-allow-methods"_s,
+-        "access-control-allow-origin"_s,
+-        "access-control-expose-headers"_s,
+-        "allow"_s,
+-        "cache-control"_s,
+-        "connection"_s,
+-        "content-encoding"_s,
+-        "content-language"_s,
+-        "if-match"_s,
+-        "if-none-match"_s,
+-        "keep-alive"_s,
+-        "pragma"_s,
+-        "proxy-authenticate"_s,
+-        "public"_s,
+-        "server"_s,
+-        "set-cookie"_s,
+-        "te"_s,
+-        "timing-allow-origin"_s,
+-        "trailer"_s,
+-        "transfer-encoding"_s,
+-        "upgrade"_s,
+-        "user-agent"_s,
+-        "vary"_s,
+-        "via"_s,
+-        "warning"_s,
+-        "www-authenticate"_s
+-    };
+-
+-    // Custom headers start with 'X-', and need no further checking.
+-    if (startsWithLettersIgnoringASCIICase(key, "x-"_s))
+-        return true;
+-
+-    for (const auto& header : appendableHeaders) {
+-        if (equalIgnoringASCIICase(key, header))
+-            return true;
+-    }
+-
+-    return false;
+-}
+-
+-ResourceResponse::ResourceResponse(CurlResponse& response)
+-    : ResourceResponseBase()
+-{
+-    setURL(URL { response.url });
+-    setExpectedContentLength(response.expectedContentLength);
+-    setHTTPStatusCode(response.statusCode ? response.statusCode : response.httpConnectCode);
+-
+-    for (const auto& header : response.headers)
+-        appendHTTPHeaderField(header);
+-
+-    switch (response.httpVersion) {
+-    case CURL_HTTP_VERSION_1_0:
+-        setHTTPVersion("HTTP/1.0"_s);
+-        break;
+-    case CURL_HTTP_VERSION_1_1:
+-        setHTTPVersion("HTTP/1.1"_s);
+-        break;
+-    case CURL_HTTP_VERSION_2_0:
+-        setHTTPVersion("HTTP/2"_s);
+-        break;
+-    case CURL_HTTP_VERSION_3:
+-        setHTTPVersion("HTTP/3"_s);
+-        break;
+-    case CURL_HTTP_VERSION_NONE:
+-    default:
+-        break;
+-    }
+-
+-    setMimeType(extractMIMETypeFromMediaType(httpHeaderField(HTTPHeaderName::ContentType)).convertToASCIILowercase());
+-    setTextEncodingName(extractCharsetFromMediaType(httpHeaderField(HTTPHeaderName::ContentType)).toString());
+-    setCertificateInfo(WTF::move(response.certificateInfo));
+-    setSource(ResourceResponse::Source::Network);
+-}
+-
+-void ResourceResponse::appendHTTPHeaderField(const String& header)
+-{
+-    if (startsWithLettersIgnoringASCIICase(header, "http/"_s)) {
+-        setHTTPStatusText(String { extractReasonPhraseFromHTTPStatusLine(header.trim(deprecatedIsSpaceOrNewline)) });
+-        return;
+-    }
+-
+-    if (auto splitPosition = header.find(':'); splitPosition != notFound) {
+-        auto key = header.left(splitPosition).trim(deprecatedIsSpaceOrNewline);
+-        auto value = header.substring(splitPosition + 1).trim(deprecatedIsSpaceOrNewline);
+-
+-        if (isAppendableHeader(key))
+-            addHTTPHeaderField(key, value);
+-        else
+-            setHTTPHeaderField(key, value);
+-    }
+-}
+-
+ String ResourceResponse::platformSuggestedFilename() const
+ {
+     auto value = httpHeaderField(HTTPHeaderName::ContentDisposition);
 diff --git a/Source/WebCore/platform/network/emscripten/NetworkStateNotifierEmscripten.cpp b/Source/WebCore/platform/network/emscripten/NetworkStateNotifierEmscripten.cpp
 new file mode 100644
 index 00000000000..f66a6fffe71
@@ -3311,10 +2921,10 @@ index 1b4f47b117f..32d0ee39100 100644
      });
 diff --git a/Source/cmake/OptionsEmscripten.cmake b/Source/cmake/OptionsEmscripten.cmake
 new file mode 100644
-index 00000000000..b8c090ce71f
+index 00000000000..a967c1e843b
 --- /dev/null
 +++ b/Source/cmake/OptionsEmscripten.cmake
-@@ -0,0 +1,169 @@
+@@ -0,0 +1,168 @@
 +# PORT=Emscripten: WebCore + JavaScriptCore compiled to WebAssembly with
 +# Emscripten. Single-process WebKit1-style embedder; no WebKit2, no tools.
 +#
@@ -3369,12 +2979,8 @@ index 00000000000..b8c090ce71f
 +WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_SKIA PRIVATE ON)
 +WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_SKIA_ENCODERS PRIVATE OFF)
 +
-+# Optional web features: everything OFF for first bring-up.
-+# FTPDIR must be OFF: with it on, CurlHandle::enableAllowedProtocols passes
-+# "file,ftp,ftps,http,https" to CURLOPT_PROTOCOLS_STR — our libcurl has no
-+# ftp, and curl's protocol2num() zeroes the allowlist before failing
-+# mid-parse, leaving ONLY "file" allowed => every http(s) load dies with
-+# CURLE_UNSUPPORTED_PROTOCOL ("Protocol \"http\" disabled").
++# Optional web features: everything OFF for first bring-up. (FTPDIR also has
++# no transport that could serve it — see the networking note below.)
 +WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_FTPDIR PRIVATE OFF)
 +# Tier A2 (task #62): VIDEO on with ZERO media engines registered — no
 +# USE(GSTREAMER)/AVFOUNDATION, so MediaPlayer falls back to its null
@@ -3427,7 +3033,12 @@ index 00000000000..b8c090ce71f
 +find_package(ICU 70.1 REQUIRED COMPONENTS data i18n uc)
 +
 +if (ENABLE_WEBCORE)
-+    # Networking: WebKit curl backend (platform/Curl.cmake), Win-port glue.
++    # Networking: no transport in the engine — loads go out over the
++    # embedder's host-fetch bridge. USE_CURL still selects the curl port's
++    # platform TYPES (ResourceRequest/Response/Error, CertificateInfo,
++    # ProtectionSpace, AuthenticationChallenge) and the CookieJarDB cookie
++    # jar; libcurl itself is not linked. See WebCore/PlatformEmscripten.cmake.
++    # USE_OPENSSL selects PAL's CryptoDigestOpenSSL (libcrypto only).
 +    SET_AND_EXPOSE_TO_BUILD(USE_CURL ON)
 +    SET_AND_EXPOSE_TO_BUILD(USE_OPENSSL ON)
 +
@@ -3461,15 +3072,13 @@ index 00000000000..b8c090ce71f
 +    find_package(WebP REQUIRED COMPONENTS demux)
 +    find_package(ZLIB REQUIRED)
 +
-+    # Curl tier — built into the sysroot by tools/build-deps/curl-tier.sh
-+    # (decision-003): curl 8.x + OpenSSL 3.5 + nghttp2 + brotli + libpsl.
-+    # platform/Curl.cmake links CURL::libcurl, OpenSSL::SSL, LibPSL::LibPSL.
++    # SSL tier — built into the sysroot by tools/build-deps/ssl-tier.sh:
++    # OpenSSL 3.5 (libcrypto for PAL's digests) + brotli + libpsl.
 +    # The vendored Skia also REQUIREs Fontconfig on non-Win/non-PlayStation
 +    # (ThirdParty/skia/CMakeLists.txt:6) — fontconfig rides in the same tier.
-+    find_package(CURL 7.85.0 REQUIRED)
 +    find_package(OpenSSL REQUIRED)
 +    find_package(LibPSL 0.20.2 REQUIRED)
-+    # Our static libpsl is built --enable-runtime=libicu (curl-tier.sh) but
++    # Our static libpsl is built --enable-runtime=libicu (ssl-tier.sh) but
 +    # libpsl.pc/FindLibPSL advertise only -lpsl; propagate the ICU dependency
 +    # or the embedder link fails with undefined u_*/uidna_* symbols.
 +    target_link_libraries(LibPSL::LibPSL INTERFACE ICU::uc)

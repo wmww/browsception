@@ -5,7 +5,7 @@
 //
 // browsception 1.2b: the network transport is the HOST-FETCH BRIDGE
 // (BibNetBridge.h) — the trusted shim on the host page performs every HTTP(S)
-// load; curl/SOCKFS/wisp are no longer used for resource loads. Shape:
+// load. It is the engine's ONLY transport (the curl/TLS tier is gone). Shape:
 //   loadResource -> SubresourceLoader::create -> BibResourceLoad
 //   BibNetBridge callbacks -> ResourceLoader::didReceiveResponse /
 //   didReceiveBuffer / didFinishLoading / didFail — the same public feeding
@@ -15,7 +15,7 @@
 // next hop as a fresh bridge request. Set-Cookie values arrive as a
 // per-value list captured host-side (invisible to host fetch()).
 // data: URLs go through loader->start(), which handles them before the
-// (unreachable-on-curl) ResourceHandle path.
+// ResourceHandle path (unreachable on a USE(CURL) port).
 //
 // Cookies: ONE in-memory NetworkStorageSession (CookieJarDB ":memory:")
 // shared by the DOM CookieJar (installed on PageConfiguration in main.cpp)
@@ -317,7 +317,7 @@ private:
         // -> DocumentLoader::willSendRequest does
         // setFirstPartyForCookies(newURL) for the main frame (subframes
         // keep the main document's first party, per spec). The cookie
-        // attach in createCurlRequest below therefore sees the updated
+        // attach on the next bridge request therefore sees the updated
         // value (Codex 2026-06-10 — verified, no fork from upstream).
         m_loader->willSendRequest(WTF::move(request), redirectResponse, [this, protectedThis = Ref { *this }](ResourceRequest&& newRequest) {
             if (newRequest.isNull() || !m_loader) {
@@ -360,8 +360,8 @@ private:
 
         m_loader->didReceiveResponse(ResourceResponse { m_response }, [this, protectedThis = Ref { *this }] {
             // Body bytes may already have streamed in while the (possibly
-            // async, for main-resource policy) response handling ran — the
-            // curl transport paused the transfer here; the bridge queues.
+            // async, for main-resource policy) response handling ran; the
+            // bridge queues them.
             m_responseCompleted = true;
             flushQueued();
         });
@@ -461,11 +461,11 @@ private:
 // --- Request blocklist ------------------------------------------------------
 // CLoop parses every byte of script on the main thread, so analytics/ads/
 // telemetry bundles (GTM, adsbygoogle, sentry, segment, ...) are pure boot
-// cost — and several also fail over wisp with curl=35 noise. Refusing them in
-// loadResource() means they never download OR parse. Main resources are
-// exempt (navigations and iframe documents still load), and consent managers
-// (OneTrust/cookielaw) are deliberately NOT listed — sites gate functionality
-// on their callbacks. ?noblock=1 on the host page disables the list.
+// cost. Refusing them in loadResource() means they never download OR parse.
+// Main resources are exempt (navigations and iframe documents still load),
+// and consent managers (OneTrust/cookielaw) are deliberately NOT listed —
+// sites gate functionality on their callbacks. ?noblock=1 on the host page
+// disables the list.
 static bool g_requestBlocklistEnabled = true;
 
 void setRequestBlocklistEnabled(bool enabled)
@@ -540,11 +540,11 @@ public:
     void scheduleLoad(ResourceLoader& loader, bool isTopLevelDocument = false)
     {
         // ResourceLoader::start() handles data: URLs internally, before the
-        // ResourceHandle path (which is unreachable on curl ports). blob:
+        // ResourceHandle path (unreachable on a USE(CURL) port). blob:
         // URLs also work through start(): BlobRegistryImpl registers a
         // BlobResourceHandle constructor for the "blob" protocol in
         // ResourceHandle's builtin map, served from EmbedderBlobRegistry's
-        // in-process impl — never curl.
+        // in-process impl — never the network.
         if (loader.request().url().protocolIsData() || loader.request().url().protocolIsBlob()) {
             loader.start();
             return;
@@ -597,7 +597,7 @@ private:
 
     void setDefersLoading(ResourceLoader&, bool) final
     {
-        // CurlRequest has no pause-after-start; defers is best-effort here.
+        // The bridge has no pause-after-start; defers is best-effort here.
     }
 
     void crossOriginRedirectReceived(ResourceLoader*, const URL&) final { }
@@ -609,7 +609,7 @@ private:
     void startPingLoad(LocalFrame&, ResourceRequest& request, const HTTPHeaderMap&, const FetchOptions&, ContentSecurityPolicyImposition, PingLoadCompletionHandler&& completionHandler) final
     {
         // sendBeacon / <a ping> / CSP reports. Fire-and-forget through a
-        // self-owning curl client — erroring these out made beacon-gated
+        // self-owning bridge client — erroring these out made beacon-gated
         // code paths fail and spammed the console on every analytics-bearing
         // site. originalRequestHeaders/CORS are not applied (documented gap).
         if (g_requestBlocklistEnabled && isBlocklistedHost(request.url().host())) {
@@ -625,9 +625,9 @@ private:
 
     void preconnectTo(FrameLoader&, ResourceRequest&&, StoredCredentialsPolicy, ShouldPreconnectAsFirstParty, PreconnectCompletionHandler&& completionHandler) final
     {
-        // Succeed as a no-op: curl manages its own connection pool and a
-        // warm-up dial isn't worth the stream churn over wisp. Reporting an
-        // ERROR here (the old behavior) just generated console noise for
+        // Succeed as a no-op: the host's fetch() owns connection reuse, so
+        // a warm-up dial buys nothing. Reporting an ERROR here (the old
+        // behavior) just generated console noise for
         // every <link rel=preconnect>.
         if (completionHandler)
             completionHandler({ });

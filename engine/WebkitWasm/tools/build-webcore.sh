@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build WebCore (PORT=Emscripten, CLoop, Skia CPU raster, curl) to wasm.
+# Build WebCore (PORT=Emscripten, CLoop, Skia CPU raster) to wasm.
 # Resumable: configure is skipped if build.ninja exists; ninja is incremental.
 set -euo pipefail
 
@@ -46,15 +46,6 @@ if [ ! -f "$FSROOT/fonts/DejaVuSans.ttf" ] \
   echo "FONT STAGING: OK ($CONFD_COUNT conf.d files)"
 fi
 
-# CA bundle for in-engine TLS (Phase 4): curl/OpenSSL verify against
-# /etc/ssl/cacert.pem in MEMFS (CurlSSLHandleEmscripten.cpp). Staged from
-# the host's system bundle.
-if [ ! -f "$FSROOT/ssl/cacert.pem" ]; then
-  mkdir -p "$FSROOT/ssl"
-  cp -f /etc/ssl/certs/ca-certificates.crt "$FSROOT/ssl/cacert.pem"
-  echo "CA BUNDLE STAGING: OK ($(du -h "$FSROOT/ssl/cacert.pem" | cut -f1))"
-fi
-
 # BIB_PTHREAD=0: single-threaded engine build for deployments that cannot
 # ship SharedArrayBuffer (no COOP/COEP header control — static/edge hosts).
 # Trade-off: the W-B1 win reverses — heavy pages peg the host tab again.
@@ -71,7 +62,6 @@ EMBEDDER_FLAGS=(
   -DEMSCRIPTEN_EMBEDDER_CMAKE="$ROOT/src/embedder/embedder.cmake"
   -DBIB_FONTCONFIG_ETC_DIR="$FSROOT/etc-fonts"
   -DBIB_FONTS_DIR="$FSROOT/fonts"
-  -DBIB_CA_BUNDLE="$FSROOT/ssl/cacert.pem"
   # Threading mode (BIB_PTHREAD=0 -> single-threaded engine for hosts that
   # cannot serve COOP/COEP, i.e. no SharedArrayBuffer). These live in the
   # cache-sync list so flipping the env var RECONFIGURES the existing cache

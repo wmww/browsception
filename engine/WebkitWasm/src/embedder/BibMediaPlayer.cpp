@@ -7,7 +7,7 @@
 // the engine thread (W-B1 marshaling) before touching any player state —
 // so all player fields are engine-thread-only, no locks.
 //
-// State model: the ENGINE fetches the bytes (wisp-routed — see
+// State model: the ENGINE fetches the bytes (bridge-routed — see
 // BibMediaResourceClient); the host element is the source of truth for
 // the CLOCK (currentTime/duration/buffered, cached here on events at
 // timeupdate cadence); the guest element is the source of truth for
@@ -68,11 +68,11 @@ static HashMap<int, BibMediaPlayer*>& playerRegistry()
     return registry;
 }
 
-// Wisp-preserving media fetch: the ENGINE downloads the resource through
+// Bridge-preserving media fetch: the ENGINE downloads the resource through
 // the guest's own network stack (MediaPlayer::mediaResourceLoader() ->
-// CachedResourceLoader -> our loader strategy -> curl -> wisp, guest
-// cookies attached), then pushes the COMPLETED bytes to the host, which
-// plays them from a Blob URL. No bytes ever leave the tab outside wisp.
+// CachedResourceLoader -> our loader strategy -> the host-fetch bridge,
+// guest cookies attached), then pushes the COMPLETED bytes to the host,
+// which plays them from a Blob URL. The host element never fetches.
 // Tradeoff (accepted): download-before-play + a size cap — fine for
 // notification sounds/clips; hour-long streams fail like a network error
 // until M-C MSE mirroring. Callbacks land on the default targetDispatcher
@@ -142,7 +142,7 @@ public:
                 player->networkStateChanged();
             return;
         }
-        // Wisp invariant: fetch through the GUEST network stack (see
+        // Bridge invariant: fetch through the GUEST network stack (see
         // BibMediaResourceClient above), not the host element.
         if (!m_loader)
             m_loader = player->mediaResourceLoader();
@@ -422,7 +422,7 @@ private:
     int m_id { 0 };
     static int s_nextID;
 
-    // Wisp-routed fetch state (engine thread only).
+    // Bridge-routed fetch state (engine thread only).
     RefPtr<PlatformMediaResourceLoader> m_loader;
     RefPtr<PlatformMediaResource> m_resource;
     SharedBufferBuilder m_data;

@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
-# Build the curl tier for wasm32-emscripten into wasm-sysroot (decision-003):
-# OpenSSL -> nghttp2 -> brotli -> libpsl -> curl -> fontconfig.
+# Build the ssl tier for wasm32-emscripten into wasm-sysroot (decision-003):
+# OpenSSL -> brotli -> libpsl -> fontconfig.
+# (Was the curl tier; libcurl and nghttp2 went with the in-engine transport —
+# the engine's only network path is the host-fetch bridge. What is left:
+# libcrypto for PAL's CryptoDigestOpenSSL, brotli for freetype's WOFF2,
+# libpsl for cookie-domain security, fontconfig because Skia REQUIREs it.)
 # Static libs, -O2 -pthread everywhere (pthread ABI must match the engine).
 # Idempotent per-dep: skips anything already installed in the sysroot.
 # Run AFTER webcore-deps.sh (needs zlib/libxml2/freetype/icu in the sysroot).
@@ -39,8 +43,10 @@ cmake_build() { # cmake_build <srcdir> <builddir> [extra cmake args...]
   ninja -C "$bld" install > "$bld-build.log" 2>&1
 }
 
+# libcrypto is the one that matters (PAL digests); the build emits libssl.a
+# alongside it and nothing links it.
 echo "=== OpenSSL ==="
-if [ ! -f "$SYSROOT/lib/libssl.a" ]; then
+if [ ! -f "$SYSROOT/lib/libcrypto.a" ]; then
   fetch https://github.com/openssl/openssl/releases/download/openssl-3.5.0/openssl-3.5.0.tar.gz openssl.tar.gz
   unpack openssl.tar.gz openssl
   (cd openssl && \
@@ -54,14 +60,7 @@ if [ ! -f "$SYSROOT/lib/libssl.a" ]; then
    emmake make install_dev >> ../openssl-build.log 2>&1)
 fi
 
-echo "=== nghttp2 ==="
-if [ ! -f "$SYSROOT/lib/libnghttp2.a" ]; then
-  fetch https://github.com/nghttp2/nghttp2/releases/download/v1.64.0/nghttp2-1.64.0.tar.xz nghttp2.tar.xz
-  unpack nghttp2.tar.xz nghttp2
-  cmake_build nghttp2 nghttp2-build \
-    -DENABLE_LIB_ONLY=ON -DBUILD_STATIC_LIBS=ON -DENABLE_DOC=OFF
-fi
-
+# brotli: freetype (WOFF2) needs it, so it stays.
 echo "=== brotli ==="
 if [ ! -f "$SYSROOT/lib/libbrotlidec.a" ]; then
   fetch https://github.com/google/brotli/archive/refs/tags/v1.1.0.tar.gz brotli.tar.gz
@@ -86,28 +85,6 @@ if [ ! -f "$SYSROOT/lib/libpsl.a" ]; then
   if ! rg -q "^Requires.private:.*icu-uc" "$SYSROOT/lib/pkgconfig/libpsl.pc"; then
     printf 'Requires.private: icu-uc\n' >> "$SYSROOT/lib/pkgconfig/libpsl.pc"
   fi
-fi
-
-echo "=== curl ==="
-if [ ! -f "$SYSROOT/lib/libcurl.a" ]; then
-  fetch https://curl.se/download/curl-8.17.0.tar.xz curl.tar.xz
-  unpack curl.tar.xz curl
-  (cd curl && \
-   emconfigure ./configure --host=wasm32-unknown-emscripten --prefix="$SYSROOT" \
-     --disable-shared --enable-static \
-     --with-openssl="$SYSROOT" --with-zlib="$SYSROOT" --with-brotli="$SYSROOT" \
-     --with-nghttp2="$SYSROOT" --with-libpsl \
-     --with-ca-bundle=/etc/ssl/ca-bundle.crt \
-     --enable-http --enable-file --enable-websockets \
-     --disable-ftp --disable-ldap --disable-ldaps --disable-rtsp \
-     --disable-dict --disable-telnet --disable-tftp --disable-pop3 \
-     --disable-imap --disable-smtp --disable-gopher --disable-mqtt \
-     --disable-smb --disable-manual --disable-ipv6 \
-     --disable-threaded-resolver --disable-unix-sockets --disable-ntlm \
-     --without-libidn2 --without-zstd --without-librtmp \
-     PKG_CONFIG_LIBDIR="$SYSROOT/lib/pkgconfig" \
-     > ../curl-configure.log 2>&1 && \
-   emmake make -j"$JOBS" install > ../curl-build.log 2>&1)
 fi
 
 echo "=== zlib.pc shim ==="

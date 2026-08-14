@@ -60,12 +60,12 @@ echo "==> installing + activating Emscripten $EMSDK_VERSION"
 ( cd "$TP/emsdk" && ./emsdk install "$EMSDK_VERSION" && ./emsdk activate "$EMSDK_VERSION" )
 
 # --- 3. wasm dependency tier -> third_party/wasm-sysroot ----------------
-# ORDER IS LOAD-BEARING: harfbuzz/WebCore need ICU; curl-tier's fontconfig
-# needs freetype/libxml2/zlib/icu already in the sysroot (curl-tier.sh:6).
-echo "==> building wasm deps  (icu -> webcore-deps -> curl-tier; each idempotent)"
+# ORDER IS LOAD-BEARING: harfbuzz/WebCore need ICU; ssl-tier's fontconfig
+# needs freetype/libxml2/zlib/icu already in the sysroot (ssl-tier.sh).
+echo "==> building wasm deps  (icu -> webcore-deps -> ssl-tier; each idempotent)"
 bash "$ROOT/tools/build-deps/icu.sh"
 bash "$ROOT/tools/build-deps/webcore-deps.sh"
-bash "$ROOT/tools/build-deps/curl-tier.sh"
+bash "$ROOT/tools/build-deps/ssl-tier.sh"
 
 # --- done ---------------------------------------------------------------
 echo

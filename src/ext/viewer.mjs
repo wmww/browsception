@@ -3,7 +3,7 @@
 //
 // Real-engine mode is a port of the engine repo's dev harness scaffolding
 // (engine/WebkitWasm/web/browser.html) minus its dev-only paths: raster only
-// (no nested GPU — security.md), no wisp, no media bridge, no guest-wasm
+// (no nested GPU — security.md), no media bridge, no guest-wasm
 // polyfill yet (guest wasm sees CompileError; fast-follow). Networking is the
 // real bridge (src/shim/bridge.mjs): guard list, DNR header rules, webRequest
 // Set-Cookie/redirect capture.
@@ -519,7 +519,6 @@ async function bootEngine() {
     bibHTML: bootHTML,
     bibWasm2js: () => null, // guest wasm -> CompileError (fast-follow)
     bibWasmPolyfill: '',
-    bibCurlDebug: false,
     bibNoBlock: params.get('noblock') === '1',
     bibMedia: false,
     // Page-side pump fallbacks (pthread builds pump via the worker pre-js).

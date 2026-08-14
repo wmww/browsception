@@ -18,9 +18,12 @@ Never: printing, DRM, nested GPU/JIT.
 
 ## Cleanups & untested corners
 
-- Delete curl/wisp from the engine (superseded by the bridge; still linked): planned in
-  detail in `plans/remove-wisp-curl.md`. WebSocket bridging over host WS remains engine-side
-  future work (networking.md) and becomes the only guest-WS path after the cut.
+- WebSocket bridging (engine-side, over a host WS) — after the curl cut this is the ONLY
+  possible guest-WS path; today `new WebSocket()` fails cleanly everywhere. Design sketch in
+  networking.md; WebCore's WebSocketHandshake/Frame/DeflateFramer are still compiled in, so a
+  channel replacing `BibWebSocketChannel` can reuse them.
+- Optional: drop libcrypto too, if PAL's CryptoDigest gets a small vendored SHA/MD5 backend —
+  it is the last piece of the old TLS tier still on the link.
 - Flatten `engine/WebkitWasm/` → `engine/` — cosmetic; only with an intentional from-scratch
   rebuild (build graph has absolute paths baked in).
 - One-time verification that a truly fresh clone bootstraps: tracked sources + bootstrap.sh must

@@ -2,17 +2,19 @@
 
 ## Design
 
-Replace WebKit's platform network backend (curl in WebkitWasm) with a **host-fetch bridge**: the
+Replaced WebKit's platform network backend (curl in WebkitWasm) with a **host-fetch bridge**: the
 engine's resource loader emits abstract requests; a small trusted JS shim in the viewer performs
 them with extension-privileged `fetch()` (CORS-exempt via host permissions) and streams the bytes
 back into engine memory.
 
-Why this beats the Wisp/WebSocket-proxy approach used by WebkitWasm and firefox-wasm:
+Why this beats the Wisp/WebSocket-proxy approach used by WebkitWasm and firefox-wasm (kept as
+design rationale; the curl/wisp tier was deleted from the engine on 2026-08-13):
 - **No server.** Those projects are plain web pages, so they can't escape CORS and must tunnel raw
   TCP to an external proxy. An extension can fetch anything directly. Zero infrastructure, no
   proxy-operator trust question, works offline-network-wise wherever the browser works.
-- **Less wasm surface.** Deletes curl + OpenSSL + nghttp2 + SOCKFS from the module — a big chunk of
-  parser/TLS attack surface and binary size gone.
+- **Less wasm surface.** Deleted libcurl + libssl + nghttp2 + SOCKFS from the module — a big
+  chunk of parser/TLS attack surface and binary size gone. (libcrypto stays: PAL's CryptoDigest
+  uses it for SRI and friends.)
 - **Better integration.** Host browser handles TLS, HTTP/2/3, connection pooling, proxies, HSTS.
 
 Tradeoffs to be aware of:

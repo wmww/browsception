@@ -14,8 +14,9 @@ Decision: **WebKit, following the WebkitWasm lineage** — WebCore embedded WebK
   - **Skia with CPU raster** — WPE/GTK moved to Skia in 2.46 (2024-09) and CPU raster is the
     *default on embedded*. Software-rendered WebKit is a shipping config, not a hack.
     (WebkitWasm currently presents via WebGL2/Ganesh — we switch to CPU raster + our own blit.)
-  - **curl network backend** (WinCairo/PlayStation lineage) — avoids the GLib/libsoup platform
-    layer, which is painful under Emscripten and unsupported upstream.
+  - **curl network *port*** (WinCairo/PlayStation lineage) — avoids the GLib/libsoup platform
+    layer, which is painful under Emscripten and unsupported upstream. We keep the port's
+    platform types and cookie jar; the transport itself is gone (item 2 below).
 - Best real-web compatibility of any engine that can actually be ported (it's… WebKit).
 - Single-process is achievable by embedding **WebCore directly (WebKit1-style)**. Do NOT try to
   port WebKit2: modern WPE/GTK hard-requires the UIProcess/WebProcess/NetworkProcess split
@@ -36,11 +37,14 @@ known issue at fork time: no video support. Sister project (gecko port): HeyPute
 1. **Rendering**: Ganesh/WebGL2 → **Skia CPU raster** into a plain framebuffer we own (no-GPU
    constraint; also removes their engine-owned GL context entirely). Investigate dirty-rect
    output so the blit can be partial.
-2. **Networking**: drop curl + OpenSSL + SOCKFS + Wisp entirely. Replace the network backend at the
-   `ResourceHandle`/NetworkDataTask boundary with a **host-fetch bridge** (see networking.md). This
-   deletes a huge chunk of wasm surface (TLS stack, HTTP stack) and removes the external proxy
-   server dependency. Note this moves TLS trust from in-guest OpenSSL to the host browser — fine
-   for our threat model (see security.md).
+2. **Networking**: dropped curl + libssl + nghttp2 + SOCKFS + Wisp entirely (**done**,
+   2026-08-13). The network backend is a **host-fetch bridge** at the loader-strategy boundary
+   (see networking.md); the engine has no transport at all. This deleted a large chunk of wasm
+   surface (TLS stack, HTTP stack) and the external proxy-server dependency. TLS trust moved from
+   in-guest OpenSSL to the host browser — fine for our threat model (see security.md). What
+   survives under `USE(CURL)`: the port's platform types (ResourceRequest/Response/Error,
+   CertificateInfo, ProtectionSpace) and the CookieJarDB cookie jar; libcrypto stays for PAL's
+   digests. Guest `new WebSocket()` now fails cleanly (fail-fast channel) until WS bridging lands.
 3. **Storage**: keep their OPFS-backed cookies/localStorage approach, but namespaced per profile,
    isolated from host browser storage.
 4. **Fonts**: bundle a Noto subset + default UI fonts; no system font access. ICU: subset the data
@@ -97,6 +101,6 @@ blocking `Module.bib*` reads to collapse into one `Module.bibConfig` JSON read, 
 must move from bibBlit/putImageData + GPU-bitmap paths to the single `bibFrame` heap-framebuffer
 push. The stable seam for the network transplant is `BibResourceLoad`'s WebCore-facing callbacks
 (`didReceiveResponse/Buffer/FinishLoading/Fail` in EmbedderStrategies.cpp) — everything below it
-(CurlRequest/CurlStream/scheduler patches/SOCKFS/wisp) is deletable in one cut; cookie assembly
-(`appendEmbedderCookieHeader`/`storeResponseCookies`) and hand-rolled redirect logic stay
-engine-side, exactly matching the bridge design.
+(CurlRequest/CurlStream/scheduler patches/SOCKFS/wisp) was deleted in one cut (2026-08-13);
+cookie assembly (`appendEmbedderCookieHeader`/`storeResponseCookies`) and hand-rolled redirect
+logic stay engine-side, exactly matching the bridge design.

@@ -5,6 +5,9 @@ import {
   catchallRules,
   entryRegex,
   shouldSandbox,
+  sweepAction,
+  tabUrl,
+  viewerTarget,
   PRIORITY,
   CATCHALL_RULESET_ID,
 } from '../../src/ext/dnr-rules.mjs';
@@ -131,4 +134,58 @@ test('shouldSandbox mirrors rule semantics (sweep + badge disposition)', () => {
   assert.equal(shouldSandbox(wl, 'about:blank'), false);
   assert.equal(shouldSandbox(wl, 'not a url'), false);
   assert.equal(shouldSandbox({ ...wl, active: false }, 'https://random.example/'), false);
+});
+
+// --- sweep decisions -------------------------------------------------------
+const WL = { active: true, mode: 'whitelist', whitelist: ['trusted.com'], blacklist: [] };
+const sweep = (tab, escape = null) => sweepAction(WL, tab, VIEWER, escape);
+
+test('tabUrl prefers the in-flight navigation over the placeholder url', () => {
+  // Chromium reports a pre-commit tab as url:'about:blank' + pendingUrl:target
+  // — nullish-coalescing the two would keep 'about:blank' and miss exactly the
+  // tab the sweep exists for (a navigation that raced ruleset registration).
+  assert.equal(tabUrl({ url: 'about:blank', pendingUrl: 'https://x.example/' }), 'https://x.example/');
+  assert.equal(tabUrl({ url: '', pendingUrl: 'https://x.example/' }), 'https://x.example/');
+  assert.equal(tabUrl({ url: 'https://x.example/' }), 'https://x.example/');
+  assert.equal(tabUrl({}), '');
+});
+
+test('viewerTarget slices the raw ?url= tail', () => {
+  assert.equal(viewerTarget(`${VIEWER}?url=https://a.example/?q=1`, VIEWER), 'https://a.example/?q=1');
+  assert.equal(viewerTarget(`${VIEWER}?dpr=2&url=https://a.example/`, VIEWER), 'https://a.example/');
+  assert.equal(viewerTarget('https://a.example/', VIEWER), null);
+  assert.equal(viewerTarget(`${VIEWER}`, VIEWER), null);
+});
+
+test('sweepAction sandboxes a tab whose navigation is still in flight', () => {
+  assert.deepEqual(sweep({ url: 'about:blank', pendingUrl: 'https://raced.example/x' }), {
+    op: 'sandbox',
+    url: `${VIEWER}?url=https://raced.example/x`,
+  });
+  assert.equal(sweep({ url: 'about:blank', pendingUrl: 'https://trusted.com/x' }), null);
+  assert.equal(sweep({ url: 'about:blank' }), null);
+});
+
+test('sweepAction is symmetric and idempotent', () => {
+  // viewer tab on a now-trusted target leaves the sandbox; one still untrusted
+  // stays put (or the sweep would fight the rules every reconcile).
+  assert.deepEqual(sweep({ url: `${VIEWER}?url=https://trusted.com/a` }), {
+    op: 'native',
+    url: 'https://trusted.com/a',
+  });
+  assert.equal(sweep({ url: `${VIEWER}?url=https://other.example/a` }), null);
+  assert.equal(sweep(sweep({ url: 'https://other.example/a' })), null); // {url} of the redirect
+});
+
+test('sweepAction leaves an escaped tab native (the grant outranks the sweep)', () => {
+  const tab = { url: 'https://escaped.example/page' };
+  assert.equal(sweep(tab, 'escaped.example'), null);
+  // mirrors escapeSessionRule's regex: a bare entry covers subdomains
+  assert.equal(sweep({ url: 'https://sub.escaped.example/' }, 'escaped.example'), null);
+  assert.deepEqual(sweep({ url: 'https://other.example/' }, 'escaped.example'), {
+    op: 'sandbox',
+    url: `${VIEWER}?url=https://other.example/`,
+  });
+  // grant follows the host, not the URL: same-host navigation stays native
+  assert.equal(sweep({ url: 'https://escaped.example/elsewhere' }, 'escaped.example'), null);
 });

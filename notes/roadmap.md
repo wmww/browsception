@@ -33,7 +33,9 @@ Never: printing, DRM, nested GPU/JIT.
 - dpr≠1 rendering untested; frame-cost measurement pending (`bib_query` "metrics").
 - Dev-harness transport has no request timeout (dev-only; extension bridge has the idle guard).
 - MDN telemetry CORS preflights fail loudly in-engine (harmless; blocklist candidates).
-- Open issues: first-nav race residual (pre-sweep JS executes briefly), guest-JS wedge (issues/).
+- Startup race is a documented hard limit, not an issue: one navigation per browser start executes
+  natively for ~100 ms before the sweep (security.md § Startup race).
+- Open issues: guest-JS wedge, engine-renders-stale-input-state, rcap budget, viewer URL scheme (issues/).
 
 ## Standing risks
 

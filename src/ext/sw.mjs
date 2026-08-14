@@ -3,14 +3,18 @@
 // never depends on this worker being awake — the rules persist (static
 // ruleset toggle + dynamic rules); the SW only reconciles state changes.
 //
-// Also sweeps already-open tabs whose URL should be sandboxed: covers the
-// install/startup first-navigation race (issues/) and makes list edits apply
-// to open tabs. The page's JS has already run by sweep time — the redirect
-// closes the exposure window, it cannot un-execute anything.
+// Also sweeps open tabs whose disposition no longer matches state: it applies
+// list edits to open tabs, and — the security-critical part — it is the ONLY
+// backstop for a navigation the rules never saw, which EVERY browser start
+// with a startup/handoff URL produces (notes/security.md § Startup race). By
+// sweep time the page's JS has run: the redirect closes the exposure window,
+// it cannot un-execute anything.
 
 import {
   desiredRuleState,
-  shouldSandbox,
+  sweepAction,
+  tabUrl,
+  viewerTarget,
   escapeSessionRule,
   escapeRuleId,
   CATCHALL_RULESET_ID,
@@ -49,41 +53,49 @@ async function doApply() {
     addRules: desired.dynamicRules,
   });
 
-  await sweep(state);
+  // Only now: un-sandboxing a tab before its allow rule exists would just
+  // bounce off the catch-all back into the viewer. (Sweeping the sandbox
+  // direction earlier was tried and measured — no effect on the exposure
+  // window, which is SW-startup-bound.)
+  await sweep(state, await escapeGrants());
   await refreshBadges(state);
-}
-
-// Target URL of a viewer tab, or null (raw ?url= slice — see viewer.mjs).
-function viewerTarget(url) {
-  if (!url.startsWith(`${VIEWER}?`)) return null;
-  const i = url.indexOf('url=');
-  return i < 0 ? null : url.slice(i + 4);
 }
 
 // SYMMETRIC sweep (ui.md § toggle/edit behavior): state changes apply to
 // open tabs in both directions — native tabs that should now be sandboxed
 // redirect into a viewer, and viewer tabs whose target is now native leave
-// the sandbox. (Also covers the install/startup first-navigation race.)
-async function sweep(state) {
+// the sandbox.
+async function sweep(state, escapes) {
   for (const tab of await chrome.tabs.query({})) {
-    const url = tab.url ?? tab.pendingUrl ?? '';
     if (tab.id == null) continue;
-    const target = viewerTarget(url);
+    const action = sweepAction(state, tab, VIEWER, escapes.get(tab.id) ?? null);
+    if (!action) continue;
     try {
-      if (target !== null && !shouldSandbox(state, target))
-        await chrome.tabs.update(tab.id, { url: target });
-      else if (target === null && shouldSandbox(state, url))
-        // Raw ?url= mirrors the DNR redirect's un-encoded \0 contract.
-        await chrome.tabs.update(tab.id, { url: `${VIEWER}?url=${url}` });
+      await chrome.tabs.update(tab.id, { url: action.url });
     } catch {
       // tab may be gone / not updatable (e.g. devtools) — skip
     }
   }
 }
 
+// --- escape hatches -------------------------------------------------------
+// The DNR session rule is the enforcement; this mirror exists so the sweep can
+// see the grant (a rule's regexFilter can't be read back as an entry). Same
+// lifetime: storage.session dies with the browser session, both are dropped
+// when the tab closes.
+const ESCAPE_PREFIX = 'escape:';
+const ESCAPE_KEY = (tabId) => ESCAPE_PREFIX + tabId;
+
+async function escapeGrants() {
+  const map = new Map();
+  for (const [k, entry] of Object.entries(await chrome.storage.session.get(null)))
+    if (k.startsWith(ESCAPE_PREFIX)) map.set(Number(k.slice(ESCAPE_PREFIX.length)), entry);
+  return map;
+}
+
 // --- toolbar badge: per-tab disposition (2.4) -----------------------------
 async function updateBadge(tabId, url, state) {
-  const sandboxed = viewerTarget(url ?? '') !== null;
+  const sandboxed = viewerTarget(url ?? '', VIEWER) !== null;
   try {
     await chrome.action.setBadgeText({ tabId, text: state.active ? (sandboxed ? 'S' : '') : 'off' });
     if (sandboxed) await chrome.action.setBadgeBackgroundColor({ tabId, color: '#44cc88' });
@@ -92,12 +104,12 @@ async function updateBadge(tabId, url, state) {
 
 async function refreshBadges(state) {
   for (const tab of await chrome.tabs.query({}))
-    if (tab.id != null) await updateBadge(tab.id, tab.url ?? tab.pendingUrl ?? '', state);
+    if (tab.id != null) await updateBadge(tab.id, tabUrl(tab), state);
 }
 
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (changeInfo.url || changeInfo.status === 'loading')
-    await updateBadge(tabId, tab.url ?? tab.pendingUrl ?? '', await getState());
+    await updateBadge(tabId, tabUrl(tab), await getState());
 });
 
 // Escape hatch: the popup asks to reopen a tab's URL natively. Session+tab-
@@ -124,6 +136,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       removeRuleIds: [escapeRuleId(tabId)],
       addRules: [escapeSessionRule(tabId, entry)],
     });
+    // Before navigating: the next reconcile's sweep must already see the grant.
+    await chrome.storage.session.set({ [ESCAPE_KEY(tabId)]: entry });
     await chrome.tabs.update(tabId, { url });
     sendResponse({ ok: true });
   })();
@@ -134,6 +148,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   chrome.declarativeNetRequest
     .updateSessionRules({ removeRuleIds: [escapeRuleId(tabId)] })
     .catch(() => {});
+  chrome.storage.session.remove(ESCAPE_KEY(tabId)).catch(() => {});
 });
 
 chrome.runtime.onInstalled.addListener(() => applyState());

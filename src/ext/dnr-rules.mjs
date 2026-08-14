@@ -9,7 +9,7 @@
 // Interception is main_frame-only by design: bridge fetches and native
 // subresources must never hit these rules.
 
-import { isIpLiteral, listMatches } from './list-match.mjs';
+import { entryMatches, isIpLiteral, listMatches } from './list-match.mjs';
 
 export const CATCHALL_RULESET_ID = 'catchall';
 
@@ -77,6 +77,48 @@ export function shouldSandbox(state, url) {
   return state.mode === 'whitelist'
     ? !listMatches(state.whitelist ?? [], u.hostname)
     : listMatches(state.blacklist ?? [], u.hostname);
+}
+
+// --- tab sweep -------------------------------------------------------------
+// The sweep (sw.mjs) is what catches navigations the rules missed, so its view
+// of a tab must be the same one DNR would have had.
+
+// The URL a tab is effectively at. `pendingUrl` FIRST: a navigation in flight
+// is what the tab is about to be, and the tab the sweep exists for — one that
+// raced ruleset registration at startup — is by definition mid-navigation,
+// with `url` still 'about:blank' (verified: Chromium 151). Its request is
+// already on the wire, so no rule will ever re-evaluate it.
+export function tabUrl(tab) {
+  return tab.pendingUrl || tab.url || '';
+}
+
+// Target URL of a viewer tab, or null. The `?url=` slice is raw: DNR's \0
+// substitution is un-encoded (viewer.mjs mirrors this).
+export function viewerTarget(url, viewerBase) {
+  if (!url.startsWith(`${viewerBase}?`)) return null;
+  const i = url.indexOf('url=');
+  return i < 0 ? null : url.slice(i + 4);
+}
+
+/**
+ * What the sweep should do with one tab: sandbox it, take it native, or
+ * nothing. Symmetric by design (ui.md § toggle/edit behavior).
+ * @param escapeEntry live "open natively" grant for THIS tab, if any — DNR
+ *   would let that navigation through (PRIORITY.ESCAPE), so the sweep must
+ *   too, or the next reconcile silently revokes the escape hatch.
+ */
+export function sweepAction(state, tab, viewerBase, escapeEntry = null) {
+  const url = tabUrl(tab);
+  const target = viewerTarget(url, viewerBase);
+  if (target !== null)
+    return shouldSandbox(state, target) ? null : { op: 'native', url: target };
+  if (!shouldSandbox(state, url)) return null;
+  if (escapeEntry) {
+    try {
+      if (entryMatches(escapeEntry, new URL(url).hostname)) return null;
+    } catch {}
+  }
+  return { op: 'sandbox', url: `${viewerBase}?url=${url}` };
 }
 
 /**

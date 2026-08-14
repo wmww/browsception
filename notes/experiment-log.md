@@ -45,7 +45,8 @@ intercepted domain redirects its inner request (invariant holds).
 **guibox recipe check (0.5)** — launched windowed Chromium + extension in guibox,
 screenshot, F5 via wdotool, screenshot again, stop. Recipe works as documented.
 FOUND: first navigation on a fresh profile races static ruleset registration and loads
-natively (reload intercepts) → `issues/first-navigation-races-ruleset-registration.md`.
+natively (reload intercepts) → chased down 2026-08-14 below (it is every browser start,
+not just fresh profiles).
 
 **Engine build (0.1)** — WebkitWasm cloned (repo is ~3.5 MB of scripts/patches, not a
 WebKit fork; `main` is the pthread branch now, `wb1-pthread` is a stale snapshot).
@@ -215,3 +216,37 @@ Filed issues/engine-renders-stale-input-state.md. Fix: collapse pending position
 mouse move) to the latest known state before rendering — discrete input (keys, clicks) still
 replays one by one. Secondary: shift the surface in place via `peekPixels` instead of
 `writePixels`, or wrap the surface over `g_blitPixels` and drop the second mirror. Not fixed here.
+
+## 2026-08-14 — Startup race: is it real, and does the sweep actually catch it?
+
+Question left open by spike 0.5 (one blacklisted startup URL loaded natively): install-only
+or not? unpacked-only or not?
+
+Ran three probes against Chromium 151 (scripts were throwaway; recipe below is enough to redo).
+
+1. **Startup URL, unpacked (`--load-extension`) + packed.** Chromium spawned directly (playwright
+   refuses a positional URL; attach over CDP afterwards) with `https://grid.bstest/startup-race` as
+   the startup arg. Packed variant: fresh RSA key → manifest `key` + regenerated catchall for that
+   id → `--pack-extension` → install via `<user-data-dir>/External Extensions/<id>.json`. The
+   fixture-server oracle recorded a `sec-fetch-dest: document` hit **plus a favicon fetch** in
+   every run — the target loaded, committed and rendered natively — and the tab was only then in
+   the viewer. Same on install *and* on the 2nd/3rd launch of an already-installed packed
+   extension. So: not install-only, not an unpacked-loading artifact; every browser start with a
+   startup/handoff URL burns one native page load.
+2. **How big is the window?** Startup page beaconing `fetch('/b')` every 10 ms from a local
+   server: first beacon ~25 ms after the document request, last beacon 61-116 ms after it (5 runs
+   each, pre- and post-fix). ~100 ms of native JS, once per browser start.
+3. **What does the sweep see?** A tab mid-navigation (server accepts, never answers) is reported
+   by `chrome.tabs.query` as `url: 'about:blank'` + `pendingUrl: <target>`. `sw.mjs` read
+   `tab.url ?? tab.pendingUrl` — nullish, so 'about:blank' won — meaning **the sweep missed
+   exactly the tab it exists for** whenever the racing navigation hadn't committed yet, and that
+   tab then stayed native indefinitely. Also found while fixing it: the sweep ignored escape
+   hatches, so the next reconcile (any storage write / SW wake) yanked an "open natively" tab back
+   into the viewer.
+
+Fixed both (`sweepAction()` in dnr-rules.mjs; grants mirrored in `storage.session`); tier-0 unit
+tests + tier-1 `sweep.test.mjs` (both regressions fail on the old code). Also tried sweeping the
+sandbox direction *before* the DNR round-trips in `doApply` — no measurable effect (the window is
+SW-startup-bound, probe 2), so it was reverted rather than kept as complexity. The residual
+~100 ms is a hard MV3 limit; documented in security.md § Startup race and issue deleted.
+Tier 0-1: 78/78, tier 2: 21/21.

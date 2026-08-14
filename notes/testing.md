@@ -89,6 +89,10 @@ integration that unit tests can't and that doesn't need the 100 MB engine:
    Set-Cookie capture path, `credentials:'omit'` (oracle: no host-jar cookie ever received),
    guard denials surfaced as engine-visible errors, size cap aborts.
 6. Isolation preconditions: `crossOriginIsolated === true` in viewer, SAB usable in worker.
+6b. Sweep (`sweep.test.mjs`): the SW's tab sweep against real Chromium tab state — a tab whose
+   navigation is still in flight gets sandboxed (a local server that accepts and never answers
+   pins it pre-commit, where `tab.url` is 'about:blank'), and an escape-hatch tab survives a
+   later reconcile. Both are the security-critical half of the startup race (security.md).
 
 ### Tier 2 — full integration, real engine (~30 s, per-merge + nightly; needs prebuilt engine artifact)
 Headless Chromium + extension + **real wasm WebKit** + fixtures. The small set that proves the

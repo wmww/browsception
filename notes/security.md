@@ -97,6 +97,28 @@ The shim never re-implements web security; it implements *capability* security.
   entry), other extensions' content scripts run there, origin credentials ambient. Documented in
   architecture.md; extension-page mode remains primary partly for this reason.
 
+### Startup race: one navigation per browser start runs natively
+
+Measured 2026-08-14 (Chromium 151; packed CRX external-install *and* unpacked `--load-extension`,
+fresh *and* warm profiles — same result in all four): a URL handed to the browser **at launch**
+(startup pages, session restore, an OS handoff — clicking a link in another app while the browser
+is closed) is fetched, committed and executed **natively**. The static ruleset is not registered
+when that request goes out, and nothing re-evaluates a request already on the wire. This is *not*
+install-only and *not* an artifact of unpacked loading: it happens on every launch of an
+already-installed extension.
+
+The SW's tab sweep is the only backstop. Instrumented (a startup page beaconing every 10 ms): the
+first script ran ~25 ms after the document request, the sweep redirected the tab into the viewer
+~60–120 ms after it. So per browser start, one target page gets a real origin (cookies, storage,
+SW registration, …) and ~100 ms of script. Assume anything one page-load of native JS can do, a
+site on that URL can do — including persisting state that outlives the redirect.
+
+Not fixable inside MV3: blocking webRequest is gone, DNR cannot hold a request that predates its
+registration, and the SW cannot be awake before the browser starts navigating. What the sweep must
+get right (tier-1 `sweep.test.mjs`): the racing tab is usually still **pre-commit**, which Chromium
+reports as `url: 'about:blank'` + `pendingUrl: <target>` — reading only `tab.url` there misses
+exactly the tab the sweep exists for and leaves it native indefinitely.
+
 ## Honest limitations (say these out loud in any writeup)
 
 1. Layer two is thinner than layer one but not zero (shim + host-fetch + blit surface).
@@ -105,6 +127,8 @@ The shim never re-implements web security; it implements *capability* security.
 4. Privacy: the user's IP still reaches sites; fingerprinting within the nested engine is uniform
    (a feature: every browsception user looks alike per engine version) but "is browsception" is
    itself detectable.
-5. The engine is a fork of a fast-moving upstream; security patches must be tracked and rebased
+5. One navigation per browser start (a startup/handoff URL) executes natively for ~100 ms before
+   the sweep sandboxes it — a hard MV3 limit, see § Startup race.
+6. The engine is a fork of a fast-moving upstream; security patches must be tracked and rebased
    promptly (see engine.md on maintenance). A stale nested engine is still *contained*, but
    contained-and-owned is not the goal.

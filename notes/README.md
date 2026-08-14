@@ -63,7 +63,7 @@ lives in [roadmap.md](roadmap.md). Phase summaries:
   gate: tools/smoke-mvp.mjs real-site pass — sandboxed example.com/wikipedia, whitelist→native
   sweep (experiment-log.md 2026-08-10).
 
-Tests: `npm test` = tiers 0–1, pure headless, per-commit (71 tests). `npm run test:tier2` = 21
+Tests: `npm test` = tiers 0–1, pure headless, per-commit (78 tests). `npm run test:tier2` = 21
 scenarios (incl. 6 HiDPI at dpr 2/1.5) against the staged engine artifact (~29 s; restage with
 tools/stage-engine.mjs after engine rebuilds — src/engine/ is gitignored). Engine iteration is
 genuinely incremental (~90 s for embedder-only changes; engine-build.md fix 6) and works from any
@@ -124,7 +124,16 @@ build input; the probe extension is a test fixture (`test/fixtures/probe-ext/`);
 `experiments/` are gone (blit numbers → open-questions #10, probes → `tools/`, lab notebook →
 [experiment-log.md](experiment-log.md)).
 
-Open issues in issues/ (first-nav race residual, guest-JS wedge, rcap dynamic budget, viewer
+*Startup race pinned down and the sweep fixed* (2026-08-14) — the "does the first navigation beat
+the rules?" issue is real and bigger than filed: **every** browser start with a startup/handoff URL
+(not just install, not just `--load-extension`) loads that page natively for ~100 ms before the SW
+sweep redirects it. That part is a hard MV3 limit (security.md § Startup race); what was fixable
+was the sweep itself — it read `tab.url ?? tab.pendingUrl`, so a racing tab (still pre-commit:
+`'about:blank'` + `pendingUrl`) was skipped entirely and stayed native, and it ignored escape
+hatches, so any later reconcile revoked "open natively". Both fixed via `sweepAction()` +
+`storage.session` grants (tier-1 `sweep.test.mjs`).
+
+Open issues in issues/ (guest-JS wedge, engine renders stale input, rcap dynamic budget, viewer
 URL-scheme allowlist). Next work: [roadmap.md](roadmap.md).
 
 ## Key decisions

@@ -67,8 +67,10 @@ result appended here (keep the question, add `**Answer (date):**`).
    renders viewer source — harmless); back/forward hold viewer URLs and work; static
    rules fire with the SW force-killed; whitelist shape (catch-all + allow@10 + session
    escape hatch@100 with tabIds) behaves exactly as designed. `blob:`/`about:`/PDF-served-
-   inline cases still to enumerate. NEW ISSUE: first navigation on a fresh profile races
-   ruleset registration (issues/first-navigation-races-ruleset-registration.md).
+   inline cases still to enumerate. Answered 2026-08-14: the first navigation racing ruleset
+   registration is not a fresh-profile quirk — every browser start with a startup/handoff URL
+   loads it natively for ~100 ms; hard MV3 limit, sweep is the backstop (security.md § Startup
+   race, experiment-log 2026-08-14).
 9. **Per-instance memory budget.** Real WebKit-in-wasm RSS for typical sites; do we fit ~1–2 GB?
    Influences pthread pool size and whether tab-discard/restore is needed early.
 10. **Frame transport pick.** texSubImage2D-from-SAB-in-render-worker vs main-thread upload:

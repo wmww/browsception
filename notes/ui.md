@@ -59,7 +59,10 @@ Dispositions are evaluated per top-level navigation, so link clicks can cross th
   had a "native" button next to its URL bar too (2.3); removed, since nested content can paint a
   convincing lookalike right under it, and the SW now requires the caller to name the tab
   (`msg.tabId`), which only real chrome can do. The URL it escapes to (and the host its allow
-  rule is keyed on) is the live one — see § Viewer chrome & native history.
+  rule is keyed on) is the live one — see § Viewer chrome & native history. The grant is mirrored
+  into `storage.session` (`escape:<tabId>`), because the sweep must honor it too: a rule's
+  regexFilter can't be read back as a list entry, and without the mirror the next reconcile swept
+  the escaped tab straight back into the viewer.
 
 ## Viewer chrome & native history (2026-08-11)
 
@@ -99,8 +102,9 @@ back/forward list (src/ext/viewer.mjs).
 - Mode or list changes **auto-apply to open tabs** (revised at 2.4; originally "apply on next
   reload" + a popup button — the SW's symmetric sweep is simpler and stricter): native tabs whose
   disposition became sandboxed redirect into a viewer; viewer tabs whose target became native
-  leave the sandbox. The pre-sweep instant of native execution is the same known limit as the
-  install race (issues/).
+  leave the sandbox. A tab is judged by `pendingUrl || url` — an in-flight navigation is what the
+  tab is about to be, and 'about:blank' + pendingUrl is exactly how a tab that raced the rules
+  looks. The pre-sweep instant of native execution is a known limit (security.md § Startup race).
 - Activation toggle is instant (enable/disable rulesets + the same sweep); no browser restart.
 
 ## Toolbar UI

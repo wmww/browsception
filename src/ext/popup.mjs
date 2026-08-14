@@ -6,19 +6,14 @@
 import { getState } from './state.mjs';
 import { primaryActions } from './actions.mjs';
 import { normalizeEntry } from './list-match.mjs';
+import { tabUrl, viewerTarget } from './dnr-rules.mjs';
 
 const VIEWER = chrome.runtime.getURL('ext/viewer.html');
 const $ = (id) => document.getElementById(id);
 
-function viewerTarget(url) {
-  if (!url?.startsWith(`${VIEWER}?`)) return null;
-  const i = url.indexOf('url=');
-  return i < 0 ? null : url.slice(i + 4);
-}
-
 function inspectTab(tab) {
-  const url = tab?.url ?? tab?.pendingUrl ?? '';
-  const target = viewerTarget(url);
+  const url = tab ? tabUrl(tab) : '';
+  const target = viewerTarget(url, VIEWER);
   if (target !== null) {
     try {
       return { disposition: 'sandboxed', host: new URL(target).hostname, url: target };

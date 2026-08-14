@@ -381,11 +381,15 @@ async function bootEngine() {
   // --- input forwarding (port of the harness wiring) -----------------------
   const mods = (e) =>
     (e.shiftKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.altKey ? 4 : 0) | (e.metaKey ? 8 : 0);
-  // CSS px → framebuffer device px. Backing and CSS size agree except
-  // transiently mid-resize; use the live ratio, not dpr, so clicks stay
-  // aligned while the engine catches up.
-  const fbX = (e) => e.offsetX * (canvas.width / (canvas.clientWidth || canvas.width));
-  const fbY = (e) => e.offsetY * (canvas.height / (canvas.clientHeight || canvas.height));
+  // CSS px → framebuffer DEVICE px, the ABI's input unit (bib_abi.h
+  // § Coordinates). Measured from the live backing/CSS ratio rather than
+  // devicePixelRatio: the two agree except transiently mid-resize, and the
+  // ratio is what the blit is actually showing, so clicks stay aligned while
+  // the engine catches up. The device → logical (CSS-at-engine-dpr) step is
+  // the ENGINE's — it owns the dpr in force, which it clamps and adopts
+  // asynchronously. Do not scale by dpr here.
+  const devX = (e) => e.offsetX * (canvas.width / (canvas.clientWidth || canvas.width));
+  const devY = (e) => e.offsetY * (canvas.height / (canvas.clientHeight || canvas.height));
   let pendingMove = null;
   const flushPendingMove = () => {
     if (!pendingMove || bs.dead) return;
@@ -411,7 +415,7 @@ async function bootEngine() {
 
   function wireInput() {
     canvas.addEventListener('mousemove', (e) => {
-      pendingMove = [fbX(e), fbY(e), mods(e)];
+      pendingMove = [devX(e), devY(e), mods(e)];
     });
     canvas.addEventListener('mousedown', (e) => {
       if (bs.dead || hostButton(e)) return;
@@ -419,14 +423,14 @@ async function bootEngine() {
       e.preventDefault();
       flushPendingMove();
       flushPendingWheel(); // scroll must land before the click's hit test
-      Module._bib_mouse_button(1, e.button, fbX(e), fbY(e), e.detail || 1, mods(e));
+      Module._bib_mouse_button(1, e.button, devX(e), devY(e), e.detail || 1, mods(e));
     });
     canvas.addEventListener('mouseup', (e) => {
       if (bs.dead || hostButton(e)) return;
       e.preventDefault();
       flushPendingMove();
       flushPendingWheel();
-      Module._bib_mouse_button(0, e.button, fbX(e), fbY(e), e.detail || 1, mods(e));
+      Module._bib_mouse_button(0, e.button, devX(e), devY(e), e.detail || 1, mods(e));
     });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     canvas.addEventListener(
@@ -435,14 +439,16 @@ async function bootEngine() {
         if (bs.dead) return;
         e.preventDefault();
         flushPendingMove();
+        // Position: device px. Deltas: logical (CSS) px, passed through
+        // unscaled — that is what the ABI and WebCore both want.
         if (pendingWheel && pendingWheel[4] === mods(e)) {
-          pendingWheel[0] = fbX(e);
-          pendingWheel[1] = fbY(e);
+          pendingWheel[0] = devX(e);
+          pendingWheel[1] = devY(e);
           pendingWheel[2] += e.deltaX;
           pendingWheel[3] += e.deltaY;
         } else {
           flushPendingWheel();
-          pendingWheel = [fbX(e), fbY(e), e.deltaX, e.deltaY, mods(e)];
+          pendingWheel = [devX(e), devY(e), e.deltaX, e.deltaY, mods(e)];
         }
       },
       { passive: false },

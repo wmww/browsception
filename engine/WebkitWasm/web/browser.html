@@ -790,6 +790,9 @@
 
     function wireInput() {
       canvas.addEventListener("mousemove", (e) => {
+        // This harness never calls bib_set_viewport, so the engine stays at
+        // dpr 1 and CSS px == device px (the ABI's input unit). The viewer,
+        // which does resize, scales by the backing/CSS ratio instead.
         pendingMove = [e.offsetX, e.offsetY, mods(e)];
       });
       canvas.addEventListener("mousedown", (e) => {

@@ -38,8 +38,28 @@ boot-size, grow, shrink, and post-resize input.
 
 ## Input forwarding
 
+### Input coordinates (three spaces, one contract)
+- **CSS px** (host page) → **DEVICE px** (framebuffer) → **LOGICAL px** (WebCore's view, events
+  and damage). Device px is the *only* unit that crosses the ABI, in either direction.
+- The **viewer** does CSS→device with the live `canvas.width / canvas.clientWidth` ratio, not
+  `devicePixelRatio`: the two agree except mid-resize, and the ratio is what the blit is actually
+  showing, so clicks stay aligned while the engine catches up.
+- The **engine** does device→logical (`bibLogicalPoint`, ÷ `g_dpr`), because only it knows the
+  dpr in force — it clamps viewport requests (1–8192 px, dpr 0.25–8), ignores them in GPU mode,
+  and adopts them asynchronously. WebCore's `PlatformMouseEvent`/`PlatformWheelEvent` positions
+  are logical; the device scale factor is applied at *paint* time, not to event coordinates.
+- **Wheel deltas are the exception**: logical (CSS) px, forwarded unscaled — that is what the DOM
+  reports and what WebCore wants.
+- History: this step was missing until 2026-08-13 — the ABI said device px, the engine used the
+  numbers as logical, and at dpr 1 (all our tests, the engine dev harness, the harness the code
+  was ported from) those are the same number. On a HiDPI screen every click landed dpr times too
+  far down and right: at dpr 2 a click 150 px into the page hit whatever was at 300,300. The
+  rendering path had been converted carefully when resize/dpr support landed (1.3) and input was
+  simply never revisited. Guarded now by tier-2 `hidpi.test.mjs` at dpr 2 + 1.5; the durable
+  lesson is in testing.md § dpr != 1 is a coverage axis.
+
 - **Pointer**: `pointerdown/move/up/cancel` + `wheel` (listener `passive:false`, preventDefault)
-  on the canvas; capture pointer on down. Translate CSS→device px. `contextmenu` prevented; right
+  on the canvas; capture pointer on down. Translate CSS→device px (above). `contextmenu` prevented; right
   click forwarded (nested page may show its own menu; a host-side nested-browser context menu is
   viewer chrome, post-MVP).
 - **Scrolling lives inside the engine** — wheel/touch deltas are forwarded as input; the host page

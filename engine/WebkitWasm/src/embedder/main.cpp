@@ -164,7 +164,7 @@ static constexpr int kWidth = 800;
 static constexpr int kHeight = 600;
 static int g_fbWidth = kWidth;   // device px
 static int g_fbHeight = kHeight; // device px
-static double g_dpr = 1.0;       // view coords are logical = device / dpr
+static double g_dpr = 1.0;       // logical px = device px / g_dpr
 
 static const char* kTestHTML =
     "<!DOCTYPE html>"
@@ -204,8 +204,29 @@ static uint8_t* g_blitPixels;
 // host's partial blit. force=1 and the first frame report the full frame.
 static int g_dirtyBox[4] = { 0, 0, kWidth, kHeight };
 
-// Map a LOGICAL (view-coordinate) rect to device pixels, clamped to the
-// framebuffer. Identity at dpr 1.0 (the tested path).
+// --- Coordinate spaces -----------------------------------------------------
+// Three spaces meet here, and at dpr 1 they are numerically IDENTICAL — which
+// is precisely why a mix-up survives testing (see the HiDPI tier-2 suite,
+// which exists to break that symmetry):
+//
+//   DEVICE px   the framebuffer, the canvas backing store, and every
+//               coordinate that crosses the ABI in either direction:
+//               bib_set_viewport, the bibFrame dirty box, and the
+//               bib_mouse_*/bib_wheel positions.
+//   LOGICAL px  WebCore's world: view size, event positions, damage rects.
+//               logical = device / g_dpr.
+//   CSS px      the host page's own units. The viewer converts CSS -> DEVICE
+//               before calling in, using the canvas backing/CSS ratio it can
+//               measure; it deliberately does NOT do the device -> logical
+//               step, because only we know the dpr actually in force (we
+//               clamp, reject and adopt viewport requests asynchronously).
+//
+// Rule: convert at the ABI edge, through the three helpers below. Nothing
+// else in this file should touch g_dpr — if you are writing `* g_dpr` or
+// `/ g_dpr` anywhere else, you are inventing a fourth space.
+
+// LOGICAL (view-coordinate) rect -> DEVICE px, clamped to the framebuffer.
+// Identity at dpr 1.0.
 static WebCore::IntRect bibDeviceRect(const WebCore::IntRect& logical)
 {
     const WebCore::IntRect fbRect(0, 0, g_fbWidth, g_fbHeight);
@@ -222,6 +243,16 @@ static WebCore::IntRect bibLogicalFrameRect()
     if (g_dpr == 1.0)
         return { 0, 0, g_fbWidth, g_fbHeight };
     return { 0, 0, static_cast<int>(lround(g_fbWidth / g_dpr)), static_cast<int>(lround(g_fbHeight / g_dpr)) };
+}
+
+// DEVICE px point (as every input export receives) -> LOGICAL px, the space
+// WebCore's EventHandler hit-tests in. Identity at dpr 1.0; without it a
+// HiDPI click lands dpr times too far down and right.
+static WebCore::DoublePoint bibLogicalPoint(double deviceX, double deviceY)
+{
+    if (g_dpr == 1.0)
+        return { deviceX, deviceY };
+    return { deviceX / g_dpr, deviceY / g_dpr };
 }
 
 // Skia GPU (decision-005 G2, opt-in via Module.bibGPU): the backing
@@ -1650,17 +1681,18 @@ extern "C" EMSCRIPTEN_KEEPALIVE void bib_gpu_test_lose_restore()
 
 struct BibMouseMoveTask { double x; double y; int mods; };
 static void bibRunMouseMove(void*);
-EMSCRIPTEN_KEEPALIVE void bib_mouse_move(double x, double y, int modifierBits)
+EMSCRIPTEN_KEEPALIVE void bib_mouse_move(double deviceX, double deviceY, int modifierBits)
 {
     if (!bibOnEngineThread()) {
-        auto* task = new BibMouseMoveTask { x, y, modifierBits };
+        auto* task = new BibMouseMoveTask { deviceX, deviceY, modifierBits };
         if (!bibProxyToEngine(bibRunMouseMove, task))
             delete task; // pre-main: drop, matches !g_engine
         return;
     }
     if (!g_engine)
         return;
-    WebCore::PlatformMouseEvent event({ x, y }, { x, y }, WebCore::MouseButton::None,
+    const WebCore::DoublePoint position = bibLogicalPoint(deviceX, deviceY);
+    WebCore::PlatformMouseEvent event(position, position, WebCore::MouseButton::None,
         WebCore::PlatformEvent::Type::MouseMoved, 0, modifiersFromBits(modifierBits),
         MonotonicTime::now(), 0, WebCore::SyntheticClickType::NoTap);
     g_engine->mainFrame->eventHandler().mouseMoved(event);
@@ -1674,10 +1706,10 @@ static void bibRunMouseMove(void* p)
 
 struct BibMouseButtonTask { int down; int jsButton; double x; double y; int clicks; int mods; };
 static void bibRunMouseButton(void*);
-EMSCRIPTEN_KEEPALIVE void bib_mouse_button(int down, int jsButton, double x, double y, int clickCount, int modifierBits)
+EMSCRIPTEN_KEEPALIVE void bib_mouse_button(int down, int jsButton, double deviceX, double deviceY, int clickCount, int modifierBits)
 {
     if (!bibOnEngineThread()) {
-        auto* task = new BibMouseButtonTask { down, jsButton, x, y, clickCount, modifierBits };
+        auto* task = new BibMouseButtonTask { down, jsButton, deviceX, deviceY, clickCount, modifierBits };
         if (!bibProxyToEngine(bibRunMouseButton, task))
             delete task;
         return;
@@ -1691,7 +1723,8 @@ EMSCRIPTEN_KEEPALIVE void bib_mouse_button(int down, int jsButton, double x, dou
         button = WebCore::MouseButton::Middle;
     else if (jsButton == 2)
         button = WebCore::MouseButton::Right;
-    WebCore::PlatformMouseEvent event({ x, y }, { x, y }, button,
+    const WebCore::DoublePoint position = bibLogicalPoint(deviceX, deviceY);
+    WebCore::PlatformMouseEvent event(position, position, button,
         down ? WebCore::PlatformEvent::Type::MousePressed : WebCore::PlatformEvent::Type::MouseReleased,
         clickCount, modifiersFromBits(modifierBits), MonotonicTime::now(), 0,
         WebCore::SyntheticClickType::NoTap);
@@ -1709,10 +1742,10 @@ static void bibRunMouseButton(void* p)
 
 struct BibWheelTask { double x; double y; double dx; double dy; int mods; };
 static void bibRunWheel(void*);
-EMSCRIPTEN_KEEPALIVE void bib_wheel(double x, double y, double deltaX, double deltaY, int modifierBits)
+EMSCRIPTEN_KEEPALIVE void bib_wheel(double deviceX, double deviceY, double deltaX, double deltaY, int modifierBits)
 {
     if (!bibOnEngineThread()) {
-        auto* task = new BibWheelTask { x, y, deltaX, deltaY, modifierBits };
+        auto* task = new BibWheelTask { deviceX, deviceY, deltaX, deltaY, modifierBits };
         if (!bibProxyToEngine(bibRunWheel, task))
             delete task;
         return;
@@ -1720,8 +1753,11 @@ EMSCRIPTEN_KEEPALIVE void bib_wheel(double x, double y, double deltaX, double de
     if (!g_engine)
         return;
     auto modifiers = modifiersFromBits(modifierBits);
-    // DOM wheel deltas are positive-down; PlatformWheelEvent is positive-up.
-    WebCore::PlatformWheelEvent event(WebCore::IntPoint(x, y), WebCore::IntPoint(x, y),
+    // Deltas are already LOGICAL px (DOM wheel deltas are CSS px, which is
+    // the same space) — only the position needs unscaling. DOM wheel deltas
+    // are positive-down; PlatformWheelEvent is positive-up.
+    const WebCore::IntPoint position = WebCore::flooredIntPoint(bibLogicalPoint(deviceX, deviceY));
+    WebCore::PlatformWheelEvent event(position, position,
         -deltaX, -deltaY, -deltaX / 120.0f, -deltaY / 120.0f,
         WebCore::PlatformWheelEventGranularity::ScrollByPixelWheelEvent,
         modifiers.contains(WebCore::PlatformEvent::Modifier::ShiftKey),

@@ -28,6 +28,16 @@
  *    export args are ccall-marshalled strings (copied by the proxy pack) —
  *    no manual allocation.
  *
+ * Coordinates — ONE unit crosses this ABI in either direction: framebuffer
+ * DEVICE pixels. Viewport size, the bibFrame dirty box and every input
+ * position are device px; the host converts its CSS px to device px with the
+ * canvas backing/CSS ratio, and the engine converts device px to the LOGICAL
+ * (CSS-at-this-dpr) pixels WebCore works in, because only the engine knows
+ * the dpr actually in force. Sizes/positions are device px; wheel DELTAS are
+ * the exception and are logical px, as the DOM reports them. At dpr 1 the two
+ * spaces coincide, so a mix-up here is invisible until someone runs at dpr 2
+ * — test/tier2/hidpi.test.mjs is the tripwire.
+ *
  * Security: every hook here is a capability an owned engine holds. Additions
  * require a matching line in notes/security.md § capability accounting.
  */
@@ -103,8 +113,9 @@ void bib_wasm_free(char* ptr);
 /* ========================================================================
  * Input (JS → engine)
  * ========================================================================
- * Coordinates are framebuffer device pixels (the shim maps CSS px → device px
- * before injecting). All input exports are fire-and-forget. */
+ * Positions are framebuffer DEVICE pixels: the shim maps CSS px → device px
+ * (backing/CSS ratio) and the engine maps device px → logical px (÷ its live
+ * dpr) before hit-testing. All input exports are fire-and-forget. */
 
 #define BIB_MOD_SHIFT 1
 #define BIB_MOD_CTRL 2
@@ -117,13 +128,15 @@ void bib_wasm_free(char* ptr);
 #define BIB_KEY_UP 1
 #define BIB_KEY_CHAR 2
 
-void bib_mouse_move(double x, double y, int modifierBits);
+void bib_mouse_move(double deviceX, double deviceY, int modifierBits);
 /* button: 0 = left, 1 = middle, 2 = right (DOM MouseEvent.button). */
-void bib_mouse_button(int down, int button, double x, double y, int clickCount,
-                      int modifierBits);
-/* Wheel deltas in DOM sign convention (positive = down/right); the engine
- * negates for WebCore internally. Scrolling happens inside the engine. */
-void bib_wheel(double x, double y, double deltaX, double deltaY,
+void bib_mouse_button(int down, int button, double deviceX, double deviceY,
+                      int clickCount, int modifierBits);
+/* The position is device px like every other one; the DELTAS are logical
+ * (CSS) px in DOM sign convention (positive = down/right) — pass
+ * e.deltaX/deltaY through unscaled, the engine negates for WebCore
+ * internally. Scrolling happens inside the engine. */
+void bib_wheel(double deviceX, double deviceY, double deltaX, double deltaY,
                int modifierBits);
 /* Returns an optimistic 1 (cross-thread; real consumption is async). */
 int bib_key(int type, const char* key, const char* code, const char* text,

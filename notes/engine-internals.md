@@ -80,6 +80,12 @@ re-bite on rebases or bound future features.
 - **`createImageBitmap()` on USE(SKIA) CPU-raster requests Accelerated unconditionally**
   (escape hatch is PLATFORM(GTK)-only) → unguarded `PlatformDisplay::sharedDisplay()` abort.
   The patch's `sharedDisplayIfExists()` early-out hunk must survive rebases.
+- **Event coordinates are LOGICAL px, framebuffer coordinates are DEVICE px.**
+  `PlatformMouseEvent`/`PlatformWheelEvent` positions (and `LocalFrameView`'s size, damage rects,
+  paint cull rects) are in view/CSS px at the current scale; `Page::setDeviceScaleFactor` affects
+  *painting* only, and the embedder scales the Skia canvas by dpr itself. Feeding framebuffer
+  device px straight into an event is silently correct at dpr 1 and wrong by exactly dpr
+  everywhere else — convert with `bibLogicalPoint` at the ABI edge, never later.
 - **Scroll damage semantics**: `ScrollView::scrollContents` calls invalidateRootView(full rect)
   on every scroll *before* `ChromeClient::scroll` — it means "push backing store", not damage.
   `canBlitOnScroll()` is false under fixed/sticky and virtualized/transformed scrollers. A single

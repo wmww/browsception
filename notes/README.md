@@ -62,11 +62,11 @@ lives in [roadmap.md](roadmap.md). Phase summaries:
   gate: tools/smoke-mvp.mjs real-site pass — sandboxed example.com/wikipedia, whitelist→native
   sweep (experiment-log.md 2026-08-10).
 
-Tests: `npm test` = tiers 0–1, pure headless, per-commit (71 tests). `npm run test:tier2` = 15
-scenarios against the staged engine artifact (~15 s; restage with tools/stage-engine.mjs after
-engine rebuilds — src/engine/ is gitignored). Engine iteration is genuinely incremental (~90 s
-for embedder-only changes; engine-build.md fix 6) and works from any worktree branch
-(worktrees.md § Engine work).
+Tests: `npm test` = tiers 0–1, pure headless, per-commit (71 tests). `npm run test:tier2` = 21
+scenarios (incl. 6 HiDPI at dpr 2/1.5) against the staged engine artifact (~29 s; restage with
+tools/stage-engine.mjs after engine rebuilds — src/engine/ is gitignored). Engine iteration is
+genuinely incremental (~90 s for embedder-only changes; engine-build.md fix 6) and works from any
+worktree branch (worktrees.md § Engine work).
 
 Load-bearing implementation facts:
 
@@ -94,6 +94,14 @@ viewer wheel coalescing, 2-5ms strips at any dpr (rendering-input.md § scrollin
 *Engine fork absorbed* (2026-08-12) — engine/WebkitWasm sources are tracked in this repo
 (squashed import, upstream docs/spikes pruned, gems distilled into engine-internals.md);
 build state stays a main-checkout singleton (worktrees.md).
+
+*HiDPI mouse mapping fixed* (2026-08-13) — input positions cross the ABI in framebuffer DEVICE
+px, but the engine fed them straight into WebCore, whose events are LOGICAL px: on any dpr != 1
+screen every click/wheel landed dpr times too far down and right (dpr 2, click 150 px in → hit
+300,300). The engine now converts at the edge (`bibLogicalPoint`); the ABI states the contract;
+tier-2 `hidpi.test.mjs` runs render/input/resize at dpr 2 + 1.5, because at dpr 1 the CSS,
+logical and device spaces are the same numbers and nothing can catch a unit bug (testing.md
+§ dpr != 1 is a coverage axis; rendering-input.md § Input coordinates).
 
 *Wisp + curl transport removed* (2026-08-13) — the engine has no network transport at all:
 libcurl, libssl, nghttp2, SOCKFS and the harness wisp dispatcher are gone from the code, the

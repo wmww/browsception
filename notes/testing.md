@@ -87,7 +87,7 @@ integration that unit tests can't and that doesn't need the 100 MB engine:
    guard denials surfaced as engine-visible errors, size cap aborts.
 6. Isolation preconditions: `crossOriginIsolated === true` in viewer, SAB usable in worker.
 
-### Tier 2 — full integration, real engine (<2–3 min, per-merge + nightly; needs prebuilt engine artifact)
+### Tier 2 — full integration, real engine (~30 s, per-merge + nightly; needs prebuilt engine artifact)
 Headless Chromium + extension + **real wasm WebKit** + fixtures. The small set that proves the
 whole machine, end to end:
 7. **Render**: navigate to `grid.bstest` → `__bs.pixels` probes match expected colors; `__bs.text`
@@ -116,10 +116,30 @@ whole machine, end to end:
     navigation refused before any request (`http://127.0.0.1:1/`, blocked port). Each must raise
     the viewer error strip naming that URL, with a retry, and the next navigation must still
     render and clear it. The only cover for the engine's `"loadfailed"` signal.
+17. **HiDPI** (`test/tier2/hidpi.test.mjs`, own file — dpr is a browser-launch property): render
+    geometry, the full mouse battery and post-resize alignment at **dpr 2 and 1.5**. ~9 s, two
+    extra browser launches.
 
-That's ~16 scenarios total. Growth policy: a new test requires a new *class* of failure it would
+That's ~17 scenarios total. Growth policy: a new test requires a new *class* of failure it would
 catch (or a regression that escaped); prefer extending an existing scenario's probes over adding
 scenarios.
+
+#### dpr != 1 is a coverage axis, not a variant
+CSS px, logical px and device px are numerically identical at dpr 1, so a dpr-1 suite cannot
+distinguish them and any unit mix-up passes it. That is how mouse input shipped multiplied by dpr
+(every HiDPI click landing dpr times too far down/right) with scenario 9 *and* scenario 14's
+"input stays aligned" both green — see rendering-input.md § Input coordinates. Rule: anything
+converting between those spaces gets a HiDPI case, and its probe coordinates must sit far enough
+from the origin that a scale error cannot hit the intended target anyway (the input fixture's
+zones are 200 logical px: click the *center* of one, so a dpr-scaled misread lands elsewhere).
+
+**Harness trap**: playwright's `deviceScaleFactor` context option reports dpr N to page JS but
+leaves `device-pixel-content-box` and the compositing surface at 1x. The viewer then sizes a 1x
+framebuffer, the scale error cancels out, and a HiDPI test passes on broken code (measured: dpcb
+300 device px for a 300 CSS px box at dpr 2 — vs 600 with the flag, which matches hardware). Use
+`--force-device-scale-factor=N` with `viewport: null`, and resize windows through CDP
+`Browser.setWindowBounds`: `setViewportSize` starts metrics emulation and overrides the forced
+factor.
 
 ### What is deliberately not tested in CI
 - Real websites (flaky, slow, third-party load) — agent smoke list instead.

@@ -31,7 +31,7 @@ surface for speed (no WebGPU for the nested engine, no nested-wasm-runs-natively
 | [rendering-input.md](rendering-input.md) | Blit paths, input forwarding, IME, find-in-page, clipboard, audio, popups |
 | [security.md](security.md) | Threat model, trust boundaries, what we must enforce ourselves |
 | [testing.md](testing.md) | Automated test tiers (unit/bridge/full-integration), fixture+oracle design, agent iteration loop |
-| [worktrees.md](worktrees.md) | Ephemeral-worktree workflow: wt-setup, shared engine tree + lock, artifact snapshots, per-checkout ports |
+| [worktrees.md](worktrees.md) | Ephemeral-worktree workflow: wt-setup, building your branch's engine sources against the shared tree, WebKit-patch ownership, artifact snapshots, per-checkout ports |
 | [open-questions.md](open-questions.md) | Unverified assumptions and spikes to run (answers appended in place) |
 | [roadmap.md](roadmap.md) | Post-MVP fast-follows, cleanups, standing risks, working agreements |
 
@@ -64,7 +64,8 @@ lives in [roadmap.md](roadmap.md). Phase summaries:
 Tests: `npm test` = tiers 0–1, pure headless, per-commit (70 tests). `npm run test:tier2` = 13
 scenarios against the staged engine artifact (~15 s; restage with tools/stage-engine.mjs after
 engine rebuilds — src/engine/ is gitignored). Engine iteration is genuinely incremental (~90 s
-for embedder-only changes; engine-build.md fix 6).
+for embedder-only changes; engine-build.md fix 6) and works from any worktree branch
+(worktrees.md § Engine work).
 
 Load-bearing implementation facts:
 

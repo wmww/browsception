@@ -11,10 +11,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { launch, extensionIdFromManifest, waitForFixtureServer } from '../harness/launch.mjs';
+import { launch, extensionIdFromManifest, requireStagedEngine, waitForFixtureServer } from '../harness/launch.mjs';
 
 const EXT_DIR = new URL('../../src', import.meta.url).pathname;
 const EXT_ID = extensionIdFromManifest(EXT_DIR);
+requireStagedEngine(EXT_DIR); // before spawning anything — a missing engine is a setup error
 const viewerURL = (target, extra = '') =>
   `chrome-extension://${EXT_ID}/ext/viewer.html?url=${encodeURIComponent(target)}${extra}`;
 

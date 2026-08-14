@@ -11,12 +11,16 @@ tier was deleted 2026-08-13 — the engine's only transport is now the host-fetc
 `tools/build-engine.sh` — wraps the engine's idempotent scripts (`engine/WebkitWasm/tools/`)
 with the five fixes a fresh checkout needs (below). Output:
 `engine/WebkitWasm/build/webcore/bin/embedder.{js,wasm}`, snapshotted into
-`engine/artifacts/<stamp>/` (newest 5 kept; meta.json stamped with the main repo's last
-`engine/`-touching sha + dirty flag) for staging. Worktree-safe: resolves the main checkout's
-`engine/` via the git common dir and serializes concurrent builds with `engine/.build.lock`;
-aborts if a worktree's tracked engine sources differ from main's — see notes/worktrees.md.
-After each build it re-exports `src/patches/webkit-emscripten.patch` and warns if it changed
-(the patch is the only tracked record of `third_party/WebKit` edits).
+`engine/artifacts/<stamp>/` (newest 5 kept; meta.json stamped with `source_hash` — the hash of
+the engine sources built, `tools/lib/engine-src-hash.mjs` — plus the invoking checkout, branch,
+sha, dirty, pthread) for staging. Worktree-safe: it compiles **the invoking checkout's**
+`engine/WebkitWasm/{src,web/engine-pre.js}` against the main checkout's shared build tree
+(`BIB_TREE`/`BIB_SRC` split in build-webcore.sh + export-webkit-patches.sh), resolves that tree
+via the git common dir, and serializes concurrent builds with `engine/.build.lock`. A snapshot
+whose `source_hash` already matches exits in ~0.7 s. Before building it exports
+`src/patches/webkit-emscripten.patch` from the WebKit working tree (warning if it had untracked
+edits) and refuses to build when another checkout's patch is loaded there (`--sync-webkit`
+switches). See notes/worktrees.md § Engine work.
 
 Dev harness (headless drivers: `tools/smoke-{browse,bridge,leak,fixtures}.mjs`):
 ```sh
@@ -86,9 +90,9 @@ in engine/WebkitWasm/LICENSING.md — upstream base `825c260`, our pre-import he
 `af6f559`, no inner git anymore). The host-fetch bridge is the only transport — the curl/wisp
 tier was deleted from the code, the link and the dep tier on 2026-08-13; dev harness =
 web/browser.html + web/bib-net.js + dev-server `/__bibproxy`.
-Rebuilds: `tools/build-engine.sh` (embedder-only changes are a ~2 min compile+relink).
-Milestone smoke: `node tools/smoke-bridge.mjs` (real sites — not CI). Engine sources are
-edited in the main checkout only (worktrees.md). Build RAM is mild on this box: 12 jobs
+Rebuilds: `tools/build-engine.sh` (embedder-only changes are a ~1.5 min compile+relink, from
+any checkout — engine work belongs on the branch that needs it; worktrees.md).
+Milestone smoke: `node tools/smoke-bridge.mjs` (real sites — not CI). Build RAM is mild on this box: 12 jobs
 fine; unified TUs ~1.2 GB clang RSS each.
 
 ## Build traps & pin rationale (distilled from fork docs at import)
@@ -134,6 +138,11 @@ references — so re-running build-engine.sh invalidated the whole ninja graph
 (~7.4k objects, 15–20 min) after any one-line embedder change. build-engine.sh
 now probes third_party readiness (WebKit checkout, emcc, five sysroot libs)
 and skips bootstrap entirely when ready; a one-file embedder change is then
-compile+relink (~2–3 min). `rm -rf third_party/wasm-sysroot` forces the full
-path. Caveat: headers under Source/WebCore (e.g. EmptyFrameLoaderClient.h)
-are legitimately wide — touching one still costs a broad rebuild.
+compile+relink (~1.5 min, 7 ninja edges). `rm -rf third_party/wasm-sysroot` forces the
+full path. Caveat: headers under Source/WebCore (e.g. EmptyFrameLoaderClient.h)
+are legitimately wide — touching one still costs a broad rebuild; so does anything that
+freshens WebKit-tree mtimes (why `--sync-webkit` restores them for files the switch leaves
+unchanged: 960 ninja edges / 13 min vs 9 edges / 1.5 min, measured 2026-08-13).
+
+cmake does not track `--pre-js` inputs: build-engine.sh stamps `sha256(web/engine-pre.js)` at
+`build/.engine-pre.sha` and touches `main.cpp` when it changes, so a pre-js-only edit relinks.

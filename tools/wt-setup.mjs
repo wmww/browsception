@@ -39,11 +39,15 @@ if (!existsSync(join(checkoutRoot, 'node_modules'))) {
 }
 
 // --- src/engine: stage from shared artifacts (hardlinks) -------------------
-if (!existsSync(join(checkoutRoot, 'src/engine/embedder.wasm'))) {
-  const r = run('node', [join(checkoutRoot, 'tools/stage-engine.mjs')]);
+// --if-stale makes this a no-op (and silent) when the right artifact is already
+// staged, so running it on every pretest also re-stages a checkout whose engine
+// was rebuilt since. stdio is inherited even in --quiet mode: it only speaks when
+// it stages, and a source/artifact mismatch warning must not be swallowed.
+{
+  const r = spawnSync('node', [join(checkoutRoot, 'tools/stage-engine.mjs'), '--if-stale'],
+    { cwd: checkoutRoot, stdio: 'inherit' });
   if (r.status !== 0)
     console.warn('src/engine: not staged (no engine artifacts?) — tier2/smokes unavailable, tiers 0-1 fine');
-  else log('src/engine: staged');
 }
 
 log(`ports: block ${PORT_BASE}-${PORT_BASE + 15} (fixtures http ${HTTP_PORT} / https ${HTTPS_PORT})`);

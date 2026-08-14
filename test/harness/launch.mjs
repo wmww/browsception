@@ -10,7 +10,7 @@
 // one real-TLS test lives in tier 2).
 
 import { chromium } from 'playwright-core';
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { createHash, webcrypto } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -27,13 +27,25 @@ export const RESOLVER_RULES = `MAP plain-http.bstest 127.0.0.1:${HTTP_PORT}, MAP
 
 export const CHROMIUM_BIN = process.env.BS_CHROMIUM ?? '/usr/bin/chromium';
 
+// The engine wasm is gitignored and staged per checkout (tools/stage-engine.mjs,
+// run for you by tools/wt-setup.mjs). Without it every engine-backed scenario
+// dies on a boot timeout with no hint — fail here instead.
+export function requireStagedEngine(extensionDir) {
+  if (existsSync(join(extensionDir, 'engine/embedder.wasm'))) return;
+  throw new Error(
+    `no engine staged at ${join(extensionDir, 'engine')} — run: node tools/wt-setup.mjs`,
+  );
+}
+
 /**
- * @param {{extensionDir?: string, headless?: boolean, args?: string[]}} opts
+ * @param {{extensionDir?: string, headless?: boolean, args?: string[],
+ *   needsEngine?: boolean}} opts
  * @returns {Promise<{context: import('playwright-core').BrowserContext,
  *   userDataDir: string, close: () => Promise<void>}>}
  */
 export async function launch(opts = {}) {
-  const { extensionDir, headless = true, args = [] } = opts;
+  const { extensionDir, headless = true, args = [], needsEngine = false } = opts;
+  if (needsEngine) requireStagedEngine(extensionDir);
   const userDataDir = mkdtempSync(join(tmpdir(), 'bs-profile-'));
   const allArgs = [
     `--host-resolver-rules=${RESOLVER_RULES}`,

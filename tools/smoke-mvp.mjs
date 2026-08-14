@@ -41,7 +41,7 @@ async function poll(fn, what, timeoutMs = 60000) {
   throw new Error(`timeout: ${what} (last: ${JSON.stringify(last)})`);
 }
 
-const session = await launch({ extensionDir: EXT, headless: !headed });
+const session = await launch({ extensionDir: EXT, headless: !headed, needsEngine: true });
 const { context } = session;
 const EXT_ID = extensionIdFromManifest(EXT);
 const VIEWER_PREFIX = `chrome-extension://${EXT_ID}/ext/viewer.html?url=`;

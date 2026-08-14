@@ -4,18 +4,27 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TP="$ROOT/third_party"
+# Build STATE (third_party/, build/, sysroot — absolute paths baked in) and
+# the SOURCE checkout being compiled are separable: BIB_TREE is the shared
+# WebkitWasm tree that owns the 12 GB build state, BIB_SRC is the checkout
+# whose src/embedder + web/engine-pre.js get compiled into the embedder.
+# Both default to this script's own tree, so standalone use is unchanged;
+# tools/build-engine.sh sets them when building a worktree's sources against
+# the main checkout's build tree (notes/worktrees.md).
+TREE="${BIB_TREE:-$ROOT}"
+SRC="${BIB_SRC:-$ROOT}"
+TP="$TREE/third_party"
 SYSROOT="$TP/wasm-sysroot"
-BUILD="$ROOT/build/webcore"
+BUILD="$TREE/build/webcore"
 
 source "$TP/emsdk/emsdk_env.sh" > /dev/null 2>&1
-cd "$ROOT"
+cd "$TREE"
 
 # --- Embedder wasm-FS staging (fonts are load-bearing: no TTF = no text) ---
 # The sysroot's etc/fonts/conf.d entries are DESTDIR-relative symlinks that
 # are broken on the host, and emcc's file packager dereferences symlinks —
 # stage a clean tree of REAL files for --embed-file.
-FSROOT="$ROOT/build/embedder-fs"
+FSROOT="$TREE/build/embedder-fs"
 # Guard checks ALL artifacts, not just the TTF — a partial staging (TTF
 # present, configs missing) must re-stage, and staging that produces an
 # empty conf.d must FAIL, not print OK (Codex review).
@@ -59,7 +68,7 @@ if [ "$BIB_PTHREAD" = 1 ]; then
 fi
 
 EMBEDDER_FLAGS=(
-  -DEMSCRIPTEN_EMBEDDER_CMAKE="$ROOT/src/embedder/embedder.cmake"
+  -DEMSCRIPTEN_EMBEDDER_CMAKE="$SRC/src/embedder/embedder.cmake"
   -DBIB_FONTCONFIG_ETC_DIR="$FSROOT/etc-fonts"
   -DBIB_FONTS_DIR="$FSROOT/fonts"
   # Threading mode (BIB_PTHREAD=0 -> single-threaded engine for hosts that
@@ -86,7 +95,7 @@ if [ ! -f "$BUILD/build.ninja" ]; then
     -DCMAKE_FIND_ROOT_PATH="$SYSROOT" \
     -DJSC_EMBED_ICU_DATA_FILE="$SYSROOT/share/icu/77.1/icudt77l.dat" \
     "${EMBEDDER_FLAGS[@]}" \
-    > "$ROOT/build/webcore-configure.log" 2>&1
+    > "$TREE/build/webcore-configure.log" 2>&1
   echo "CONFIGURE: OK"
 else
   # Re-sync the embedder cache vars whenever any cached VALUE differs from
@@ -107,7 +116,7 @@ else
   done
   if [ "$NEED_RECONFIG" = 1 ]; then
     cmake -S "$TP/WebKit" -B "$BUILD" "${EMBEDDER_FLAGS[@]}" \
-      > "$ROOT/build/webcore-reconfigure.log" 2>&1
+      > "$TREE/build/webcore-reconfigure.log" 2>&1
     echo "RECONFIGURE (embedder vars): OK"
   fi
 fi
@@ -118,9 +127,9 @@ fi
 # need ~1.2GB+ of clang RSS EACH — full nproc parallelism (~16) livelocks
 # the 12G/no-swap scope in reclaim (observed 2026-06-11: 28min wall, 3min
 # CPU per job, counter frozen). BIB_JOBS=6 fits comfortably.
-ninja -C "$BUILD" -k 50 ${BIB_JOBS:+-j "$BIB_JOBS"} WebCore BibEmbedder > "$ROOT/build/webcore-ninja.log" 2>&1 || {
+ninja -C "$BUILD" -k 50 ${BIB_JOBS:+-j "$BIB_JOBS"} WebCore BibEmbedder > "$TREE/build/webcore-ninja.log" 2>&1 || {
   echo "NINJA FAILED — unique errors:"
-  rg -n 'error:' "$ROOT/build/webcore-ninja.log" | sort -t: -k4 -u | head -25
+  rg -n 'error:' "$TREE/build/webcore-ninja.log" | sort -t: -k4 -u | head -25
   exit 1
 }
 echo "NINJA: OK"

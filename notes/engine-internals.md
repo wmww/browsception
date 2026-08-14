@@ -30,6 +30,19 @@ re-bite on rebases or bound future features.
   exists engine-side but its host hooks were only in the fork's dev browser.html — never ported
   to our viewer; video never implemented. Gotcha: a Page without `PageIdentifier` has no
   mediaSessionManager → every `play()` parks forever; keep passing `PageIdentifier::generate()`.
+- **No compositing at all**: `acceleratedCompositingEnabled` is off and
+  `GraphicsLayer::create` is a `RELEASE_ASSERT_NOT_REACHED` link stub
+  (`GLStubsEmscripten.cpp`), so *anything* that reaches compositing mode aborts the engine. Most
+  of WebCore gates on `hasAcceleratedCompositing()`, but a few callers force it on unconditionally
+  — `Document::setActiveViewTransition` (script-reachable!) and
+  `LocalFrameView::enterCompositingMode`. Consequences: **view transitions are off**
+  (`setViewTransitionsEnabled(false)` + the cross-document one; the `startViewTransition` IDL is
+  `[EnabledBySetting]`, so sites feature-detect and take their plain path — youtube.com's watch
+  page crashed the engine here, 2026-08-14), and the patch makes
+  `RenderLayerCompositor::enableCompositingMode(true)` a no-op while the setting is off, so the
+  next such caller degrades instead of aborting. Tier-2 scenario 17 is the tripwire. Any feature
+  that genuinely *needs* a layer tree (view transitions, accelerated canvas/video,
+  `will-change: transform` fast paths) is blocked on implementing GraphicsLayer, not on a flag.
 - **Guest `new WebSocket()`**: WebKit ≥2.46 has no in-WebCore channel; a null provider channel
   hits `RELEASE_ASSERT(m_channel)` and kills the engine, so `BibSocketProvider` must always hand
   out *something*. What we ship (since the curl cut, 2026-08-13): `BibWebSocketChannel`, a

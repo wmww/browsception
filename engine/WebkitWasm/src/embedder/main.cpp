@@ -2435,6 +2435,14 @@ int main()
     // byte-stable; interactive mode runs JSC (CLoop) inside the page.
     page->settings().setScriptEnabled(interactive);
     page->settings().setAcceleratedCompositingEnabled(false);
+    // View transitions need a compositor we don't have (Document's
+    // setActiveViewTransition forces compositing mode unconditionally, which
+    // used to abort the engine on youtube.com's kevlar bootstrap). The
+    // startViewTransition IDL is [EnabledBySetting], so turning it off makes
+    // sites feature-detect and take their plain-navigation path instead of
+    // getting a half-working API. Re-enable when/if compositing lands.
+    page->settings().setViewTransitionsEnabled(false);
+    page->settings().setCrossDocumentViewTransitionsEnabled(false);
     // Raw WebCore defaults this to FALSE (embedders must opt in) —
     // without it CachedResourceLoader silently DEFERS every non-data:
     // image load: no request, no error event, blank <img> (root cause #8,

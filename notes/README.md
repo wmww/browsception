@@ -63,7 +63,7 @@ lives in [roadmap.md](roadmap.md). Phase summaries:
   gate: tools/smoke-mvp.mjs real-site pass — sandboxed example.com/wikipedia, whitelist→native
   sweep (experiment-log.md 2026-08-10).
 
-Tests: `npm test` = tiers 0–1, pure headless, per-commit (78 tests). `npm run test:tier2` = 21
+Tests: `npm test` = tiers 0–1, pure headless, per-commit (78 tests). `npm run test:tier2` = 22
 scenarios (incl. 6 HiDPI at dpr 2/1.5) against the staged engine artifact (~29 s; restage with
 tools/stage-engine.mjs after engine rebuilds — src/engine/ is gitignored). Engine iteration is
 genuinely incremental (~90 s for embedder-only changes; engine-build.md fix 6) and works from any
@@ -132,6 +132,22 @@ was the sweep itself — it read `tab.url ?? tab.pendingUrl`, so a racing tab (s
 `'about:blank'` + `pendingUrl`) was skipped entirely and stayed native, and it ignored escape
 hatches, so any later reconcile revoked "open natively". Both fixed via `sweepAction()` +
 `storage.session` grants (tier-1 `sweep.test.mjs`).
+
+*View transitions disabled — youtube.com crash fixed* (2026-08-14) — `document.startViewTransition()`
+drove `Document::setActiveViewTransition` → `RenderLayerCompositor::enableCompositingMode()` →
+`GraphicsLayer::create`, which is a `RELEASE_ASSERT_NOT_REACHED` stub in this compositor-less port:
+the whole engine aborted ~3 s into youtube.com/watch ("engine crashed — reload"). The embedder now
+turns the feature off (`setViewTransitionsEnabled` + cross-document; the IDL is `[EnabledBySetting]`
+so sites feature-detect and take their plain path) and the patch makes `enableCompositingMode(true)`
+a no-op while accelerated compositing is off, so the remaining unconditional caller
+(`LocalFrameView::enterCompositingMode`) degrades instead of crashing. YouTube's watch page now
+renders fully; playback still fails cleanly (no codecs). Tier-2 scenario 17
+(engine-internals.md § Hard limits).
+
+Fallout tooling from that hunt: **an engine abort now logs a stack with named C++ frames**
+(`engine-pre.js` hooks the engine worker's `Module.onAbort`, which Emscripten calls synchronously
+from `abort()`; the wasm carries a name section). A no-ASSERTIONS `RELEASE_ASSERT` used to be an
+empty `Aborted()` with nowhere to start — testing.md § Crash triage.
 
 Open issues in issues/ (guest-JS wedge, engine renders stale input, rcap dynamic budget, viewer
 URL-scheme allowlist). Next work: [roadmap.md](roadmap.md).

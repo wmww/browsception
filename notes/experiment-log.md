@@ -250,3 +250,32 @@ sandbox direction *before* the DNR round-trips in `doApply` — no measurable ef
 SW-startup-bound, probe 2), so it was reverted rather than kept as complexity. The residual
 ~100 ms is a hard MV3 limit; documented in security.md § Startup race and issue deleted.
 Tier 0-1: 78/78, tier 2: 21/21.
+
+## 2026-08-14 — youtube.com aborts the engine (user report: "engine crashed — reload")
+
+Reproduced in ~3 s, first try: `youtube.com/watch?v=…` in the dev harness → `[bib] abort: ` (empty
+reason) → `Aborted()` → dead worker. No message anywhere, because the build has no `-sASSERTIONS`
+and a bare `RELEASE_ASSERT` carries no text.
+
+Triage trick (now permanent, testing.md § Crash triage): the wasm has a 12 MB name section, and
+Emscripten calls `Module.onAbort` *synchronously* from `abort()` — so a `new Error().stack`
+captured there is a named C++ backtrace. It read, bottom-up:
+`jsDocumentPrototypeFunction_startViewTransition` → `Document::setActiveViewTransition` →
+`RenderLayerCompositor::enableCompositingMode` → `ensureRootLayer` → `GraphicsLayer::create` →
+`WTFCrashWithInfo`. YouTube's kevlar bootstrap calls `document.startViewTransition()`;
+`GraphicsLayer::create` is our `RELEASE_ASSERT_NOT_REACHED` stub (no compositor in this port), and
+`setActiveViewTransition` forces compositing mode without consulting
+`hasAcceleratedCompositing()`.
+
+Fix, two layers: embedder turns the feature off (`setViewTransitionsEnabled(false)` +
+cross-document; the IDL is `[EnabledBySetting]`, so YouTube feature-detects and takes its plain
+path), and the WebKit patch makes `enableCompositingMode(true)` a no-op while accelerated
+compositing is off — `LocalFrameView::enterCompositingMode` is the same unguarded shape and would
+have been the next crash. Result: watch page and home page render fully and survive; playback
+fails cleanly as designed ("Your browser can't play this video"). Tier-2 scenario 17 pins the API
+absent; scenario 12 now also asserts the named abort stack.
+
+Trap found while wiring the stack hook: Emscripten proxies the page Module's `onAbort` into the
+pthread worker, but only into a slot that is empty or `.proxy`-marked — a plain assignment in
+pre-js swallowed the crash notification outright (crashed-UI never appeared, tier-2 scenario 12
+caught it). The hook is an accessor that captures the stub and chains it.

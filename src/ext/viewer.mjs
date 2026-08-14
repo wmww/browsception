@@ -614,6 +614,11 @@ async function bootEngine() {
     print: (s) => console.log('[engine] ' + s),
     printErr: (s) => console.warn('[engine] ' + s),
     onAbort(reason) {
+      // Named frames only if the HOST thread aborted; an engine-thread abort
+      // arrives here as a worker error, and its stack is logged worker-side by
+      // engine-pre.js ("engine abort stack"). Cheap to keep both — either
+      // thread can be the one that dies.
+      try { console.error('[engine] abort stack (host thread) ' + new Error().stack); } catch {}
       // One crash must not become a RuntimeError storm: flag the corpse and
       // stop every entry point (the tick loop checks bs.dead).
       bs.dead = true;

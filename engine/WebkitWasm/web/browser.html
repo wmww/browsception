@@ -1073,6 +1073,10 @@
       print: (s) => log("out: " + s),
       printErr: (s) => log("err: " + s),
       onAbort: (r) => {
+        // Named frames only if the HOST thread aborted; an engine-thread
+        // abort arrives here as a worker error, and its stack is logged
+        // worker-side by engine-pre.js ("engine abort stack").
+        try { log("abort stack (host thread) " + new Error().stack); } catch (e) {}
         // Kill switch: after a wasm abort EVERY export throws, so a host
         // page that keeps pumping turns one crash into an endless
         // RuntimeError storm that lags the tab (live-tab report,

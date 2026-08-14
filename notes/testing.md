@@ -51,6 +51,23 @@ Dev builds of the viewer expose `globalThis.__bs` (compiled out of release build
 This hook is the reason integration tests don't need OCR or golden screenshots: fixtures paint
 semantics into colors and text, and `__bs` reads both sides.
 
+### Crash triage (an abort names its C++ frames)
+The engine is built without `-sASSERTIONS`, so a `RELEASE_ASSERT` surfaces as a bare `Aborted()`
+with an **empty reason** — useless on its own. The wasm does carry a name section, so
+`engine-pre.js` hooks the engine worker's `Module.onAbort` (called synchronously from `abort()`,
+still inside the wasm stack) and logs `engine abort stack (reason: …) Error … WebCore::Foo::bar`
+to the host console. That single line is how youtube.com's crash was identified in one run
+(`GraphicsLayer::create` ← `enableCompositingMode` ← `setActiveViewTransition`). The host page's
+own `onAbort` (crashed-UI kill switch) also logs a stack, marked *(host thread)* — it only carries
+engine frames if the main thread was the one that aborted.
+
+Trap, if that hook is ever touched: Emscripten *proxies* the page Module's `onExit`/`onAbort`/
+`print`/`printErr` into pthread workers, installing its stub only into a slot that is empty or
+already marked `.proxy`. A plain `Module.onAbort = …` in pre-js therefore wins that race and
+silently swallows the crash notification — the viewer never shows "engine crashed". The hook is an
+accessor that captures the stub and chains it; tier-2 scenario 12 asserts both halves (crashed UI
+*and* a named stack).
+
 ### Launch recipes
 - **CI / programmatic**: Chromium `--headless=new` (supports extensions) driven by Playwright or
   raw CDP: `--load-extension=dist/ --user-data-dir=<tmp> --no-first-run --host-resolver-rules=…`.
@@ -123,11 +140,15 @@ whole machine, end to end:
     navigation refused before any request (`http://127.0.0.1:1/`, blocked port). Each must raise
     the viewer error strip naming that URL, with a retry, and the next navigation must still
     render and clear it. The only cover for the engine's `"loadfailed"` signal.
-17. **HiDPI** (`test/tier2/hidpi.test.mjs`, own file — dpr is a browser-launch property): render
+17. **View transitions absent**: `typeof document.startViewTransition === 'undefined'`, a
+    feature-detect-then-call in the guest takes the fallback branch, and the engine still runs and
+    paints. Guards the compositing crash class — this port has no GraphicsLayer, so re-exposing
+    the API aborts on the first site that uses it (engine-internals.md § Hard limits).
+18. **HiDPI** (`test/tier2/hidpi.test.mjs`, own file — dpr is a browser-launch property): render
     geometry, the full mouse battery and post-resize alignment at **dpr 2 and 1.5**. ~9 s, two
     extra browser launches.
 
-That's ~17 scenarios total. Growth policy: a new test requires a new *class* of failure it would
+That's ~18 scenarios total. Growth policy: a new test requires a new *class* of failure it would
 catch (or a regression that escaped); prefer extending an existing scenario's probes over adding
 scenarios.
 

@@ -73,6 +73,38 @@
       }, Math.max(0, ms));
     };
 
+    // --- crash triage: name the frames the engine died in ---------------
+    // The engine thread is where WebCore runs, so it is where aborts happen.
+    // abort() calls Module.onAbort synchronously, so a stack captured HERE
+    // still has the C++ frames below it, and the wasm carries a name section
+    // — they read as `WebCore::Foo::bar`. Worth the lines: the reason string
+    // is empty for a bare RELEASE_ASSERT (no -sASSERTIONS in this build), so
+    // without this a crash is an unattributable "Aborted()". err() forwards
+    // to the host page's console.
+    //
+    // It must CHAIN, not replace: the page's own onAbort (the crashed-UI kill
+    // switch) reaches this thread as a proxy stub that the pthread bootstrap
+    // installs only into an empty-or-proxy slot, so a plain assignment here
+    // wins that race and silently eats the crash notification. Hence the
+    // accessor: `.proxy` invites the bootstrap to overwrite us, and the setter
+    // captures its stub instead (tier-2 scenario 12 is the tripwire).
+    var forwardOnAbort = null;
+    var abortHook = function (what) {
+      try {
+        var out = (typeof err === "function") ? err : console.error;
+        out("engine abort stack (reason: " + (what === undefined ? "" : what) + ") "
+            + new Error("engine abort").stack);
+      } catch (e) {}
+      if (typeof forwardOnAbort === "function")
+        forwardOnAbort(what);
+    };
+    abortHook.proxy = true;
+    Object.defineProperty(Module, "onAbort", {
+      configurable: true,
+      get: function () { return abortHook; },
+      set: function (v) { forwardOnAbort = v; },
+    });
+
     // --- guest-injection text (wasm polyfill + media stub) --------------
     function syncFetchText(path) {
       try {

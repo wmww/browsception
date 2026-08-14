@@ -6,7 +6,7 @@
 //
 // Scenarios here: 7 render, 8 execute, 9 input, 10 navigation chrome, 11
 // invariants, 12 crash/recovery, 13 startup budget, 14 resize, 15 guest
-// WebSocket, 16 engine-side load failure.
+// WebSocket, 16 engine-side load failure, 17 view transitions absent.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -174,6 +174,34 @@ test('guest WebSocket fails cleanly and the engine keeps running', { timeout: 30
   await page.close();
 });
 
+// --- View transitions: absent by design, never an engine abort -------------
+// This port has no compositor, and GraphicsLayer::create is a
+// RELEASE_ASSERT_NOT_REACHED stub. document.startViewTransition() drives
+// Document::setActiveViewTransition -> RenderLayerCompositor::enableCompositingMode
+// unconditionally, so exposing the API aborted the engine on the first site
+// that used it (youtube.com's watch page, 2026-08-14). The IDL is
+// [EnabledBySetting], so the fix is to stop advertising it; the compositor
+// also refuses to enter compositing mode now (belt and braces).
+test('view transitions: the API is not exposed and the engine keeps running', { timeout: 300000 }, async () => {
+  const page = await bootViewer('https://app.bstest/');
+  await evalProbe(page, 'document.title', /BSTEST-APP/);
+  await evalProbe(page, 'typeof document.startViewTransition', /^undefined\b/);
+  // Feature-detect-then-call, the way real sites do.
+  await page.evaluate(() =>
+    __bs.eval(`
+      try {
+        window.__vt = document.startViewTransition
+          ? (document.startViewTransition(() => {}), 'started')
+          : 'absent';
+      } catch (e) { window.__vt = 'threw:' + e.name; }
+    `),
+  );
+  await evalProbe(page, 'window.__vt', /^absent\b/);
+  await evalProbe(page, '1 + 1', /^2\b/);
+  await until(page, 25, 425, is([0, 255, 0]), 60000, 'still painting after the view-transition probe');
+  await page.close();
+});
+
 // --- Engine-side load failure surfaces in the viewer -----------------------
 // /download is application/octet-stream: the bridge delivers it fine, WebCore
 // refuses to display it and keeps the committed document (the boot page). The
@@ -303,6 +331,12 @@ test('crash: engine abort -> crashed UI -> reload recovers', { timeout: 300000 }
   await page.waitForFunction(() => __bs.dead === true, undefined, { timeout: 30000 });
   const boot = await page.evaluate(() => document.getElementById('boot').textContent);
   assert.match(boot, /crashed/i);
+  // Crash triage: engine-pre.js's worker-side onAbort runs synchronously inside
+  // abort(), so its stack still names the engine's C++ frames (wasm name
+  // section). Without it, a RELEASE_ASSERT is an unattributable "Aborted()".
+  const stack = page.consoleLines.find((l) => l.includes('engine abort stack'));
+  assert.ok(stack, `abort stack logged: ${page.consoleLines.slice(-5).join(' | ')}`);
+  assert.match(stack, /embedder\.wasm.*bibRunCrash/s, `stack names engine frames: ${stack.slice(0, 400)}`);
   await page.reload();
   await page.waitForFunction(() => globalThis.__bs?.ready, undefined, { timeout: BOOT_TIMEOUT });
   await until(page, 100, 100, is([255, 0, 0]), 120000, 'post-reload paint');

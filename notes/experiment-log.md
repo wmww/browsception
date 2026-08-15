@@ -474,3 +474,41 @@ Findings, in the order they fell out:
 2560x1330 the engine is no longer paint-bound — the same probe on `scroll.bstest` also caps at
 35-37 fps with the engine 20% busy, i.e. that ceiling is host-side presentation, not the engine.
 Roundtrip pixel-exactness (scroll + sticky, dpr 1 and 1.5) and all 24 tier-2 scenarios pass.
+
+---
+
+## 2026-08-15 — Scroll-up duplicated-band glitch: the "accepted" present tear was user-visible
+
+**Symptom** (user screenshot, wikipedia, dark mode, ~2880px window): scrolling UP shows a clean
+full-width horizontal seam; everything above it is an older frame, everything below the current
+one — content duplicated across the seam by exactly the scroll delta (160 device px there).
+
+**Hunt**: settled-state framebuffer always diffed clean against a forced repaint (damage
+accounting is NOT the bug), and CDP-driven wheel bursts never reproduced anything — the engine
+idles between presents at CDP event rates, and headless SwiftShader's texSubImage2D reads too
+fast to overlap a blit. Reproduced only with BOTH: wheel events dispatched in-page at trackpad
+rate (2ms gaps) and a paced multi-ms read of the pushed band inside `Module.bibFrame` (stand-in
+for a real GPU upload window). Then: 51-73 torn presents per ~120 (both directions mutate
+mid-present, paints included), and scroll-UP presents carry the clean shift signature
+(`buf2[row] == buf1[row-delta]`) because the blit's dy>0 memmove walks BOTTOM-UP against the
+top-down reader — one guaranteed crossing, pre-shift above / post-shift below. Scroll-down walks
+top-down with the reader: no clean band, which is why the user saw it "specifically scrolling
+up". Dumped torn frame visually matches the screenshot (duplicated TOC/headings, sliced text
+row at the seam).
+
+**Fix**: `g_presentPixels` — bibPushFrameIfDirty memcpys the dirty band on the engine thread,
+posts bibFrame at the snapshot, one frame in flight (`_bib_present_done` from the EM_ASM's
+finally; while in flight skip paint, damage coalesces — the GPU bitmap path's pattern).
+Retire-list for resize; forced readbacks re-arm g_uploadRect (they used to consume pending
+damage without the canvas ever seeing it).
+
+**Numbers** (bench suite, 3-5 reps, pre-fix vs fix): fps unchanged on every scenario
+(text/article × 1600/2560, app-update, input-latency, boots; article-2560 36.4→36.8,
+text-2560 37.2→36.6 within ±4-7% noise). Engine busy +3pp @1600 (18→21, 33→37), +3-7pp @2560
+(19→22, 32→39) — the per-presented-frame band memcpy (~full height during scroll). Present
+coherence tripwire = tier-2 scenario 21: pre-fix 51/407 torn, post-fix 0/anything, both
+directions.
+
+**Decision**: coherence is worth single-digit busy pp with fps flat; "tearing accepted" is
+retired from the ABI/comments. The host-present ceiling issue is unchanged (upload band size
+identical).

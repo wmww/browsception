@@ -171,6 +171,16 @@ issues/host-present-ceiling-large-fb.md). Mechanisms + rebase notes in engine-in
 run log in experiment-log.md. New tier-2 scenario 20 (sticky-chrome scroll fixture
 scroll-sticky.bstest).
 
+*Scroll-up duplicated-band glitch fixed — presents are coherent snapshots* (2026-08-15) — the
+raster present was zero-copy from the live framebuffer, and the async `texSubImage2D` raced
+engine mutations: scroll-up's bottom-up blit memmove crossing the top-down upload read spliced
+two scroll positions into one presented frame (clean full-width seam, content duplicated by the
+scroll delta — invisible to CDP-driven repros; needs in-page trackpad-rate wheels + a multi-ms
+read). Now `bibFrame` points at an engine-thread band snapshot with one-frame-in-flight
+backpressure (`_bib_present_done`); fps unchanged, engine busy +3pp/+7pp (1600/2560 wide).
+Tier-2 scenario 21 is the tripwire (pre-fix it tore on 13-60% of presents). Forced readbacks
+also no longer swallow pending canvas damage (rendering-input.md § present snapshot).
+
 Open issues in issues/ (guest-JS wedge, rcap dynamic budget, viewer URL-scheme allowlist,
 encoded viewer URL breaks the sweep, host-present ceiling at large framebuffers, engine links
 WebGL imports, CLoop `join` returned a non-string). Next work: [roadmap.md](roadmap.md).

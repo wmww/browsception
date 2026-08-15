@@ -107,6 +107,24 @@ boot-size, grow, shrink, and post-resize input.
   - Guest-visible semantics change under load only (fewer wheel events, larger deltas — what
     Chrome does with its rAF-aligned wheel batches). ABI documents it; tier-2 scenario 19 guards
     both invariants (distance conserved, nothing merged past a click).
+- **The present is a coherent snapshot + one frame in flight** (2026-08-15). `bibPushFrameIfDirty`
+  memcpys the dirty band `g_blitPixels → g_presentPixels` on the ENGINE thread, posts `bibFrame`
+  pointing at the snapshot, and skips painting until the main thread signals consumption
+  (`_bib_present_done`, called in the EM_ASM's finally — the GPU bitmap path's backpressure
+  pattern; damage stays armed and coalesces). Before this, `bibFrame` pointed at the live
+  framebuffer and the async `texSubImage2D` raced engine mutations — comment said "transient
+  tearing, accepted, self-correcting", but it was the **scroll-up duplicated-band glitch**:
+  scroll-up (dy>0) shifts rows with a BOTTOM-UP memmove while the upload reads top-down; they
+  cross once, splicing the pre-shift frame (above) onto the post-shift frame (below) with a clean
+  full-width seam offset by the scroll delta. Scroll-down walks top-down like the reader, so only
+  UP produced the legible artifact; under continuous scroll-up every frame re-tore. Not
+  reproducible with CDP-driven wheels or fast headless reads — needs in-page-dispatched
+  trackpad-rate events + a multi-ms read window (tier-2 scenario 21 does exactly that; pre-fix it
+  tore on ~13-60% of presents, post-fix 0). Cost: one band memcpy per PRESENTED frame — bench:
+  fps unchanged everywhere, engine busy +3pp @1600x900 (+7pp @2560x1330, full-height scroll
+  bands), boot/latency unchanged. `bib_set_viewport` retires the old present buffer to a list
+  freed only when nothing is in flight. Forced readbacks (`__bs.probe`) also now re-arm
+  `g_uploadRect` so the canvas can't silently miss the damage they consume.
 - **The surface wraps the framebuffer** (2026-08-14, `SkSurfaces::WrapPixels` over `g_blitPixels`,
   boot + `bib_set_viewport`): paint lands directly in the shared buffer — the per-paint
   `readPixels` unpremultiply readback and the scroll blit's second row walk are both GONE

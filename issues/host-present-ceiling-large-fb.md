@@ -18,3 +18,7 @@ First measurement: instrument viewer-side present (upload ms, rAF-to-rAF) at 160
 2560x1330, fixture page, headed vs headless. If upload dominates, split the dirty box into
 strip + moved-region uploads or move present to an OffscreenCanvas worker (rendering-input.md
 blit option 2).
+
+2026-08-15: the present now uploads from `g_presentPixels` (engine-thread snapshot, stable
+while in flight — rendering-input.md § present snapshot); ceiling unchanged (bench: host
+present ms/s flat). The stable buffer makes the worker-present option simpler if pursued.

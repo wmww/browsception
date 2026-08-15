@@ -251,9 +251,12 @@ void bib_crash(void);
  * bibNetAck(reqId, bytes)                       [page]  chunk consumed (flow)
  * bibFrame(fbPtr, fbW, fbH, strideBytes,        [page]  frame ready; fbPtr is
  *          dirtyX, dirtyY, dirtyW, dirtyH)              a stable heap buffer
- *          (RGBA8888, row 0 = top) valid until the next bib_set_viewport;
- *          the viewer uploads the dirty box at rAF straight from the heap
- *          view (the heap is a SAB in pthread builds). Do NOT free fbPtr.
+ *          (RGBA8888, row 0 = top). fbPtr is a present SNAPSHOT the engine
+ *          filled before posting and will not touch again until the wrapping
+ *          EM_ASM calls _bib_present_done() after the handler returns — the
+ *          host may read it (SAB view) without racing engine paints/blits.
+ *          Reading the LIVE framebuffer here instead was the scroll-up
+ *          duplicated-band tear (fixed 2026-08-15). Do NOT free fbPtr.
  * bibChrome(kind, json)                         [page]  chrome signal. Unlike
  *          the other hooks, both args arrive as JS STRINGS (decoded + freed
  *          engine-side, bibPersist-style delivery). kinds:

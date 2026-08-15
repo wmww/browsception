@@ -7,8 +7,8 @@
 // Scenarios here: 7 render, 8 execute, 9 input, 10 navigation chrome, 11
 // invariants, 12 crash/recovery, 13 startup budget, 14 resize, 15 guest
 // WebSocket, 16 engine-side load failure, 17 view transitions absent, 19
-// positional-input coalescing, 20 sticky-chrome scroll (18 HiDPI has its
-// own file — dpr is a browser-launch property).
+// positional-input coalescing, 20 sticky-chrome scroll, 21 present
+// coherence (18 HiDPI has its own file — dpr is a browser-launch property).
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -361,6 +361,80 @@ test('sticky chrome: scroll keeps its distance and the fixed elements stay put',
     minPerFrame < 0.65 * fbMpx,
     `sticky scroll repaints ${minPerFrame} Mpx/frame of a ${fbMpx.toFixed(2)} Mpx frame — full-viewport repaint degeneration`,
   );
+  await page.close();
+});
+
+// --- Scenario 21: present coherence ----------------------------------------
+// The bibFrame contract (ABI): fbPtr is a snapshot the engine must not touch
+// until the handler returns (_bib_present_done). When the present read the
+// LIVE framebuffer instead, an upload overlapping bibScrollBlit's bottom-up
+// memmove spliced two scroll positions into one frame — the scroll-up
+// duplicated-band glitch (wikipedia, 2026-08-15). Recipe that reproduced it
+// ~60% of presents pre-fix: wheel events dispatched in-page at trackpad rate
+// (CDP-driven wheels are too slow — the engine idles between presents), and
+// a present handler that takes realistic GPU-upload time (paced multi-ms
+// read; headless SwiftShader's own read is too fast to overlap anything).
+// The tripwire: the pushed band, read slowly during the handler, must be
+// byte-identical to the same band right after — any drift means the engine
+// mutated an in-flight frame.
+test('present coherence: the pushed frame band never mutates mid-present', { timeout: 300000 }, async () => {
+  const page = await bootViewer('https://scroll-sticky.bstest/');
+  await until(page, 4, 4, is([0, 0, 128]), 120000, 'sticky fixture at top');
+
+  await page.evaluate(() => {
+    const orig = Module.bibFrame;
+    const spin = (ms) => { const t0 = performance.now(); while (performance.now() - t0 < ms) {} };
+    window.__coh = { presents: 0, torn: 0 };
+    let buf1 = null, buf2 = null;
+    Module.bibFrame = function (ptr, fbW, fbH, strideBytes, x, y, w, h) {
+      const heap = new Uint8Array(Module.HEAPU8.buffer);
+      const off = ptr + y * strideBytes, len = h * strideBytes;
+      if (!buf1 || buf1.length < len) { buf1 = new Uint8Array(len); buf2 = new Uint8Array(len); }
+      const SL = 16, sliceRows = Math.ceil(h / SL);
+      for (let s = 0; s < SL; s++) {
+        const r0 = s * sliceRows, r1 = Math.min(h, r0 + sliceRows);
+        if (r0 >= r1) break;
+        buf1.set(heap.subarray(off + r0 * strideBytes, off + r1 * strideBytes), r0 * strideBytes);
+        spin(3 / SL);
+      }
+      const r = orig.apply(this, arguments);
+      buf2.set(new Uint8Array(Module.HEAPU8.buffer).subarray(off, off + len));
+      window.__coh.presents++;
+      for (let row = 0; row < h; row++) {
+        const ro = row * strideBytes;
+        for (let i = 0; i < fbW * 4; i += 32) {
+          if (buf1[ro + i] !== buf2[ro + i] || buf1[ro + i + 1] !== buf2[ro + i + 1]) {
+            window.__coh.torn++;
+            return r;
+          }
+        }
+      }
+      return r;
+    };
+    window.__cohDrive = async (ticks, delta) => {
+      const cv = document.getElementById('screen');
+      const rect = cv.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+      for (let i = 0; i < ticks; i++) {
+        cv.dispatchEvent(new WheelEvent('wheel', { deltaY: delta, clientX: cx, clientY: cy, bubbles: true, cancelable: true }));
+        await new Promise((res) => setTimeout(res, 2));
+      }
+    };
+  });
+
+  // down into the page, then the glitch gesture: fast scroll-up bursts
+  await page.evaluate(() => window.__cohDrive(150, 120));
+  await page.waitForTimeout(300);
+  await page.evaluate(() => window.__cohDrive(200, -60));
+  await page.waitForTimeout(300);
+  await page.evaluate(() => window.__cohDrive(200, 60));
+  await page.waitForTimeout(300);
+  await page.evaluate(() => window.__cohDrive(200, -60));
+  await page.waitForTimeout(400);
+
+  const r = await page.evaluate(() => window.__coh);
+  assert.ok(r.presents >= 20, `too few presents to trust the tripwire (${r.presents})`);
+  assert.equal(r.torn, 0, `${r.torn}/${r.presents} presents saw the band mutate mid-present`);
   await page.close();
 });
 

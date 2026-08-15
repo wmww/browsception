@@ -532,8 +532,11 @@ async function bootEngine() {
     // Page-side pump fallbacks (pthread builds pump via the worker pre-js).
     bibWakeUp: () => {},
     bibArmTimer: () => {},
-    // Zero-copy raster frame push (heap is a SAB; fresh view every frame —
-    // a cross-thread grow leaves cached views stale).
+    // Raster frame push (heap is a SAB; fresh view every frame — a
+    // cross-thread grow leaves cached views stale). ptr is the engine's
+    // present SNAPSHOT: stable until this handler returns (ABI bibFrame /
+    // _bib_present_done), so the texSubImage2D read cannot tear against
+    // in-progress engine paints or scroll blits.
     bibFrame(ptr, fbW, fbH, strideBytes, x, y, w, h) {
       if (bs.dead) return;
       presenter.present(new Uint8Array(Module.HEAPU8.buffer), ptr, fbW, fbH, strideBytes, y, h);

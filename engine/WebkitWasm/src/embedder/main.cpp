@@ -65,6 +65,7 @@
 #include <JavaScriptCore/JSFunction.h>
 #include <atomic>
 #include <cmath>
+#include <vector>
 #include <emscripten.h>
 #include <emscripten/heap.h> // emscripten_get_heap_size(): total wasm linear memory (4GB ceiling gauge)
 #ifdef __EMSCRIPTEN_PTHREADS__
@@ -199,8 +200,33 @@ static WebCore::LocalFrameView* mainFrameView()
 // expects; for this engine's output (opaque pixels) conversion is identity.
 // Heap-allocated (g_fbWidth * g_fbHeight * 4) so bib_set_viewport can
 // resize it; allocated in main() before g_engine exists, reallocated only
-// on the engine thread. The host reads it zero-copy via Module.bibFrame.
+// on the engine thread.
 static uint8_t* g_blitPixels;
+
+// What Module.bibFrame actually points the host at. bibPushFrameIfDirty
+// copies the dirty band g_blitPixels -> g_presentPixels ON THE ENGINE THREAD
+// before posting, so the host's async texSubImage2D never reads rows the
+// engine is still mutating. Presenting g_blitPixels itself ("zero-copy",
+// tearing "accepted, self-correcting") was the scroll-up duplicated-band
+// glitch: the async present raced bibScrollBlit — its bottom-up row memmove
+// (dy > 0) crossed the host's top-down read once per overlap, splicing the
+// pre-shift frame above the crossing onto the post-shift frame below it.
+// Scroll-down walks top-down like the reader, so only scrolling UP produced
+// the clean duplicated band (2026-08-15, wikipedia). Same size as
+// g_blitPixels, same realloc sites.
+static uint8_t* g_presentPixels;
+
+// One frame in flight: set before posting bibFrame, cleared by
+// bib_present_done() (run on the main thread right after the present).
+// While set, bibPushFrameIfDirty leaves damage/upload armed and skips the
+// paint — the GPU bitmap path's backpressure pattern, and the guarantee
+// that g_presentPixels is never written while the host may be reading it.
+static std::atomic<bool> g_presentInFlight { false };
+
+// Present buffers replaced by bib_set_viewport while a present may still be
+// reading them. Freed by the push path at the next moment the flag is clear
+// — only then is it certain no present references any retired buffer.
+static std::vector<uint8_t*> g_retiredPresentPixels;
 
 // The region bib_render last repainted, as {x, y, w, h} DEVICE px for the
 // host's partial blit. force=1 and the first frame report the full frame.
@@ -929,22 +955,29 @@ EMSCRIPTEN_KEEPALIVE void bib_set_viewport(int widthPx, int heightPx, double dpr
         return;
     if (widthPx == g_fbWidth && heightPx == g_fbHeight && dpr == g_dpr)
         return;
-    // Allocate the new pair first so failure keeps the old, consistent state.
+    // Allocate the new set first so failure keeps the old, consistent state.
     // The surface wraps the framebuffer (see boot: paint lands in
     // g_blitPixels directly, no readback).
     uint8_t* pixels = static_cast<uint8_t*>(malloc(static_cast<size_t>(widthPx) * heightPx * 4));
+    uint8_t* presentPixels = static_cast<uint8_t*>(malloc(static_cast<size_t>(widthPx) * heightPx * 4));
     auto info = SkImageInfo::Make(widthPx, heightPx, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
     sk_sp<SkSurface> surface = pixels
         ? SkSurfaces::WrapPixels(info, pixels, static_cast<size_t>(widthPx) * 4)
         : nullptr;
-    if (!pixels || !surface) {
+    if (!pixels || !presentPixels || !surface) {
         WTFLogAlways("BIB: bib_set_viewport %dx%d allocation failed — keeping %dx%d",
             widthPx, heightPx, g_fbWidth, g_fbHeight);
         free(pixels);
+        free(presentPixels);
         return;
     }
     free(g_blitPixels);
     g_blitPixels = pixels;
+    // An in-flight present may still point the host at the OLD present
+    // buffer; freeing it now would hand that upload freed heap. Retire it
+    // instead — the push path frees retirees once nothing is in flight.
+    g_retiredPresentPixels.push_back(g_presentPixels);
+    g_presentPixels = presentPixels;
     g_engine->surface = WTF::move(surface);
     g_fbWidth = widthPx;
     g_fbHeight = heightPx;
@@ -1390,14 +1423,23 @@ static bool bibTransferCurrentFrameBitmap()
 }
 #endif
 
+// Called on the MAIN thread by the bibFrame present EM_ASM (finally-block,
+// so a throwing host handler can't wedge the pipeline). Cheap enough to run
+// off-thread: one atomic store, exactly like _bib_wasm_free's precedent.
+EMSCRIPTEN_KEEPALIVE void bib_present_done()
+{
+    g_presentInFlight.store(false, std::memory_order_release);
+}
+
 // W-B1 frame push: GPU presents zero-copy (pthread) or implicitly (mainthread);
-// raster renders to CPU pixels, packs the dirty box into a tight malloc'd copy
-// (decoupled from g_blitPixels reuse — the main thread consumes asynchronously),
-// and hands it to the page. The raster receiving EM_ASM runs on the browser
-// main thread in module scope: it copies the bytes OUT of the shared heap
-// (ImageData rejects SAB-backed views), frees the transfer buffer (dlmalloc is
-// thread-safe under -pthread), and calls Module.bibBlit. growMemViews() first —
-// views go stale after a cross-thread memory grow (W-B0 finding).
+// raster paints into g_blitPixels, snapshots the dirty band into
+// g_presentPixels, and hands that to the page (bibFrame; legacy bibBlit
+// hosts get a tight malloc'd copy instead — its receiving EM_ASM runs on
+// the browser main thread in module scope, copies the bytes OUT of the
+// shared heap (ImageData rejects SAB-backed views), frees the transfer
+// buffer (dlmalloc is thread-safe under -pthread), and calls Module.bibBlit;
+// growMemViews() first — views go stale after a cross-thread memory grow,
+// W-B0 finding).
 static void bibPushFrameIfDirty()
 {
     static bool firstFramePushed = false;
@@ -1442,13 +1484,23 @@ static void bibPushFrameIfDirty()
 #endif
     }
 
-    // Raster path (browsception 1.3): zero-copy bibFrame push per the ABI —
-    // the host reads the dirty box straight out of the shared heap
-    // (fbPtr/stride), so nothing is copied engine-side. The engine may
-    // already be repainting the NEXT frame while the host reads: transient
-    // tearing confined to a later frame's dirty box, overwritten by the
-    // following push (accepted, self-correcting). Hosts without bibFrame
-    // (older gate pages) still get the legacy copied bibBlit delivery.
+    // Raster path (browsception 1.3): bibFrame push per the ABI. The host
+    // uploads the dirty box from g_presentPixels, a snapshot this thread
+    // fills below — NOT from the live g_blitPixels, which the engine keeps
+    // mutating (paint, bibScrollBlit) while the async present runs; reading
+    // it live is the scroll-up duplicated-band tear (see g_presentPixels).
+    // Backpressure FIRST, like the GPU bitmap path: while the last frame is
+    // unconsumed, don't paint — bib_render clears damage, so painting now
+    // would either drop the frame or overwrite the in-flight snapshot.
+    // Damage stays armed and coalesces into the next push. Hosts without
+    // bibFrame (older gate pages) get the legacy copied bibBlit delivery,
+    // which never arms the flag (its band copy below is still coherent).
+    if (g_presentInFlight.load(std::memory_order_acquire))
+        return;
+    // Nothing in flight: no present references any retired buffer (resize).
+    for (uint8_t* retired : g_retiredPresentPixels)
+        free(retired);
+    g_retiredPresentPixels.clear();
     const uint8_t* pixels = bib_render(firstFramePushed ? 0 : 1);
     if (!pixels)
         return;
@@ -1462,10 +1514,21 @@ static void bibPushFrameIfDirty()
         hostHasBibFrame = MAIN_THREAD_EM_ASM_INT({ return Module.bibFrame ? 1 : 0; });
     }
     if (hostHasBibFrame) {
+        // Snapshot the full-width dirty band (the presenter uploads full
+        // rows; x/w only annotate). One contiguous memcpy — ~0.2ms/Mpx,
+        // and only per PRESENTED frame thanks to the backpressure gate.
+        const size_t stride = static_cast<size_t>(g_fbWidth) * 4;
+        memcpy(g_presentPixels + y * stride, g_blitPixels + y * stride,
+            static_cast<size_t>(h) * stride);
+        g_presentInFlight.store(true, std::memory_order_release);
         MAIN_THREAD_ASYNC_EM_ASM({
-            if (Module.bibFrame)
-                Module.bibFrame($0, $1, $2, $3, $4, $5, $6, $7);
-        }, g_blitPixels, g_fbWidth, g_fbHeight, g_fbWidth * 4, x, y, w, h);
+            try {
+                if (Module.bibFrame)
+                    Module.bibFrame($0, $1, $2, $3, $4, $5, $6, $7);
+            } finally {
+                _bib_present_done();
+            }
+        }, g_presentPixels, g_fbWidth, g_fbHeight, g_fbWidth * 4, x, y, w, h);
         return;
     }
     uint8_t* copy = static_cast<uint8_t*>(malloc(static_cast<size_t>(w) * h * 4));
@@ -1533,6 +1596,14 @@ static void bibRunReadback(void*)
         copy = static_cast<uint8_t*>(malloc(bytes));
         if (copy)
             memcpy(copy, pixels, bytes);
+        // The forced render consumed any pending damage WITHOUT pushing a
+        // frame — the canvas would stay stale until unrelated damage covered
+        // it. Re-arm delivery for the next tick: raster only needs an upload
+        // (the framebuffer is freshly correct); GPU re-paints.
+        if (!g_gpu)
+            BIB::g_uploadRect.unite(bibLogicalFrameRect());
+        else
+            BIB::addDamage(bibLogicalFrameRect());
     }
     MAIN_THREAD_ASYNC_EM_ASM({
         var data = null;
@@ -2809,7 +2880,8 @@ int main()
         }
     }
     g_blitPixels = static_cast<uint8_t*>(malloc(static_cast<size_t>(g_fbWidth) * g_fbHeight * 4));
-    if (!g_blitPixels) {
+    g_presentPixels = static_cast<uint8_t*>(malloc(static_cast<size_t>(g_fbWidth) * g_fbHeight * 4));
+    if (!g_blitPixels || !g_presentPixels) {
         printf("EMBEDDER: FAIL framebuffer alloc\n");
         exit(1); // EXIT_RUNTIME=0: explicit teardown (node gate path)
     }

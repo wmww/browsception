@@ -13,6 +13,12 @@ plans/mvp.md plus loose ends carried out of Phases 1–2.
 6. Session restore, history, list import/export polish.
 7. Firefox port: single-thread build first; then StreamFilter mode B (real URL + FF threads).
 8. Perf: dirty rects, scroll fast-path, engine tile cache tuning, startup snapshotting.
+9. **Host-side tiled compositing in the shim** (from the firefox-wasm comparison, prior-art.md):
+   engine paints tiles a bit larger than the viewport, the shim owns the scroll offset and
+   composites — APZ-like decoupling of scroll from content paint without giving the engine a GPU
+   (blit-only WebGL in the *shim* is allowed: fixed trusted shader, engine controls pixels only).
+   Highest-value smoothness item available to us. Related cheap wins: get image decode off the
+   engine thread; build libjpeg-turbo with SIMD (engine-internals.md).
 
 Never: printing, DRM, nested GPU/JIT.
 
@@ -41,7 +47,7 @@ Never: printing, DRM, nested GPU/JIT.
 
 | Risk | Signal | Fallback |
 |---|---|---|
-| CLoop too slow for heavy sites | real-site browsing | Accept + document; long-term AOT research (engine.md) |
+| CLoop too slow for heavy sites | real-site browsing | Accept + document; long-term AOT research (weval-style). Switching to Gecko does NOT buy JS speed — its PBL measured slower than CLoop (engine.md) |
 | Per-instance memory blows past ~2 GB | usage measurement | WebKit cache tuning, single-tab-at-a-time mode, tab discard |
 | Store review rejects broad permissions | submission | Ship allowlist/per-site-activation build; self-host crx/unpacked |
 

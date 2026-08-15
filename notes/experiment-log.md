@@ -325,3 +325,57 @@ stamp, and check the printed `engine:` line in the probe output.
 **Also**: tier-2 scenario 19 (wheel burst → click) guards the two invariants no perf number covers
 — distance conserved, and nothing merged past a discrete event. `bib_abi.h` documents the
 coalescing as guest-visible.
+
+## 2026-08-14 — JS speed: us (JSC CLoop) vs firefox-wasm (SpiderMonkey PBL) vs V8
+
+**Hypothesis** (from the firefox-wasm comparison, prior-art.md): Gecko's Portable Baseline
+Interpreter is a real no-JIT tier and should beat our CLoop by ~2-4x, making "their JS feels
+better" true and Gecko-for-PBL a live option. **Result: false on measurement — our CLoop is
+1.3-3x FASTER than their PBL on the same bodies.**
+
+**Method.** Eleven small bodies (property mono/poly, call, int/float arith, dense array, alloc,
+string scan/build, JSON round-trip, Octane Richards), best-of-2 (Richards best-of-3), each shipped
+as ONE eval and timed by the host wall clock around that eval, guest-reported `Date.now()` printed
+alongside. Ours: `tools/js-speed-probe.mjs` (dev harness `__bib.eval`, engine
+`20260814-083049-d1ff7e9-main`). Theirs: the public demo (developer.puter.com/labs/firefox-wasm/)
+driven via its `window.geckoEvalChrome` hook, defaults = GPU on / **wasm JIT off** → PBL; their
+eval buffer is 8190 B and each eval gets a fresh sandbox (no state persists), so every body had to
+be self-contained (Richards minified to 7.7 KB). Same machine, same Chromium, same session.
+
+| bench | V8 (ms) | ours CLoop | their PBL | ours ÷ V8 | theirs ÷ ours |
+|---|---|---|---|---|---|
+| prop-mono | 2 | 82 | 137 | 41x | 1.7 |
+| prop-poly | 1 | 42 | 56 | 42x | 1.3 |
+| call | 2 | 55 | 146 | 28x | 2.7 |
+| arith-int | 2 | 73 | 158 | 37x | 2.2 |
+| arith-float | 2 | 25 | 75 | 13x | 3.0 |
+| array-dense | 3 | 23 | 70 | 8x | 3.0 |
+| alloc | 3 | 32 | 97 | 11x | 3.0 |
+| string-scan | <1 | 11 | 33 | ~20x | 3.0 |
+| string-build | 15 | 23 | 27 | 1.5x | 1.2 |
+| json | 7 | 23 | 16 | 3.3x | 0.7 |
+| richards | <1 | 2 | 9 | — | 4.5 |
+
+**Reading it.** Interpreted JS is 10-40x V8 on tight loops and only 1.5-3x on builtin-dominated
+work (string-build, JSON) — i.e. our real cost is *bytecode dispatch*, not the runtime. The two
+interpreters are in the same league and ours is ahead; the published "PBL is 2.2-4.4x an
+interpreter" figure is **PBL + weval** (AOT partial evaluation), and firefox-wasm ships PBL
+*without* weval.
+
+**Caveats** (do not over-claim this): their engine ran the whole Firefox front-end + WebRender
+threads concurrently while ours sat idle on about:blank (contention inflates their side by an
+unknown amount, plausibly tens of percent, not 3x); their eval runs in the chrome sandbox; their
+build sets `GECKO_COARSE_CLOCK=1` (host wall times tracked the inner numbers, so ordering holds);
+these are micros — real-page JS is megamorphic/DOM-bound, exactly where PBL's CacheIR ICs should
+show best, so the gap could narrow or reverse there. A real-page A/B is the follow-up if this ever
+matters.
+
+**Decisions.** (1) The perceived smoothness of firefox-wasm is NOT JS — it is compositing/APZ/GPU
+and host WebCodecs (prior-art.md). (2) "Adopt Gecko for JS speed" is off the table until someone
+measures a real page; the interesting AOT target was always weval, not PBL. (3) `tools/
+js-speed-probe.mjs` kept as the repeatable half.
+
+**Fallout:** the engine links emscripten's full GL library (WebGL context creation + GL calls are
+live imports) though `bibGPU:false` — issues/engine-links-webgl-imports.md. And one run showed
+`Array.prototype.join` returning a non-string under CLoop inside a long eval —
+issues/cloop-join-returned-nonstring.md.

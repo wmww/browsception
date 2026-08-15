@@ -29,12 +29,37 @@ full navigation takeover. That combination is unclaimed. The two proven halves:
 ### firefox-wasm (HeyPuter/Puter Labs, July 2026)
 - https://github.com/HeyPuter/firefox-wasm — demo: https://developer.puter.com/labs/firefox-wasm/
 - Writeup: https://simonwillison.net/2026/Jul/16/firefox-in-webassembly/
-- Full **Gecko + SpiderMonkey + Firefox UI** via Emscripten. ~233 MB `gecko.wasm`. Requires JSPI.
-- Gecko chosen over Chromium specifically for its viable single-process mode (Fission disabled).
-- Same networking answer: Wisp to a Puter-hosted proxy, TLS inside the guest (wasm OpenSSL).
-- Experimental SpiderMonkey→wasm JIT behind a flag; unstable, "not usable on many websites."
-- MPL-2.0, active, working public demo. Ported largely by Claude agents (~$25k in tokens).
-- Relevance: existence proof + the lowest-effort fork path if we ever abandon WebKit.
+- Full **Gecko + SpiderMonkey + Firefox UI** via Emscripten. ~233 MB `gecko.wasm` + `gecko.data`.
+  MPL-2.0, working public demo, ported largely by Claude agents (~$25k). Single-process (Fission
+  off), pthreads, COOP/COEP, `--disable-shared-memory` (no guest SAB), `-msimd128` + Rust
+  `simd128` everywhere.
+- **Why it is much faster than us** (source-verified 2026-08-14; demo defaults in
+  `demo/chrome/src/main.ts` are `GECKO_GPU=1 GECKO_GL_PASSTHROUGH=1 GECKO_WR_DIRECT=1
+  GECKO_APZ=1`, wasm JIT **off**):
+  1. **GPU**: WebRender composites into a real host **WebGL2** context (`lib/gl-present.js`:
+     OffscreenCanvas transferred to the Renderer worker, present via **JSPI** suspend →
+     Chromium-only). Content WebGL is passed through to that same context.
+  2. **APZ** on its own thread → scroll decoupled from content paint (our smooth-scroll gap).
+  3. **Host WebCodecs**: `lib/webcodecs-bridge.js` routes H.264 to the host `VideoDecoder`
+     (sync-proxied to main, I420 through a shared-heap ring); `lib/hostimg-bridge.js` routes
+     PNG/JPEG/WebP/AVIF to the host `ImageDecoder`, with a GPU path uploading the decoded
+     `VideoFrame` straight into WR's GL texture. That is the whole "YouTube at framerate, low
+     CPU" story.
+  4. **PBL**: `--enable-portable-baseline-interp-force` — CacheIR ICs in portable C++, no codegen;
+     JSC has no equivalent. But **measured, their PBL is 1.3–3x SLOWER than our CLoop** on the same
+     benchmark bodies (experiment-log.md 2026-08-14), so this is not why their demo feels good and
+     is not a reason to switch engines. The literature's 2.2–4.4x is PBL **+ weval**, which they
+     do not ship.
+  - Also: guest wasm is handed to the **host** `WebAssembly.Module` with linear-memory mirroring
+    (`lib/wasm-host-bridge.js`); the JS→wasm JIT is a separate, off-by-default experiment.
+- Networking unchanged: Wisp to a Puter-hosted proxy, TLS inside the guest.
+- **Attack-surface delta vs us**: GL passthrough, host-wasm passthrough and raw TCP are each on
+  our explicit never-list (security.md); host image/video decode is not ruled on but re-exposes a
+  hostile-byte parser in the host process. Relative to *native* browsing none of it is new
+  surface — our claim is stronger than parity with native, which is what each passthrough spends.
+  Their goal is "Firefox in a tab", not containment; the designs are not comparable on one axis.
+- Relevance: existence proof + the lowest-effort fork path if we ever abandon WebKit (PBL is the
+  reason that stays live).
 
 ### Others
 - **Puter × Ladybird port** (June 2026): tweet/screenshot only, never released. Precursor stunt to

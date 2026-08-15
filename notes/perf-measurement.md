@@ -79,3 +79,16 @@ the event is untrusted. Two knobs separate the two candidate cost models:
 | `tools/scroll-speed-probe.mjs` | scroll fps / engine busy / wheel+blit breakdown vs scroll speed, framebuffer size, event rate (`--sweep --stride --epf --size --dpr --nosample --url`) |
 | `tools/perf-scroll-probe.mjs` | original dpr-focused scroll probe (2026-08-11 dpr!=1 fix) |
 | `tools/scroll-roundtrip.mjs` | pixel-exactness of the scroll blit vs a full repaint |
+
+## JS speed (`tools/js-speed-probe.mjs`)
+
+Ten small bodies (property mono/poly, call, int/float arith, dense array, alloc, string scan/build,
+JSON) run in the engine and in the host page, each as ONE eval, timed by the host wall clock around
+that eval with the guest's own `Date.now()` printed as a cross-check on the guest clock (best-of-2).
+Prints native/engine/ratio. Two traps it exists to avoid: (a) timing a batch of benchmarks from
+inside one long eval hides per-bench engine stalls and can hit state-dependent CLoop bugs
+(issues/cloop-join-returned-nonstring.md); (b) a native baseline whose result is unused gets
+optimised away — every body returns a checksum that the harness compares across engines.
+
+Current numbers and the cross-engine comparison against firefox-wasm's PBL: experiment-log.md
+2026-08-14.

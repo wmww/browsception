@@ -68,15 +68,25 @@ known issue at fork time: no video support. Sister project (gecko port): HeyPute
   ~10x). Ordinary pages fine; heavy SPAs sluggish. This is the accepted floor.
 - No JIT-in-wasm, ever (attack-surface decision, not a feasibility one — runtime wasm-module
   generation would reintroduce codegen surface and require instantiate rights).
-- If we ever need more JS speed, the proven no-JIT path is SpiderMonkey-style **AOT partial
-  evaluation** (Fastly's PBL + weval: 2.2–4.4x over interpreter). For JSC there is no equivalent
-  today; treat as research direction, not plan-of-record.
+- **Measured 2026-08-14** (`tools/js-speed-probe.mjs`, same bodies/protocol on both engines,
+  same machine): ours is **10–40x V8 on tight loops** (property access 36–41x, calls 27x, int
+  arith 70x) and only **1.5–3x on builtin-dominated work** (string join/split 1.5x, JSON 3x).
+  So the cost is bytecode dispatch, not the C++ runtime.
+- **firefox-wasm's PBL is not faster than our CLoop** — it measured **1.3–3x slower** on the same
+  bodies (experiment-log.md 2026-08-14), even though it ships
+  `--enable-portable-baseline-interp-force` with the wasm JIT off. The published "2.2–4.4x over
+  interpreter" is **PBL + weval** (AOT partial evaluation); firefox-wasm has PBL only. Caveats:
+  their front-end was running concurrently, and micros favour a lean bytecode loop over CacheIR
+  ICs — a real-page A/B is the honest follow-up before treating this as settled.
+- If we ever need more JS speed, the proven no-JIT path is still SpiderMonkey-style **AOT partial
+  evaluation** (weval). For JSC there is no equivalent today; treat as research direction, not
+  plan-of-record — and note the prize is weval, not "an engine with PBL".
 
 ## Alternatives (ranked at decision time, for the record)
 
 | Engine | Verdict | Notes |
 |---|---|---|
-| **Gecko** (fork HeyPuter/firefox-wasm) | strong #2; lowest absolute effort (2–6 pm adopt) | Working demo, MPL. But: whole-Firefox port (233 MB wasm), officially-untested single-process path, heavier maintenance. Revisit if WebKit path stalls. |
+| **Gecko** (fork HeyPuter/firefox-wasm) | still #2, but the JS argument for it is dead | Working demo, MPL. Advantages inside our rules: a compositor + APZ (scroll decoupled from content paint) and genuine thread usage. **Not** JS speed: its PBL measured 1.3–3x *slower* than our CLoop (experiment-log.md 2026-08-14). Costs: whole-Firefox port (233 MB wasm), officially-untested single-process path, heavier maintenance; its demo's speed leans on GPU/WebCodecs/host-wasm passthroughs we forbid. |
 | **Ladybird** | best philosophical fit, wrong year | Interpreter-only-by-design LibJS, CPU-first Skia, >90 % WPT (late 2025). But the portable C++ interpreter was **deleted in 2026** (AsmInt is x86_64/AArch64-only asm DSL — we'd resurrect the C++ one or write a wasm DSL backend), Rust migration churn began 2026-02, and the repo is maintainers-only → permanent fork. 8–15 pm to demo. |
 | **Servo** | pass | Best process/thread shape (single-process default, embedding API on crates.io), but SpiderMonkey-under-Emscripten-with-pthreads is its own 6–12 pm project (wasi builds don't compose with threaded Emscripten), WebRender needs swgl (x86/NEON intrinsics, unproven on wasm SIMD), ~62 % WPT. 18–36 pm. |
 | **Blink/Chromium** | impossible | V8 has no wasm backend even for AOT builtins (mksnapshot emits native code; emscripten-core/emscripten#9314 wontfix). Plus mandatory multiprocess/Mojo. Not an effort question. |

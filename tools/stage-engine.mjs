@@ -33,11 +33,12 @@
 // snapshot mid-stage; the whole select+stage is retried once if staging throws.
 
 import { copyFileSync, existsSync, linkSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
-import { checkoutRoot, engineRoot } from './lib/paths.mjs';
+import { basename, dirname, join, relative } from 'node:path';
+import { checkoutRoot, engineRoot, mainRoot } from './lib/paths.mjs';
 import { engineSrcHash } from './lib/engine-src-hash.mjs';
 
-const OUT = join(checkoutRoot, 'src/engine');
+const SRC = join(checkoutRoot, 'src');
+const OUT = join(SRC, 'engine');
 const CONFIG = 'bib-build-config.js';
 const STAGED_META = join(OUT, '.staged-meta.json');
 const ARTIFACTS = join(engineRoot, 'artifacts');
@@ -222,9 +223,61 @@ function stageOnce() {
   console.log(identityLine(src, mode) + (fromArg ? ' [PINNED]' : ''));
 }
 
+// --- host-served runtime assets ------------------------------------------
+// The engine worker's pre-js (engine/WebkitWasm/src/embedder/engine-pre.js)
+// fetches three files from the HOST ROOT, by origin-absolute path, in the
+// pthread worker's own scope:
+//
+//   /wasm-polyfill.js  guest WebAssembly shim (wasm2js via the host bridge)
+//   /media-stub.js     Audio/HTMLMediaElement stubs (ENABLE_VIDEO=OFF build)
+//   /vendor/binaryen/index.js   the wasm2js translator itself
+//
+// The dev harness satisfies that contract with its server mounts (web/ as
+// root, node_modules at /vendor). The extension's root is src/, so the same
+// paths have to exist HERE — otherwise every viewer load logs three warnings
+// and guest pages get no wasm and no media globals (a top-level
+// `new Audio()` ReferenceError collapses whole script bundles).
+const HOST_ASSETS = [
+  // Tracked engine sources: copy, never hardlink — a branch switch would
+  // rewrite the inode and leave a silently stale staged copy behind.
+  { from: join(checkoutRoot, 'engine/WebkitWasm/web/wasm-polyfill.js'), to: join(SRC, 'wasm-polyfill.js'), copy: true },
+  { from: join(checkoutRoot, 'engine/WebkitWasm/web/media-stub.js'), to: join(SRC, 'media-stub.js'), copy: true },
+  // 13 MB npm dep, exact-pinned; hardlink it (node_modules itself is a
+  // hardlink clone of the main checkout's — tools/wt-setup.mjs).
+  { from: 'node_modules/binaryen/index.js', to: join(SRC, 'vendor/binaryen/index.js'), fromRoots: [checkoutRoot, mainRoot] },
+];
+
+function stageHostAssets() {
+  for (const a of HOST_ASSETS) {
+    const from = a.fromRoots
+      ? a.fromRoots.map((r) => join(r, a.from)).find(existsSync)
+      : (existsSync(a.from) ? a.from : null);
+    if (!from) {
+      console.warn(`missing ${a.from} — engine will boot without it` +
+        (a.fromRoots ? ' (npm install)' : ''));
+      continue;
+    }
+    try {
+      const s = statSync(from), d = statSync(a.to);
+      if (a.copy ? (s.size === d.size && d.mtimeMs >= s.mtimeMs) : s.ino === d.ino)
+        continue;
+    } catch {}
+    mkdirSync(dirname(a.to), { recursive: true });
+    rmSync(a.to, { force: true });
+    if (a.copy) {
+      copyFileSync(from, a.to);
+    } else {
+      try { linkSync(from, a.to); } catch { copyFileSync(from, a.to); }
+    }
+    console.log(`staged ${relative(checkoutRoot, a.to)}`);
+  }
+}
+
 try {
   stageOnce();
+  stageHostAssets();
 } catch (e) {
   console.warn(`staging failed (${e.message}) — snapshot pruned mid-stage? retrying once`);
   stageOnce();
+  stageHostAssets();
 }

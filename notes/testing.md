@@ -155,8 +155,26 @@ whole machine, end to end:
     settling waits, immediately followed by a click. The page must end up at the *summed* offset
     (nothing lost to merging) and the click must report that same `scrollY` (nothing merged past a
     discrete event). Guards the engine-side batch/seal rules — see rendering-input.md § scrolling.
+20. **Sticky-chrome scroll** (`scroll-sticky.bstest`): a Wikipedia-shaped page (sticky header band
+    + tall fixed sidebar) must scroll through the same blit fast path as a plain page — content
+    lands at exactly the summed deltas and the sticky pixels are back at their fixed positions.
+    Guards the damage-merge policy: a frame-covering merged rect silently demotes every tick to a
+    full repaint (few fps).
+21. **Present coherence** (`scroll-sticky.bstest`): the band handed to `bibFrame` is a snapshot
+    the engine must not touch until the present handler returns. In-page trackpad-rate wheels
+    plus a paced multi-ms read in the handler; the band must be byte-identical when re-read after
+    the handler. Guards against the scroll-up duplicated-band glitch (rendering-input.md §
+    present snapshot) — pre-fix it tore on 13-60% of presents.
+22. **Guest wasm shim + media stubs, in the extension**: the guest realm compiles and runs a real
+    wasm module (base64 → host bridge → binaryen wasm2js → eval; only the whole path returns the
+    right answer), and `Audio`/`HTMLVideoElement` exist with ENABLE_VIDEO=OFF-honest answers. The
+    engine worker's pre-js fetches all three assets from **origin-absolute host-root paths**
+    (`/wasm-polyfill.js`, `/media-stub.js`, `/vendor/binaryen/index.js`) — the dev harness served
+    them, the extension root didn't, so guest pages had no `WebAssembly` and no media globals and
+    nothing but three worker console warnings said so (2026-08-15). Asserts the guest-visible end
+    state, so it catches any future break in that chain, not just a missing file.
 
-That's ~19 scenarios total. Growth policy: a new test requires a new *class* of failure it would
+That's ~22 scenarios total. Growth policy: a new test requires a new *class* of failure it would
 catch (or a regression that escaped); prefer extending an existing scenario's probes over adding
 scenarios.
 

@@ -38,6 +38,15 @@ export function requireStagedEngine(extensionDir) {
     throw new Error(
       `no engine staged at ${join(extensionDir, 'engine')} — run: node tools/wt-setup.mjs`,
     );
+  // Host-root assets the engine worker's pre-js fetches (engine-build.md
+  // § Host-root asset contract). Missing ones only warn worker-side, so
+  // without this the failure surfaces as one puzzling guest-realm scenario.
+  const missing = ['wasm-polyfill.js', 'media-stub.js', 'vendor/binaryen/index.js']
+    .filter((f) => !existsSync(join(extensionDir, f)));
+  if (missing.length)
+    throw new Error(
+      `extension root is missing ${missing.join(', ')} — run: node tools/stage-engine.mjs`,
+    );
   if (saidEngine) return;
   saidEngine = true;
   console.log(stagedEngineIdentity(join(extensionDir, 'engine')));

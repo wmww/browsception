@@ -7,7 +7,8 @@ re-bite on rebases or bound future features.
 
 - **Guest WebAssembly is structurally impossible under CLoop** (not just disabled): IPInt has no
   cloop lowering — `IPInt::initialize()` is `RELEASE_ASSERT_NOT_REACHED` under `C_LOOP`, and
-  enabling `ENABLE_WEBASSEMBLY` aborts at boot. Hence the binaryen wasm2js shim (roadmap).
+  enabling `ENABLE_WEBASSEMBLY` aborts at boot. Hence the binaryen wasm2js shim, live in both
+  hosts since 2026-08-15 (engine-build.md § Host-root asset contract; tier-2 scenario 22).
   wasm2js limits measured: 102/103 of Discord's modules translate; ~×3.5 JS size; multi-table
   (wasm-bindgen externref) untranslatable; translate time is module-shape-bound (one 1.09 MB
   module = 109 s, froze engine thread) → translate off-thread + cache. binaryen.js defaults to

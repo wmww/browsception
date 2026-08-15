@@ -525,7 +525,11 @@ async function bootEngine() {
     bibCanvasGPU: false,
     bibGpuBench: false,
     bibHTML: bootHTML,
-    bibWasm2js: () => null, // guest wasm -> CompileError (fast-follow)
+    // Guest wasm shim + injection text: unused on this (pthread) build — the
+    // engine thread reads its OWN Module, which engine-pre.js fills from
+    // /wasm-polyfill.js, /media-stub.js and /vendor/binaryen/index.js.
+    // tools/stage-engine.mjs puts all three in the extension root.
+    bibWasm2js: () => null,
     bibWasmPolyfill: '',
     bibNoBlock: params.get('noblock') === '1',
     bibMedia: false,

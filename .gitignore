@@ -1,5 +1,11 @@
 node_modules/
+# Staged into the extension root by tools/stage-engine.mjs: the engine
+# artifact plus the three files its worker pre-js fetches from the host root
+# (guest wasm shim, media stubs, binaryen).
 src/engine/
+src/vendor/
+src/wasm-polyfill.js
+src/media-stub.js
 test/fixtures/ca/
 dist/
 *.log

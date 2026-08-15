@@ -19,7 +19,9 @@
   "keywords": [],
   "type": "module",
   "devDependencies": {
-    "binaryen": "130.0.0",
     "playwright-core": "^1.62.1"
+  },
+  "dependencies": {
+    "binaryen": "130.0.0"
   }
 }

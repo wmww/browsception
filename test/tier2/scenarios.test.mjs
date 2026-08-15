@@ -8,7 +8,8 @@
 // invariants, 12 crash/recovery, 13 startup budget, 14 resize, 15 guest
 // WebSocket, 16 engine-side load failure, 17 view transitions absent, 19
 // positional-input coalescing, 20 sticky-chrome scroll, 21 present
-// coherence (18 HiDPI has its own file — dpr is a browser-launch property).
+// coherence, 22 guest wasm shim + media stubs (18 HiDPI has its own file —
+// dpr is a browser-launch property).
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -755,5 +756,36 @@ test('startup: warm boot to interactive under 15 s', { timeout: 300000 }, async 
   const ms = await page.evaluate(() => __bs.metrics.bootMs);
   console.log(`      warm bootMs: ${ms}`);
   assert.ok(ms < 15000, `warm boot ${ms} ms exceeds 15 s tripwire`);
+  await page.close();
+});
+
+// --- Scenario 22: guest wasm shim + media stubs are wired IN THE EXTENSION --
+// The engine worker's pre-js fetches its guest-injection text and the wasm2js
+// translator from origin-absolute paths (/wasm-polyfill.js, /media-stub.js,
+// /vendor/binaryen/index.js). The dev harness serves those from web/ and the
+// /vendor node_modules mount; the extension only has them because
+// tools/stage-engine.mjs copies them into the extension root. It didn't, and
+// the miss was silent to every test — three worker console warnings, guest
+// pages with no WebAssembly and no Audio (a top-level `new Audio()` collapses
+// whole script bundles). Assert the guest-visible end state, not the files.
+test('guest realm: wasm runs through the wasm2js bridge and media globals exist', { timeout: 300000 }, async () => {
+  const page = await bootViewer('https://app.bstest/');
+  await evalProbe(page, 'document.title', /BSTEST-APP/);
+
+  // wasm-polyfill.js + binaryen: (i32,i32)->i32 add module, compiled and run.
+  // Nothing short of the full path (base64 → host bridge → wasm2js → eval)
+  // returns 5, so this covers both the injection text and the translator.
+  const ADD_WASM = '[0,97,115,109,1,0,0,0,1,7,1,96,2,127,127,1,127,3,2,1,0,7,7,1,3,97,100,100,0,0,10,9,1,7,0,32,0,32,1,106,11]';
+  await evalProbe(
+    page,
+    `(()=>{try{const i=new WebAssembly.Instance(new WebAssembly.Module(new Uint8Array(${ADD_WASM})));`
+      + `return "add="+i.exports.add(2,3)}catch(e){return "ERR "+e}})()`,
+    /^add=5\b/,
+  );
+
+  // media-stub.js: engine-honest answers for an ENABLE_VIDEO=OFF build.
+  await evalProbe(page, 'typeof Audio', /^function\b/);
+  await evalProbe(page, 'new Audio().canPlayType("audio/ogg; codecs=opus") === ""', /^true\b/);
+  await evalProbe(page, '"requestVideoFrameCallback" in HTMLVideoElement.prototype', /^(true|false)\b/);
   await page.close();
 });

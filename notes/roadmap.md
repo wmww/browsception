@@ -6,14 +6,13 @@ plans/mvp.md plus loose ends carried out of Phases 1–2.
 ## Fast-follows (rough order)
 
 1. Clipboard (copy/paste text), find bar (engine findString), file upload, downloads.
-2. Guest-wasm shim (binaryen wasm2js) — guest wasm currently sees CompileError (2.1 deferral).
-3. IME/composition via hidden-input-at-caret (rendering-input.md) — the big input investment.
-4. Popups/window.open → new viewer tabs; dialogs (alert/confirm/prompt/auth) as viewer modals.
-5. Audio via AudioWorklet ring buffer.
-6. Session restore, history, list import/export polish.
-7. Firefox port: single-thread build first; then StreamFilter mode B (real URL + FF threads).
-8. Perf: dirty rects, scroll fast-path, engine tile cache tuning, startup snapshotting.
-9. **Host-side tiled compositing in the shim** (from the firefox-wasm comparison, prior-art.md):
+2. IME/composition via hidden-input-at-caret (rendering-input.md) — the big input investment.
+3. Popups/window.open → new viewer tabs; dialogs (alert/confirm/prompt/auth) as viewer modals.
+4. Audio via AudioWorklet ring buffer.
+5. Session restore, history, list import/export polish.
+6. Firefox port: single-thread build first; then StreamFilter mode B (real URL + FF threads).
+7. Perf: dirty rects, scroll fast-path, engine tile cache tuning, startup snapshotting.
+8. **Host-side tiled compositing in the shim** (from the firefox-wasm comparison, prior-art.md):
    engine paints tiles a bit larger than the viewport, the shim owns the scroll offset and
    composites — APZ-like decoupling of scroll from content paint without giving the engine a GPU
    (blit-only WebGL in the *shim* is allowed: fixed trusted shader, engine controls pixels only).

@@ -63,9 +63,10 @@ lives in [roadmap.md](roadmap.md). Phase summaries:
   gate: tools/smoke-mvp.mjs real-site pass — sandboxed example.com/wikipedia, whitelist→native
   sweep (experiment-log.md 2026-08-10).
 
-Tests: `npm test` = tiers 0–1, pure headless, per-commit (78 tests). `npm run test:tier2` = 23
-scenarios (incl. 6 HiDPI at dpr 2/1.5) against the staged engine artifact (~32 s; restage with
-tools/stage-engine.mjs after engine rebuilds — src/engine/ is gitignored). Engine iteration is
+Tests: `npm test` = tiers 0–1, pure headless, per-commit (78 tests). `npm run test:tier2` = 25
+scenarios (incl. 6 HiDPI at dpr 2/1.5) against the staged engine artifact (~45 s; restage with
+tools/stage-engine.mjs after engine rebuilds — it also stages the extension's host-root assets;
+src/engine/, src/vendor/ and the two injection payloads are gitignored). Engine iteration is
 genuinely incremental (~90 s for embedder-only changes; engine-build.md fix 6) and works from any
 worktree branch (worktrees.md § Engine work).
 
@@ -118,7 +119,8 @@ leave the viewer on "booting…". Two of those refusals dispatch to no client up
 adds the notification (networking.md, engine-internals.md; tier-2 scenario 16).
 
 *Repo hygiene* (2026-08-13) — one convention per kind of thing: Binaryen is an exact-pinned npm
-devDependency served at `/vendor` by the dev server (no vendored blob); `engine-pre.js` moved to
+dependency served at `/vendor` by the dev server and staged into `src/vendor/` for the extension
+(no vendored blob); `engine-pre.js` moved to
 `src/embedder/`, so `engine/WebkitWasm/web/` is harness-only and everything under `src/` is a
 build input; the probe extension is a test fixture (`test/fixtures/probe-ext/`); `spikes/` and
 `experiments/` are gone (blit numbers → open-questions #10, probes → `tools/`, lab notebook →
@@ -180,6 +182,17 @@ read). Now `bibFrame` points at an engine-thread band snapshot with one-frame-in
 backpressure (`_bib_present_done`); fps unchanged, engine busy +3pp/+7pp (1600/2560 wide).
 Tier-2 scenario 21 is the tripwire (pre-fix it tore on 13-60% of presents). Forced readbacks
 also no longer swallow pending canvas damage (rendering-input.md § present snapshot).
+
+*Guest wasm + media stubs reached the extension* (2026-08-15) — the engine worker's pre-js fetches
+its guest-injection payloads and the wasm2js translator from **origin-absolute host-root** paths
+(`/wasm-polyfill.js`, `/media-stub.js`, `/vendor/binaryen/index.js`). Only the dev harness served
+them: in the extension all three 404'd, so every viewer load logged three worker warnings (the
+errors the user sees in chrome://extensions) and guest pages ran with no `WebAssembly` and no
+`Audio`/`HTMLMediaElement` at all — a top-level `new Audio()` probe collapses a whole script
+bundle. `tools/stage-engine.mjs` now stages all three into the extension root alongside the engine
+artifact, and binaryen moved devDependencies → dependencies (it ships, 13 MB against a 100 MB
+wasm). Guest wasm now compiles and runs end-to-end in the extension. Tier-2 scenario 22;
+contract table in engine-build.md § Host-root asset contract.
 
 Open issues in issues/ (guest-JS wedge, rcap dynamic budget, viewer URL-scheme allowlist,
 encoded viewer URL breaks the sweep, host-present ceiling at large framebuffers, engine links

@@ -29,13 +29,32 @@ cd engine/WebkitWasm
 PORT=8090 node tools/dev-server.mjs web --mount /engine=build/webcore/bin
 # open http://127.0.0.1:8090/browser.html?url=https://example.com
 ```
-The server also mounts `/vendor` → repo-root `node_modules` automatically, which is how both
-harness pages get Binaryen (npm `binaryen`, exact-pinned v130 — the wasm2js workarounds are
-version-specific; the extension ships no guest-wasm shim, so it's a devDependency only).
+The server also mounts `/vendor` → repo-root `node_modules` automatically, which is how the
+harness gets Binaryen (npm `binaryen`, exact-pinned v130 — the wasm2js workarounds are
+version-specific).
 
-**`web/` is harness-only**: `browser.html` + page glue, served as-is, never a build input.
-Everything the embedder compiles or links — including `engine-pre.js` (`--pre-js`) — lives under
-`src/`, which is exactly what `tools/lib/engine-src-hash.mjs` hashes.
+### Host-root asset contract
+
+`engine-pre.js` runs in the engine pthread's worker and fetches three files by **origin-absolute**
+path, so every host must serve them at its root:
+
+| Path | Source | What breaks without it |
+|---|---|---|
+| `/wasm-polyfill.js` | `web/wasm-polyfill.js` | guest realm has no `WebAssembly` at all |
+| `/media-stub.js` | `web/media-stub.js` | no `Audio`/`HTMLMediaElement` — a top-level `new Audio()` collapses a whole script bundle |
+| `/vendor/binaryen/index.js` | npm `binaryen` (13 MB, ESM, self-contained) | the polyfill loads but every guest module gets a CompileError |
+
+The dev harness satisfies this with its mounts (root `web/`, `/vendor` → `node_modules`); the
+extension's root is `src/`, and `tools/stage-engine.mjs` stages all three there (gitignored, like
+`src/engine/`). Binaryen is therefore a real `dependencies` entry, not a devDependency — it ships.
+A miss is only three worker `console.warn`s, which is how it went unnoticed until 2026-08-15;
+tier-2 scenario 22 now asserts the guest-visible end state.
+
+**`web/` is not a build input**: `browser.html` + page glue + the two guest-injection payloads
+above, all served as-is. Everything the embedder compiles or links — including `engine-pre.js`
+(`--pre-js`) — lives under `src/`, which is exactly what `tools/lib/engine-src-hash.mjs` hashes.
+(That split is right: the injection payloads are fetched at runtime, so editing one must *not*
+invalidate the engine artifact — restage instead of rebuild.)
 
 ## Pins & shape
 

@@ -142,6 +142,7 @@ function handle(req, res, scheme) {
     'app.bstest': 'app.html',
     'hostile.bstest': 'hostile.html',
     'scroll.bstest': 'scroll.html',
+    'scroll-sticky.bstest': 'scroll-sticky.html',
   }[host];
   try {
     if (path === '/' && fixture) return send(res, 200, page(fixture));

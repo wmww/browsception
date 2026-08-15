@@ -339,12 +339,18 @@ struct PerfAccum {
     int wheels = 0;
     int wheelEvents = 0;     // host wheel events those applied events carry (>= wheels once merging bites)
     double blitMs = 0;
-    double blitMoveMs = 0;   // g_blitPixels row-walk memmove
-    double blitWriteMs = 0;  // the surface's own in-place row walk (mirror of the above)
+    double blitMoveMs = 0;   // the single wrapped-surface row walk
+    double blitWriteMs = 0;  // unused since the surface wraps g_blitPixels (kept in the log format)
     int blits = 0;
     double blitRows = 0;
     int blitFallbacks = 0;
     int queueMax = 0;
+    // What paint actually covered (2026-08-14, the sticky-damage hunt):
+    // rects painted and their device-px area. area/painted ≈ full frame ⇒
+    // damage is degenerating to full-viewport repaints regardless of what
+    // the blit saved.
+    int paintRects = 0;
+    double paintAreaPx = 0;
 };
 PerfAccum g_perf;
 }
@@ -388,8 +394,8 @@ static bool g_inPaint = false;
 
 // Paint ONLY `dirty` (root-view coords, pre-clamped to the frame, layout
 // already up to date — see bib_render) into the persistent surface. Pixels
-// outside the clip keep the previous frame's content; g_blitPixels mirrors
-// the surface the same way via partial readbacks, so the two stay in sync.
+// outside the clip keep the previous frame's content. In raster mode the
+// surface wraps g_blitPixels, so painting IS filling the framebuffer.
 // drawColor, NOT clear(): SkCanvas::clear ignores the clip.
 static bool paintFrameRect(const WebCore::IntRect& dirty)
 {
@@ -420,7 +426,9 @@ static bool paintFrameRect(const WebCore::IntRect& dirty)
         g_gpu ? WebCore::RenderingMode::Accelerated : WebCore::RenderingMode::Unaccelerated,
         WebCore::RenderingPurpose::Unspecified);
     g_inPaint = true;
+    BIB::g_damagePhase = "paint";
     view->paint(context, cullRect);
+    BIB::g_damagePhase = "idle";
     g_inPaint = false;
     canvas->restore();
     return true;
@@ -452,10 +460,10 @@ static double g_lastScrollBlitMs = 0.0;
 static constexpr double kScrollSettleMs = 200.0;
 
 // Fast-scroll blit (ChromeClient::scroll): shift the already-painted pixels
-// by `delta` within the scrolled clip, in BOTH mirrors (g_blitPixels and the
-// SkSurface — they must stay identical or later partial paints composite
-// over a stale base). WebCore then only repaints the strips the shift
-// exposed; the host re-uploads the whole moved region via g_uploadRect.
+// by `delta` within the scrolled clip. The raster surface wraps g_blitPixels,
+// so one row walk moves both "views" of the frame at once. WebCore then only
+// repaints the strips the shift exposed; the host re-uploads the whole moved
+// region via g_uploadRect.
 // Incoming delta/rects are LOGICAL; the pixel shift happens in DEVICE px
 // (snapped, see above). Damage bookkeeping stays logical, inflated by 1
 // logical px at dpr != 1 so snap misalignment repaints a hair extra rather
@@ -605,39 +613,29 @@ static void bibScrollBlitImpl(const WebCore::IntSize& delta, const WebCore::IntR
                     base + (devSrc.y() + y) * stride + static_cast<size_t>(devSrc.x()) * 4, rowBytes);
         }
     };
+    // ONE walk: the raster surface wraps g_blitPixels (boot), so shifting the
+    // surface's own pixels IS shifting the framebuffer — there is no second
+    // mirror anymore. notifyContentWillChange first — writing through
+    // peekPixels bypasses Skia's snapshot handshake, so the surface has to
+    // be told. (History: this used to be two walks over two buffers, and
+    // before that a writePixels whose unpremul→premul conversion cost ~9x
+    // the memmove — 13 ms vs 1.4 ms at 5.6 Mpx.)
     const double _moveT0 = g_perfLog ? bibNowMs() : 0;
-    if (g_perfLog)
-        g_perf.blitRows += devDst.height(); // x2: buffer walk + surface walk
-    shiftRows(g_blitPixels, static_cast<size_t>(g_fbWidth) * 4);
-
-    // Mirror the shift onto the surface, IN ITS OWN PIXELS. This hook is
-    // raster-only (GPU mode installs no scroll blit), so the surface's bytes
-    // are right there and the identical row walk moves them — no format in
-    // play, so no conversion. It used to go through the canvas writePixels
-    // from g_blitPixels, which is unpremultiplied where the surface is
-    // premultiplied: a per-pixel alpha conversion of nearly the whole
-    // framebuffer, ~9x the cost of the memmove it was mirroring (13 ms vs
-    // 1.4 ms at 5.6 Mpx) and the reason a scroll blit ever cost 15 ms.
-    // notifyContentWillChange first — writing through peekPixels bypasses
-    // Skia's copy-on-write handshake, so the surface has to be told.
-    const double _writeT0 = g_perfLog ? bibNowMs() : 0;
-    if (g_perfLog)
-        g_perf.blitMoveMs += _writeT0 - _moveT0;
     SkPixmap surfacePixels;
     g_engine->surface->notifyContentWillChange(SkSurface::kRetain_ContentChangeMode);
-    if (!g_engine->surface->peekPixels(&surfacePixels) || surfacePixels.info().bytesPerPixel() != 4) {
-        // No direct pixel access (can't happen for a raster surface). The
-        // mirrors have DIVERGED here — buffer shifted, surface not — so
-        // repaint and re-read the whole frame to resync them rather than
-        // failing silently (Codex confirmed finding, 2026-06-11).
+    if (!g_engine->surface->peekPixels(&surfacePixels) || surfacePixels.writable_addr() != g_blitPixels) {
+        // No direct pixel access, or the surface stopped wrapping the
+        // framebuffer (can't happen for the wrapped raster surface). Repaint
+        // the whole frame rather than failing silently.
         g_scrollResidX = g_scrollResidY = 0.0;
         BIB::addDamage(bibLogicalFrameRect());
         return;
     }
-    shiftRows(static_cast<uint8_t*>(surfacePixels.writable_addr()), surfacePixels.rowBytes());
-
     if (g_perfLog)
-        g_perf.blitWriteMs += bibNowMs() - _writeT0;
+        g_perf.blitRows += devDst.height();
+    shiftRows(static_cast<uint8_t*>(surfacePixels.writable_addr()), surfacePixels.rowBytes());
+    if (g_perfLog)
+        g_perf.blitMoveMs += bibNowMs() - _moveT0;
     // Host re-uploads everything that moved…
     BIB::g_uploadRect.unite(scrollRect);
     // …WebCore repaints only the exposed strips (scrollRect minus dst): a
@@ -932,9 +930,13 @@ EMSCRIPTEN_KEEPALIVE void bib_set_viewport(int widthPx, int heightPx, double dpr
     if (widthPx == g_fbWidth && heightPx == g_fbHeight && dpr == g_dpr)
         return;
     // Allocate the new pair first so failure keeps the old, consistent state.
+    // The surface wraps the framebuffer (see boot: paint lands in
+    // g_blitPixels directly, no readback).
     uint8_t* pixels = static_cast<uint8_t*>(malloc(static_cast<size_t>(widthPx) * heightPx * 4));
     auto info = SkImageInfo::Make(widthPx, heightPx, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
-    sk_sp<SkSurface> surface = pixels ? SkSurfaces::Raster(info) : nullptr;
+    sk_sp<SkSurface> surface = pixels
+        ? SkSurfaces::WrapPixels(info, pixels, static_cast<size_t>(widthPx) * 4)
+        : nullptr;
     if (!pixels || !surface) {
         WTFLogAlways("BIB: bib_set_viewport %dx%d allocation failed — keeping %dx%d",
             widthPx, heightPx, g_fbWidth, g_fbHeight);
@@ -954,6 +956,7 @@ EMSCRIPTEN_KEEPALIVE void bib_set_viewport(int widthPx, int heightPx, double dpr
         const WebCore::IntRect logical = bibLogicalFrameRect();
         view->resize(logical.width(), logical.height());
     }
+    BIB::g_logicalFrameSize = bibLogicalFrameRect().size();
     // Everything is stale: arm a full-frame repaint; the next tick pushes a
     // complete frame at the new size (bibFrame carries fbW/fbH, from which
     // the host resizes its canvas).
@@ -993,7 +996,9 @@ EMSCRIPTEN_KEEPALIVE void bib_tick()
         return;
     }
     const double _perfT0 = g_perfLog ? bibNowMs() : 0;
+    BIB::g_damagePhase = "runloop";
     WTF::RunLoop::cycle();
+    BIB::g_damagePhase = "idle";
     const double _perfT1 = g_perfLog ? bibNowMs() : 0;
     // Drive WebCore's "update the rendering" steps. This port has no
     // DisplayRefreshMonitor, so nothing else ever runs them — guest
@@ -1023,8 +1028,10 @@ EMSCRIPTEN_KEEPALIVE void bib_tick()
         }
         if (runNow) {
             BIB::g_renderingUpdateRequested = false;
+            BIB::g_damagePhase = "renderUpd";
             g_engine->page->updateRendering();
             g_engine->page->finalizeRenderingUpdate({ });
+            BIB::g_damagePhase = "idle";
             if (throttling) {
                 g_lastRenderUpdateMs = now; // start-to-start spacing
                 if (g_rcapDynamic) {
@@ -1079,7 +1086,7 @@ EMSCRIPTEN_KEEPALIVE void bib_tick()
                 "runloop(JS)=%.0f renderUpd=%.0f layout=%.0f paint=%.0f present=%.0f pushOther=%.0f persist=%.0f ms | "
                 "pump=%.0f(max%.0f n%d) | "
                 "wheel=%.0f(n%d ev%d q%d) blit=%.0f(mv%.0f wr%.0f n%d fb%d rows%.0f) | "
-                "avgPaintedFrame=%.1fms",
+                "paintRects=%d(%.2fMpx, %.2fMpx/frame) avgPaintedFrame=%.1fms",
                 g_perf.ticks, g_perf.painted, elapsed, 100.0 * busy / elapsed,
                 emscripten_get_heap_size() / 1048576.0, WebCore::commonVM().heap.size() / 1048576.0,
                 g_perf.runloop, g_perf.renderUpdate, g_perf.layout, g_perf.paint,
@@ -1088,6 +1095,8 @@ EMSCRIPTEN_KEEPALIVE void bib_tick()
                 g_perf.wheelMs, g_perf.wheels, g_perf.wheelEvents, g_perf.queueMax,
                 g_perf.blitMs, g_perf.blitMoveMs, g_perf.blitWriteMs,
                 g_perf.blits, g_perf.blitFallbacks, g_perf.blitRows,
+                g_perf.paintRects, g_perf.paintAreaPx / 1e6,
+                g_perf.painted ? g_perf.paintAreaPx / 1e6 / g_perf.painted : 0.0,
                 g_perf.painted ? (g_perf.layout + g_perf.paint + g_perf.present) / g_perf.painted : 0.0);
             g_perf = PerfAccum { };
             g_perf.windowStart = _perfT4;
@@ -1121,7 +1130,9 @@ EMSCRIPTEN_KEEPALIVE void bib_pump()
         return;
     }
     const double t0 = bibNowMs();
+    BIB::g_damagePhase = "pump";
     WTF::RunLoop::cycle();
+    BIB::g_damagePhase = "idle";
     const double dt = bibNowMs() - t0;
     g_perf.pumpCycle += dt;
     if (dt > g_perf.pumpMax)
@@ -1165,7 +1176,9 @@ EMSCRIPTEN_KEEPALIVE const uint8_t* bib_render(int force)
     // Layout BEFORE snapshotting the damage union — layout itself reports
     // damage through BibChromeClient, and it must land in THIS frame.
     const double _perfL0 = g_perfLog ? bibNowMs() : 0;
+    BIB::g_damagePhase = "layout";
     g_engine->mainFrame->protectedDocument()->updateLayoutIgnorePendingStylesheets();
+    BIB::g_damagePhase = "idle";
     const double _perfPaint0 = g_perfLog ? bibNowMs() : 0;
     if (g_perfLog)
         g_perf.layout += _perfPaint0 - _perfL0;
@@ -1199,24 +1212,22 @@ EMSCRIPTEN_KEEPALIVE const uint8_t* bib_render(int force)
         const WebCore::IntRect dr = bibDeviceRect(r);
         bool painted = paintFrameRect(r);
         bool readBack = painted;
-        // W-B2 v2: BOTH modes read the painted rect back into g_blitPixels and
-        // deliver it to the host #screen via putImageData (bibPushFrameIfDirty
-        // → Module.bibBlit). In GPU mode g_engine->surface is a Ganesh texture
-        // surface, so readPixels is a GPU→CPU readback (~few ms) — the price of
-        // not relying on the starved OffscreenCanvas placeholder commit. The
-        // GPU win is the PAINT (Ganesh ~5ms vs CPU raster ~111ms/full frame);
-        // readback delivery is the same proven path raster already uses.
-        if (painted) {
+        // Raster: the surface WRAPS g_blitPixels (boot/bib_set_viewport), so
+        // the paint above already landed in the framebuffer — no readback.
+        // GPU mode still reads the painted rect back: g_engine->surface is a
+        // Ganesh texture surface there, and readPixels is the GPU→CPU
+        // delivery (~few ms) for the proven bibBlit path.
+        if (painted && g_gpu) {
             // GPU mode: paintFrameRect only RECORDS Ganesh commands; the GPU
             // hasn't executed them yet. readPixels would read stale/blank
             // pixels (the bug that made the screen look frozen while the engine
             // "painted" 60fps — 2026-06-13). Force the paint onto the GPU
-            // before reading it back. Raster has no async GPU stage, so it
-            // skips this. (The old presentGPU did this FlushAndSubmit; Approach
-            // R dropped presentGPU, so the readback path must do it.)
-            if (g_gpu)
-                skgpu::ganesh::FlushAndSubmit(g_engine->surface.get());
-            auto dstInfo = SkImageInfo::Make(dr.width(), dr.height(), kRGBA_8888_SkColorType, kUnpremul_SkAlphaType);
+            // before reading it back. (The old presentGPU did this
+            // FlushAndSubmit; Approach R dropped presentGPU, so the readback
+            // path must do it.) kPremul dst matches what raster now delivers
+            // (straight memcpy, no per-pixel conversion).
+            skgpu::ganesh::FlushAndSubmit(g_engine->surface.get());
+            auto dstInfo = SkImageInfo::Make(dr.width(), dr.height(), kRGBA_8888_SkColorType, kPremul_SkAlphaType);
             uint8_t* dst = g_blitPixels + (static_cast<size_t>(dr.y()) * g_fbWidth + dr.x()) * 4;
             readBack = g_engine->surface->readPixels(SkPixmap(dstInfo, dst, g_fbWidth * 4), dr.x(), dr.y());
         }
@@ -1237,6 +1248,10 @@ EMSCRIPTEN_KEEPALIVE const uint8_t* bib_render(int force)
         }
         paintedBounds.unite(dr);
         paintedBoundsLogical.unite(r);
+        if (g_perfLog) {
+            g_perf.paintRects++;
+            g_perf.paintAreaPx += static_cast<double>(dr.width()) * dr.height();
+        }
     }
     if (g_perfLog) {
         g_perf.paint += bibNowMs() - _perfPaint0;
@@ -1291,7 +1306,9 @@ static bool bibPaintGPUIfDirty(bool force)
         return false;
 
     const double _perfL0 = g_perfLog ? bibNowMs() : 0;
+    BIB::g_damagePhase = "layout";
     g_engine->mainFrame->protectedDocument()->updateLayoutIgnorePendingStylesheets();
+    BIB::g_damagePhase = "idle";
     const double _perfPaint0 = g_perfLog ? bibNowMs() : 0;
     if (g_perfLog)
         g_perf.layout += _perfPaint0 - _perfL0;
@@ -1494,7 +1511,9 @@ EMSCRIPTEN_KEEPALIVE const uint8_t* bib_render_readback()
     if (!glContext || !glContext->makeContextCurrent())
         return nullptr;
     skgpu::ganesh::FlushAndSubmit(g_engine->surface.get());
-    auto dstInfo = SkImageInfo::Make(g_fbWidth, g_fbHeight, kRGBA_8888_SkColorType, kUnpremul_SkAlphaType);
+    // kPremul: matches what raster mode now delivers (the wrapped surface's
+    // own bytes) — probes see one format in both modes.
+    auto dstInfo = SkImageInfo::Make(g_fbWidth, g_fbHeight, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
     if (!g_engine->surface->readPixels(SkPixmap(dstInfo, g_blitPixels, g_fbWidth * 4), 0, 0))
         return nullptr;
     return g_blitPixels;
@@ -1958,8 +1977,10 @@ static void bibApplyWheel(double deviceX, double deviceY, double deltaX, double 
         modifiers.contains(WebCore::PlatformEvent::Modifier::ControlKey),
         modifiers.contains(WebCore::PlatformEvent::Modifier::AltKey),
         modifiers.contains(WebCore::PlatformEvent::Modifier::MetaKey));
+    BIB::g_damagePhase = "wheel";
     auto [handled, handling] = g_engine->mainFrame->eventHandler().handleWheelEvent(event,
         { WebCore::WheelEventProcessingSteps::SynchronousScrolling, WebCore::WheelEventProcessingSteps::BlockingDOMEventDispatch });
+    BIB::g_damagePhase = "idle";
     (void)handled;
     g_wheelConsumed.store(handling.contains(WebCore::EventHandling::DefaultPrevented),
         std::memory_order_release);
@@ -2387,6 +2408,11 @@ int main()
     });
     printf("EMBEDDER: perflog=%s\n", g_perfLog ? "on" : "off");
     BIB::g_scrollDebug = g_perfLog;
+    // ?dmglog=1: per-rect damage tracing (chatty; diagnostic runs only).
+    BIB::g_damageLog = MAIN_THREAD_EM_ASM_INT({
+        try { return new URLSearchParams(location.search).get("dmglog") === "1" ? 1 : 0; }
+        catch (e) { return 0; }
+    });
 
     // Rendering-update throttle config (see g_rcapDynamic). ?rcap absent =>
     // DYNAMIC (default, interactive only — gates render once and must stay
@@ -2782,20 +2808,25 @@ int main()
             }
         }
     }
-    if (!g_gpu)
-        surface = SkSurfaces::Raster(info);
-    if (!surface) {
-        printf("EMBEDDER: FAIL SkSurface\n");
-        exit(1); // EXIT_RUNTIME=0: explicit teardown (node gate path)
-    }
-
     g_blitPixels = static_cast<uint8_t*>(malloc(static_cast<size_t>(g_fbWidth) * g_fbHeight * 4));
     if (!g_blitPixels) {
         printf("EMBEDDER: FAIL framebuffer alloc\n");
         exit(1); // EXIT_RUNTIME=0: explicit teardown (node gate path)
     }
+    // Raster: paint DIRECTLY into g_blitPixels (SkSurfaces::WrapPixels) —
+    // no per-frame readPixels, no second scroll-blit mirror. The host
+    // receives PREMULTIPLIED bytes; that's fine because the root frame is
+    // opaque (alpha 255 ⇒ premul == unpremul byte-for-byte) and the WebGL
+    // presenter ignores alpha anyway (alpha:false context, no blending).
+    if (!g_gpu)
+        surface = SkSurfaces::WrapPixels(info, g_blitPixels, static_cast<size_t>(g_fbWidth) * 4);
+    if (!surface) {
+        printf("EMBEDDER: FAIL SkSurface\n");
+        exit(1); // EXIT_RUNTIME=0: explicit teardown (node gate path)
+    }
 
     g_engine = new Engine { WTF::move(page), WTF::move(localMainFrame), WTF::move(surface) };
+    BIB::g_logicalFrameSize = bibLogicalFrameRect().size();
     // Fast-scroll shift needs g_engine. GPU mode: the CPU memmove trick is
     // moot (no g_blitPixels mirror) — a null hook makes ChromeClient::scroll
     // fall back to addDamage(clip), i.e. a clipped GPU repaint.

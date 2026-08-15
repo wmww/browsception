@@ -436,3 +436,41 @@ image-scroll 55.5 fps / 47% busy / 250 ms/s; sticky-scroll 59.9 fps / 35% busy /
 within ~6% of article-scroll's paint cost — a hint that the TOC scroll handler is not where
 article-scroll's cost sits, though the two pages differ in content as well, so it is a pointer
 for a follow-up, not a subtraction.
+
+---
+
+## 2026-08-15 — Wikipedia painted 1.38 Mpx/frame (the whole viewport) while scrolling
+
+**Hypothesis**: Vector 2022's TOC tracker dirties layout each scroll tick; the top-level grid
+containers self-relayout to identical geometry and each issues a full self-repaint.
+
+**What ran**: caller-tagged instrumentation on `RenderElement::repaintAfterLayoutIfNeeded` plus a
+`repaintUsingContainer` rect log, probed with `tools/scroll-speed-probe.mjs` on
+`en.wikipedia.org/wiki/Solar_eclipse_of_August_12,_2026`, 1600x860, 60 px/frame.
+
+Findings, in the order they fell out:
+1. Both blanket-repaint callers fire, ~40/s each: `LayoutRepainter` (mw-content-container,
+   mw-footer-container) and the layer-position pass (vector-column-start/-end, #bodyContent).
+   The layer bit comes from `RenderObject::setNeedsLayout` → `setLayerNeedsFullRepaint`.
+2. An earlier session concluded that setter "never fires" — a **logging artifact**: the probe
+   only forwards console lines matching `/BIB(PERF|SCROLL|DMG|REPAINT)/`, and the log line was
+   named `BIBFULLREPAINT-SET`. Name engine diagnostics `BIBREPAINT-*`.
+3. Suppressing both blanket repaints changed nothing (still 1.31 Mpx/frame). The remaining damage
+   was the *decoration delta* tail of `repaintAfterLayoutIfNeeded`: mw-content-container's border
+   box measures 0 → 13997 tall across its own layout while its clipped overflow rect is unchanged,
+   so `damageExtentWithinClippedOverflow` covered its whole height — for a box with no decorations
+   at all. Gating that section on decorations dropped the painted area immediately.
+
+**Numbers** (steady state, no diagnostics in the build, `--sweep 60 --nosample`):
+
+| page / size | Mpx/frame before → after | fps before → after | busy before → after |
+|---|---|---|---|
+| Wikipedia 1600x860/900 | 1.38 → **0.30** | ~31 → **60** | 99% → 31-36% |
+| Wikipedia 2560x1330 | 3.30 → **0.45-0.61** | ~31 → 31-37 | 99% → 29-46% |
+| scroll.bstest 1600x900 | 0.18-0.20 → 0.18-0.24 | 60 → 60 | unchanged |
+| scroll-sticky.bstest 1600x900 | ~0.45 → 0.45-0.49 | 60 → 60 | unchanged |
+
+**Decision**: keep (see engine-internals.md § `selfNeedsLayout()` and § decoration delta). At
+2560x1330 the engine is no longer paint-bound — the same probe on `scroll.bstest` also caps at
+35-37 fps with the engine 20% busy, i.e. that ceiling is host-side presentation, not the engine.
+Roundtrip pixel-exactness (scroll + sticky, dpr 1 and 1.5) and all 24 tier-2 scenarios pass.

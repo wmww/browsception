@@ -186,8 +186,10 @@ async function bootEngine() {
         try { w.terminate(); } catch {}
       }
     },
-    // Async pixel probe from the engine's unpremultiplied framebuffer (the
-    // canvas round-trip is lossy; never read pixels off the canvas).
+    // Async pixel probe from the engine's own framebuffer bytes (premul
+    // Skia surface pixels — identical to unpremul at alpha 255, which the
+    // opaque root frame always is; the canvas round-trip is lossy, never
+    // read pixels off the canvas).
     readback() {
       if (!this.ready || this.dead) return Promise.resolve(null);
       return new Promise((resolve) => {

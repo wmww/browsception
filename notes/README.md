@@ -156,8 +156,24 @@ instead of `writePixels`-ing an unpremul→premul conversion of the framebuffer 
 fast scrolling went 2 → 18 fps with the input backlog 74 → 2 and the post-input tail 1.7 s →
 0.16 s; distance is conserved exactly (rendering-input.md § scrolling, tier-2 scenario 19).
 
+*Sticky-page scroll perf* (2026-08-14) — three general paint-path wins: waste-based 8-slot
+damage merging (the old merge-any-overlap policy collapsed sticky-page damage to a
+frame-covering rect and killed the scroll blit), the raster SkSurface now wraps `g_blitPixels`
+directly (per-frame readPixels unpremultiply readback + the blit's second row walk deleted; the
+premul "blocker" was moot — opaque frames, alpha-ignoring presenter), and BIBPERF gained
+painted-area counters + `?dmglog=1` phase-tagged damage tracing. On top of that, a WebKit patch refinement (+173 patch lines) stops
+self-laid-out block containers whose children repaint themselves from issuing blanket
+full-viewport repaints, and skips the decoration-delta repaint for boxes with no visible
+decorations — Wikipedia's per-scroll-tick layout dirtying went from 1.38 Mpx painted/frame
+(full viewport) to 0.30. Net Wikipedia scroll: **30 → 60 fps at 1600×900 (99% → ~33% busy)**;
+at 2560×1330 fps is capped ~36 by the HOST presentation path, not the engine (29-46% busy;
+issues/host-present-ceiling-large-fb.md). Mechanisms + rebase notes in engine-internals.md;
+run log in experiment-log.md. New tier-2 scenario 20 (sticky-chrome scroll fixture
+scroll-sticky.bstest).
+
 Open issues in issues/ (guest-JS wedge, rcap dynamic budget, viewer URL-scheme allowlist,
-anonymous engine artifacts). Next work: [roadmap.md](roadmap.md).
+encoded viewer URL breaks the sweep, host-present ceiling at large framebuffers, engine links
+WebGL imports, CLoop `join` returned a non-string). Next work: [roadmap.md](roadmap.md).
 
 ## Key decisions
 

@@ -55,12 +55,16 @@ if (dpr !== 1) {
 const perfLines = [];
 page.on('console', (m) => {
   const t = m.text();
-  if (t.includes('BIBPERF') || t.includes('BIBSCROLL')) perfLines.push({ t, at: Date.now() });
+  if (/BIB(PERF|SCROLL|DMG|REPAINT)/.test(t)) perfLines.push({ t, at: Date.now() });
 });
 page.on('pageerror', (e) => console.log('PAGEERROR', e.message));
 
 await page.goto(
-  `chrome-extension://${EXT_ID}/ext/viewer.html?perflog=1&persist=0&url=${encodeURIComponent(target)}`,
+  // url= is RAW (the DNR \0 contract; viewer and sweep both slice it
+  // un-decoded) — an encoded url makes the SW sweep tabs.update the viewer
+  // to a relative garbage URL and the probe never boots.
+  // --dmglog: per-rect damage tracing (BIBDMG lines; very chatty).
+  `chrome-extension://${EXT_ID}/ext/viewer.html?perflog=1${has('dmglog') ? '&dmglog=1' : ''}&persist=0&url=${target}`,
 );
 await page.waitForFunction(
   () => globalThis.__bs?.ready && __bs.state.progress >= 1 && /^https?:/.test(__bs.state.url ?? ''),
@@ -243,7 +247,7 @@ for (const pxPerFrame of sweep) {
   });
   results.push(row);
   console.log(JSON.stringify(row));
-  for (const l of perfLines) console.log('   ', l.t.slice(0, 200));
+  for (const l of perfLines) console.log('   ', l.t);
 }
 
 console.log('\n=== summary (dpr=%s, url=%s, epf=%d, stride=%d) ===', dpr, target, epf, stride);

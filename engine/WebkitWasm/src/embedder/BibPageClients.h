@@ -77,7 +77,7 @@ inline bool g_frameDirty = true;
 // bib_render snapshots the list AFTER layout (layout adds damage), clamps
 // each rect to the frame, paints/reads back each region, then resets.
 // Slot 0 starts huge so the first paint covers the whole frame.
-inline constexpr size_t kMaxDamageRects = 4;
+inline constexpr size_t kMaxDamageRects = 8;
 inline WebCore::IntRect g_damageRects[kMaxDamageRects] = { { 0, 0, 1 << 20, 1 << 20 } };
 inline size_t g_damageCount = 1;
 
@@ -93,41 +93,84 @@ inline void (*g_scrollBlit)(const WebCore::IntSize&, const WebCore::IntRect&, co
 // ?perflog=1 scroll-path tracing (set by main.cpp alongside g_perfLog).
 inline bool g_scrollDebug = false;
 
+// Damage attribution (g_scrollDebug only): which engine phase is running
+// when a big invalidation arrives. main.cpp sets it around the wheel task,
+// the rendering update, the runloop cycle, and layout; logical frame size
+// is maintained by boot/bib_set_viewport so addDamage can tell "big".
+inline const char* g_damagePhase = "idle";
+inline WebCore::IntSize g_logicalFrameSize;
+// ?dmglog=1: log EVERY addDamage rect with its phase (very chatty — a
+// diagnostic run of a few seconds, never steady-state tooling).
+inline bool g_damageLog = false;
+
+// Merge policy: unite two rects only when their union wastes little area.
+// "Waste" = union − a − b + overlap, i.e. pixels the union would repaint
+// that neither rect asked for (containment ⇒ waste 0 ⇒ always merges).
+// The old policy united ANY intersecting pair — on pages with sticky
+// chrome (Wikipedia: full-width header band + tall sidebar column) the
+// sidebar column intersects the full-width scroll strip, so the list
+// collapsed to a frame-covering rect within a tick; bibScrollBlit's
+// "pending damage contains scrollRect" guard then killed the scroll blit
+// entirely and every wheel tick became a full-viewport repaint (few fps).
+// Overlap across slots is harmless — painting is idempotent, just a little
+// double raster on the overlap.
+inline int64_t damageMergeWaste(const WebCore::IntRect& a, const WebCore::IntRect& b)
+{
+    auto area = [](const WebCore::IntRect& r) {
+        return static_cast<int64_t>(r.width()) * r.height();
+    };
+    WebCore::IntRect u = a;
+    u.unite(b);
+    return area(u) - area(a) - area(b) + area(WebCore::intersection(a, b));
+}
+
 inline void addDamage(const WebCore::IntRect& rect)
 {
     if (rect.isEmpty())
         return;
+    if (g_damageLog)
+        WTFLogAlways("BIBDMG [%s] %d,%d %dx%d", g_damagePhase, rect.x(), rect.y(), rect.width(), rect.height());
+    if (g_scrollDebug && !g_logicalFrameSize.isEmpty()) {
+        // Log any single invalidation covering >= half the viewport, tagged
+        // with the phase that issued it — the tool for "who keeps asking for
+        // full-frame repaints on this page?" (2026-08-14 Wikipedia hunt).
+        const int64_t frameArea = static_cast<int64_t>(g_logicalFrameSize.width()) * g_logicalFrameSize.height();
+        const WebCore::IntRect visible = WebCore::intersection(rect, { { }, g_logicalFrameSize });
+        if (static_cast<int64_t>(visible.width()) * visible.height() * 2 >= frameArea)
+            WTFLogAlways("BIBDMG big [%s] %d,%d %dx%d", g_damagePhase, rect.x(), rect.y(), rect.width(), rect.height());
+    }
     g_frameDirty = true;
-    // Overlapping (or contained) damage merges in place; a later merge can
-    // make two slots overlap each other — harmless, painting is idempotent.
+    WebCore::IntRect incoming = rect;
+    // Cheap-merge pass: fold `incoming` into any slot whose union wastes
+    // less than a third of itself (containment/near-overlap). Uniting can
+    // make the grown slot newly cheap against another slot, so re-fold the
+    // union instead of returning — the loop restarts with the merged rect
+    // and the absorbed slot removed. Terminates: each restart removes a slot.
     for (size_t i = 0; i < g_damageCount; ++i) {
-        if (g_damageRects[i].contains(rect))
-            return;
-        if (g_damageRects[i].intersects(rect)) {
-            g_damageRects[i].unite(rect);
-            return;
+        WebCore::IntRect u = incoming;
+        u.unite(g_damageRects[i]);
+        const int64_t unionArea = static_cast<int64_t>(u.width()) * u.height();
+        if (damageMergeWaste(incoming, g_damageRects[i]) * 3 <= unionArea) {
+            g_damageRects[i] = g_damageRects[--g_damageCount];
+            incoming = u;
+            i = static_cast<size_t>(-1); // restart scan with the union
         }
     }
     if (g_damageCount < kMaxDamageRects) {
-        g_damageRects[g_damageCount++] = rect;
+        g_damageRects[g_damageCount++] = incoming;
         return;
     }
-    // List full: unite into the slot whose union grows the least.
-    auto area = [](const WebCore::IntRect& r) {
-        return static_cast<int64_t>(r.width()) * r.height();
-    };
+    // List full: unite into the slot where the union wastes the least.
     size_t best = 0;
-    int64_t bestGrowth = std::numeric_limits<int64_t>::max();
+    int64_t bestWaste = std::numeric_limits<int64_t>::max();
     for (size_t i = 0; i < g_damageCount; ++i) {
-        WebCore::IntRect u = g_damageRects[i];
-        u.unite(rect);
-        int64_t growth = area(u) - area(g_damageRects[i]);
-        if (growth < bestGrowth) {
-            bestGrowth = growth;
+        const int64_t waste = damageMergeWaste(incoming, g_damageRects[i]);
+        if (waste < bestWaste) {
+            bestWaste = waste;
             best = i;
         }
     }
-    g_damageRects[best].unite(rect);
+    g_damageRects[best].unite(incoming);
 }
 
 // Set by BibChromeClient::scheduleRenderingUpdate (WebCore requested the
@@ -278,9 +321,11 @@ private:
     }
     // scroll() is the fast-scroll path: the embedder blit-shifts the
     // scrolled pixels and repaints only the exposed strips (main.cpp's
-    // bibScrollBlit). NOTE: WebCore only takes this path when
-    // canBlitOnScroll() — pages with fixed/sticky elements go through the
-    // slow full-invalidate path regardless (decision-005 finding 5).
+    // bibScrollBlit). WebCore takes it when canBlitOnScroll(); fixed/sticky
+    // elements do NOT force the slow path in this port (useSlowRepaints only
+    // counts viewport-constrained objects behind a platformWidget, which we
+    // never have) — scrollContentsFastPath calls scroll() and then
+    // invalidates each sticky element's old+new rect separately.
     void scroll(const WebCore::IntSize& delta, const WebCore::IntRect& rectToScroll, const WebCore::IntRect& clipRect) final
     {
         if (g_scrollBlit)

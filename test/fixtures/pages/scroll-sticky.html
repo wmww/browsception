@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>sticky scroll fixture</title>
+<style>
+  body { margin: 0; font: 15px/1.5 system-ui, sans-serif; background: #fff; color: #111; }
+  /* Same pixel-encoded borders as scroll.html: probe at (4,4) decodes the
+     scroll offset. The sticky chrome deliberately leaves the top-left
+     120px column uncovered so the probe still sees the document. */
+  section { height: 120px; box-sizing: border-box; padding: 6px 12px; overflow: hidden;
+            border-left: 10px solid #000; }
+  p { margin: 0 0 3px 0; }
+  /* Wikipedia-shaped viewport-constrained chrome: a sticky header band and a
+     tall sidebar column. Their invalidation rects (top band + right column)
+     intersect the scroll strip + scrollbar damage the way Vector 2022 does. */
+  #hdr { position: fixed; top: 0; left: 120px; right: 0; height: 56px;
+         background: #eaecf0; border-bottom: 1px solid #a2a9b1;
+         padding: 4px 12px; box-sizing: border-box; z-index: 2; }
+  #side { position: fixed; top: 64px; right: 0; bottom: 0; width: 240px;
+          background: #f8f9fa; border-left: 1px solid #a2a9b1; overflow: hidden;
+          padding: 8px 12px; box-sizing: border-box; z-index: 2; }
+  #side li { margin: 0 0 6px 0; font-size: 13px; }
+</style></head>
+<body>
+<div id="hdr"><b>sticky scroll fixture</b> — header band</div>
+<div id="side"><ul id="toc"></ul></div>
+<div id="w"></div>
+<script>
+  const N = 4000, H = 120;
+  const words = ('lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor '
+    + 'incididunt ut labore et dolore magna aliqua enim ad minim veniam quis nostrud').split(' ');
+  let html = '';
+  for (let i = 0; i < N; i++) {
+    const c = 'rgb(' + (i & 255) + ',' + ((i >> 8) & 255) + ',128)';
+    let text = '';
+    for (let l = 0; l < 3; l++) {
+      let line = '';
+      for (let k = 0; k < 14; k++) line += words[(i * 7 + l * 3 + k) % words.length] + ' ';
+      text += '<p>' + i + ': ' + line + '</p>';
+    }
+    html += '<section style="border-left-color:' + c + '">' + text + '</section>';
+  }
+  document.getElementById('w').innerHTML = html;
+  let toc = '';
+  for (let i = 0; i < 30; i++) toc += '<li>' + words[i % words.length] + ' ' + i + '</li>';
+  document.getElementById('toc').innerHTML = toc;
+  document.title = 'sticky scroll fixture ' + N * H;
+</script>
+</body></html>

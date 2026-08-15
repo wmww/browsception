@@ -15,6 +15,15 @@ its own task (`bib_wheel`, `bib_mouse_*`, `bib_key`) runs in the same queue but 
 body, so it used to be invisible: a thread saturated by wheel handling reported ~50% idle. `wheelMs`
 is now folded into busy%; **any new proxied entry point needs the same treatment or busy% lies.**
 
+Counters added 2026-08-14: `paintRects=<n>(<total>Mpx, <X>Mpx/frame)` — rects painted and their
+device-px area. **Mpx/frame ≈ framebuffer size means damage has degenerated to full-viewport
+repaints** no matter what the blit saved — this single number is what separated "blit broken"
+from "page dirties everything" on Wikipedia. `?dmglog=1` (probe `--dmglog`) additionally logs
+every `addDamage` rect with the engine phase that issued it (`BIBDMG [wheel|runloop|renderUpd|
+layout|paint|pump] x,y wxh`) — very chatty, diagnosis runs only, and **hundreds of WTFLogAlways/s
+inflate wheel/paint costs 3-10x**, so never take timing numbers from a dmglog (or any chatty
+diagnostic) run/build.
+
 Counters added 2026-08-13 (all `g_perfLog`-gated, engine-thread-only, no atomics):
 - `wheel=<ms>(n<applied> ev<hostevents> q<maxdepth>)` — time inside `handleWheelEvent`, events
   actually applied, host events they carry (`ev > n` = batches merged), and the high-water depth
@@ -55,6 +64,17 @@ the event is untrusted. Two knobs separate the two candidate cost models:
   is doing work per *input* rather than per *output*.
 
 ## Traps that cost real time here
+
+- **`?url=` must be RAW in probe/viewer URLs** (the DNR `\0` contract): an
+  `encodeURIComponent`ed url makes the SW sweep `tabs.update` the viewer tab to a relative
+  garbage URL and the probe times out on boot (issues/encoded-viewer-url-breaks-sweep.md).
+- **`--sweep` is px per HOST FRAME, not px/s** (×~60 for px/s). Wikipedia articles bottom out
+  above ~120 px/frame × 4 s — trailing seconds show wheels applied with `painted=0`, and the
+  run's summary fps is then an artifact.
+- **The guest's `console.log` forwards only its first argument** — join diagnostics into one
+  string before logging from `__bs.eval` code.
+- **`WTFLogAlways` from the engine worker reaches the page console; `emscripten_log` does not**
+  — stack captures must go through WTFLogAlways (or the abort hook) to be visible to probes.
 
 - **Inherited backlog.** Consecutive runs in one browser session differed 2-8x until each run reset
   to the top and waited for *both* offset 0 and a quiet frame counter. Queued input from the

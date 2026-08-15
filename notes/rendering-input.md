@@ -107,18 +107,31 @@ boot-size, grow, shrink, and post-resize input.
   - Guest-visible semantics change under load only (fewer wheel events, larger deltas — what
     Chrome does with its rAF-aligned wheel batches). ABI documents it; tier-2 scenario 19 guards
     both invariants (distance conserved, nothing merged past a click).
-- The other half of the same finding: `bibScrollBlit` mirrored its shift onto the SkSurface with
-  `SkCanvas::writePixels` **from `g_blitPixels`**, which is `kUnpremul` where the surface is
-  `kPremul` — a per-pixel alpha conversion of nearly the whole framebuffer, ~9x the memmove it was
-  mirroring (13 ms vs 1.4 ms at 5.6 Mpx) and the reason one blit ever cost 15 ms. The hook is
-  raster-only, so it now shifts the **surface's own pixels** with the identical row walk
-  (`notifyContentWillChange` + `peekPixels`; the notify is the copy-on-write handshake that
-  writing through `peekPixels` would otherwise skip). Same bytes, no format in play.
-- Still on the table (not needed after the above, but it removes the mirror rather than cheapening
-  it): wrap the SkSurface over `g_blitPixels` (`SkSurfaces::WrapPixels`) so paint and host upload
-  share one buffer — that drops both the blit's second walk and the per-paint `readPixels`
-  unpremultiply. Blocked on the premul/unpremul split: the host presenter wants unpremultiplied
-  RGBA and WebCore paints premultiplied.
+- **The surface wraps the framebuffer** (2026-08-14, `SkSurfaces::WrapPixels` over `g_blitPixels`,
+  boot + `bib_set_viewport`): paint lands directly in the shared buffer — the per-paint
+  `readPixels` unpremultiply readback and the scroll blit's second row walk are both GONE
+  (`bibScrollBlit` shifts the surface's own pixels once, `notifyContentWillChange` +
+  `peekPixels`). The premul/unpremul "blocker" was a non-issue: the root frame is opaque
+  (alpha 255 ⇒ premul == unpremul byte-for-byte) and the WebGL presenter ignores alpha anyway
+  (`alpha:false` context, no blending). Host and probes now see premul bytes; GPU-mode readback
+  switched to a premul dst to match. (Historical: the blit mirror was once a `writePixels`
+  unpremul→premul conversion, ~9x the memmove — 13 vs 1.4 ms at 5.6 Mpx.)
+- **Damage merge is waste-based** (2026-08-14): `addDamage` used to unite ANY intersecting pair;
+  on sticky-chrome pages (Wikipedia: full-width header band + tall sticky columns) the sidebar
+  column intersects the full-width scroll strip, the 4-slot list collapsed to a frame-covering
+  rect within a tick, and `bibScrollBlit`'s "pending damage contains scrollRect" guard then
+  killed the blit — every wheel tick a full-viewport repaint (the "few fps on Wikipedia" bug).
+  Now: 8 slots, merge only when union waste (union − a − b + overlap) ≤ ⅓ of the union, cascade
+  re-fold, overflow unites min-waste. Sticky fixture: 0.4-0.55 Mpx painted/frame (~30-40% of
+  viewport) at a steady 64-66 fps. BIBPERF now reports `paintRects=N(totalMpx, Mpx/frame)`.
+- Measured on the real Wikipedia article (scroll-speed-probe, dpr 1, before → after):
+  1600×860: 26-36 ms/painted frame @ ~30 fps → **5.2-5.7 ms @ 61 fps**; 2560×1290: 56-72 ms
+  @ 15-16 fps → **~26 ms @ 31-32 fps**. Remaining gap at large sizes: Wikipedia's guest JS
+  (TOC active-section tracker) dirties layout every scroll event and WebKit full-repaints every
+  self-laid-out container even at identical geometry (`LayoutRepainter::repaintAfterLayout`:
+  `selfNeedsLayout()` ⇒ `RequiresFullRepaint::Yes`) — so the page still paints 1.38 Mpx/frame
+  (full viewport). WebKit keeps that conservatism for reflowed inline text (RenderText has no
+  repaint pass of its own); refinement for block-level-children containers in progress.
 - Measured (fixture, plain text, dpr 1, `tools/scroll-speed-probe.mjs`, before → after, same
   session): **5.6 Mpx** at 3600 px/s: 2 → 18 fps, wheel 968 → 111 ms/s, blit 913 → 90 ms/s, queue
   74 → 2, and the tail — how long the page keeps scrolling after input stops — 1.7 s → 0.16 s. At

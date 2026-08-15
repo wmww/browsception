@@ -7,8 +7,8 @@
 // Scenarios here: 7 render, 8 execute, 9 input, 10 navigation chrome, 11
 // invariants, 12 crash/recovery, 13 startup budget, 14 resize, 15 guest
 // WebSocket, 16 engine-side load failure, 17 view transitions absent, 19
-// positional-input coalescing (18 HiDPI has its own file — dpr is a
-// browser-launch property).
+// positional-input coalescing, 20 sticky-chrome scroll (18 HiDPI has its
+// own file — dpr is a browser-launch property).
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -36,7 +36,7 @@ const BOOT_TIMEOUT = 120000;
 // Suite posture: dev-style blacklist covering every fixture domain, so a
 // sandboxed viewer's domain always HAS sandbox disposition — required since
 // 2.4's boundary policy natives nested navigations to unlisted domains.
-const FIXTURE_BLACKLIST = ['grid.bstest', 'input.bstest', 'app.bstest', 'other.bstest', 'hostile.bstest', 'scroll.bstest'];
+const FIXTURE_BLACKLIST = ['grid.bstest', 'input.bstest', 'app.bstest', 'other.bstest', 'hostile.bstest', 'scroll.bstest', 'scroll-sticky.bstest'];
 
 async function configure(patch, ready) {
   const cfg = await session.context.newPage();
@@ -302,6 +302,39 @@ test('input coalescing: a wheel burst keeps its distance and lands before a clic
   await evalProbe(page, 'window.__click', new RegExp(`^${TOTAL},`), 20);
   await evalProbe(page, 'scrollY', new RegExp(`^${TOTAL}\\b`), 20); // console adds a " (:1)" suffix
   await until(page, 4, 4, is([TOTAL / 120, 0, 128]), 60000, 'frame shows the summed offset');
+  await page.close();
+});
+
+// --- Scenario 20: sticky-chrome scroll -------------------------------------
+// Wikipedia-shaped pages (sticky header band + tall fixed sidebar) scroll
+// through the SAME blit fast path as plain pages — scrollContentsFastPath
+// invalidates each sticky element's rect after the blit. Two ways this has
+// broken: the damage list united the sidebar column with the full-width
+// scroll strip into a frame-covering rect, which then tripped bibScrollBlit's
+// "pending damage contains scrollRect" fallback (full repaint per tick, few
+// fps — 2026-08-14); and any damage-translation bug smears the sticky
+// elements, since the blit shifts their pixels and only a repaint puts them
+// back. The invariants: content lands exactly where the summed deltas put
+// it, and the sticky chrome pixels are back at their fixed positions.
+test('sticky chrome: scroll keeps its distance and the fixed elements stay put', { timeout: 300000 }, async () => {
+  const page = await bootViewer('https://scroll-sticky.bstest/');
+  const box = await (await page.$('#screen')).boundingBox();
+  await until(page, 4, 4, is([0, 0, 128]), 120000, 'sticky fixture at top');
+  const fb = await page.evaluate(() => __bs.fb);
+  const HDR = [234, 236, 240]; // #eaecf0 header band (top 56px, x >= 120)
+  const SIDE = [248, 249, 250]; // #f8f9fa sidebar column (right 240px, y >= 64)
+  const hdrAt = [Math.floor(fb.w / 2), 40];
+  const sideAt = [fb.w - 40, 400];
+  await until(page, ...hdrAt, is(HDR), 60000, 'header before scroll');
+  await until(page, ...sideAt, is(SIDE), 60000, 'sidebar before scroll');
+
+  const N = 10, PER = 300, TOTAL = N * PER; // 3000px = section 25
+  await page.mouse.move(box.x + 400, box.y + 300);
+  for (let i = 0; i < N; i++) await page.mouse.wheel(0, PER);
+
+  await until(page, 4, 4, is([TOTAL / 120, 0, 128]), 60000, 'frame shows the summed offset');
+  await until(page, ...hdrAt, is(HDR), 60000, 'header still in place after scroll');
+  await until(page, ...sideAt, is(SIDE), 60000, 'sidebar still in place after scroll');
   await page.close();
 });
 

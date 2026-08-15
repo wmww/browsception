@@ -2836,6 +2836,92 @@ index 00000000000..f66a6fffe71
 +}
 +
 +} // namespace WebCore
+diff --git a/Source/WebCore/rendering/LayoutRepainter.cpp b/Source/WebCore/rendering/LayoutRepainter.cpp
+index 6b21156853e..3a0d7b23785 100644
+--- a/Source/WebCore/rendering/LayoutRepainter.cpp
++++ b/Source/WebCore/rendering/LayoutRepainter.cpp
+@@ -50,6 +50,14 @@ bool LayoutRepainter::repaintAfterLayout()
+         return false;
+ 
+     auto requiresFullRepaint = m_forceFullRepaint || m_renderer->selfNeedsLayout() ? RequiresFullRepaint::Yes : RequiresFullRepaint::No;
++    if (requiresFullRepaint == RequiresFullRepaint::Yes && !m_forceFullRepaint && m_renderer->blockLevelChildrenIssueOwnRepaints()) {
++        // browsception (see RenderObject::blockLevelChildrenIssueOwnRepaints):
++        // our children repaint themselves, so the geometry diff below is enough
++        // to cover our own painting. Keep the outline-bounds mode the old rects
++        // were captured with so the two are comparable.
++        auto newRects = m_renderer->rectsForRepaintingAfterLayout(m_repaintContainer, m_repaintOutlineBounds);
++        return m_renderer->repaintAfterLayoutIfNeeded(m_repaintContainer, RequiresFullRepaint::No, m_oldRects, newRects);
++    }
+     // Outline bounds are not used if we're doing a full repaint.
+     auto newRects = m_renderer->rectsForRepaintingAfterLayout(m_repaintContainer, (requiresFullRepaint == RequiresFullRepaint::Yes) ? RepaintOutlineBounds::No : m_repaintOutlineBounds);
+     return m_renderer->repaintAfterLayoutIfNeeded(m_repaintContainer, requiresFullRepaint, m_oldRects, newRects);
+diff --git a/Source/WebCore/rendering/RenderBlockFlow.cpp b/Source/WebCore/rendering/RenderBlockFlow.cpp
+index a5bc4aee7f4..580ba255ba1 100644
+--- a/Source/WebCore/rendering/RenderBlockFlow.cpp
++++ b/Source/WebCore/rendering/RenderBlockFlow.cpp
+@@ -1206,7 +1206,10 @@ void RenderBlockFlow::layoutBlockChild(RenderBox& child, MarginInfo& marginInfo,
+         // If the child moved, we have to repaint it as well as any floating/positioned
+         // descendants. An exception is if we need a layout. In this case, we know we're going to
+         // repaint ourselves (and the child) anyway.
+-        if (childHadLayout && !selfNeedsLayout() && child.checkForRepaintDuringLayout())
++        // browsception: ... unless we are one of the containers that skips its
++        // own blanket repaint (blockLevelChildrenIssueOwnRepaints), in which
++        // case nobody else would repaint the moved child.
++        if (childHadLayout && (!selfNeedsLayout() || blockLevelChildrenIssueOwnRepaints()) && child.checkForRepaintDuringLayout())
+             child.repaintDuringLayoutIfMoved(oldRect);
+     }
+ 
+diff --git a/Source/WebCore/rendering/RenderElement.cpp b/Source/WebCore/rendering/RenderElement.cpp
+index 2e6512b69a3..83ef26e9059 100644
+--- a/Source/WebCore/rendering/RenderElement.cpp
++++ b/Source/WebCore/rendering/RenderElement.cpp
+@@ -1492,6 +1492,16 @@ bool RenderElement::repaintAfterLayoutIfNeeded(SingleThreadWeakPtr<const RenderL
+     if (!haveOutlinesBoundsRects || *oldRects.outlineBoundsRect == *newRects.outlineBoundsRect)
+         return false;
+ 
++    // browsception: everything below repaints the bands where a border-box size
++    // change affects decorations THIS box paints (background edges, border,
++    // outline, box shadow). A box that paints none of those has nothing to
++    // repaint here: its pixels are its children's, and they repaint themselves.
++    // Without this, a block whose border box grows inside an unchanged clipped
++    // overflow rect damages its whole height (Wikipedia's content container
++    // does that on every scroll tick, costing a full-viewport repaint).
++    if (!hasVisibleBoxDecorations() && !outlineStyleForRepaint().usedOutlineSize())
++        return false;
++
+     auto oldOutlineBoundsRect = *oldRects.outlineBoundsRect;
+     auto newOutlineBoundsRect = *newRects.outlineBoundsRect;
+ 
+diff --git a/Source/WebCore/rendering/RenderFlexibleBox.cpp b/Source/WebCore/rendering/RenderFlexibleBox.cpp
+index 9025e0865e2..b3b52010d73 100644
+--- a/Source/WebCore/rendering/RenderFlexibleBox.cpp
++++ b/Source/WebCore/rendering/RenderFlexibleBox.cpp
+@@ -517,7 +517,9 @@ void RenderFlexibleBox::repaintFlexItemsDuringLayoutIfMoved(const FlexItemFrameR
+         // If the child moved, we have to repaint it as well as any floating/positioned
+         // descendants. An exception is if we need a layout. In this case, we know we're going to
+         // repaint ourselves (and the child) anyway.
+-        if (!selfNeedsLayout() && flexItem->checkForRepaintDuringLayout())
++        // browsception: see RenderObject::blockLevelChildrenIssueOwnRepaints —
++        // when we skip our own blanket repaint the moved item must repaint.
++        if ((!selfNeedsLayout() || blockLevelChildrenIssueOwnRepaints()) && flexItem->checkForRepaintDuringLayout())
+             flexItem->repaintDuringLayoutIfMoved(oldFlexItemRects[index]);
+         ++index;
+     }
+diff --git a/Source/WebCore/rendering/RenderGrid.cpp b/Source/WebCore/rendering/RenderGrid.cpp
+index 28908cb6e87..e5ed76c8ff4 100644
+--- a/Source/WebCore/rendering/RenderGrid.cpp
++++ b/Source/WebCore/rendering/RenderGrid.cpp
+@@ -1638,7 +1638,9 @@ void RenderGrid::layoutGridItems(GridLayoutState& gridLayoutState)
+         // If the grid item moved, we have to repaint it as well as any floating/positioned
+         // descendants. An exception is if we need a layout. In this case, we know we're going to
+         // repaint ourselves (and the grid item) anyway.
+-        if (!selfNeedsLayout() && gridItem.checkForRepaintDuringLayout())
++        // browsception: see RenderObject::blockLevelChildrenIssueOwnRepaints —
++        // when we skip our own blanket repaint the moved item must repaint.
++        if ((!selfNeedsLayout() || blockLevelChildrenIssueOwnRepaints()) && gridItem.checkForRepaintDuringLayout())
+             gridItem.repaintDuringLayoutIfMoved(oldGridItemRect);
+     }
+ }
 diff --git a/Source/WebCore/rendering/RenderLayerCompositor.cpp b/Source/WebCore/rendering/RenderLayerCompositor.cpp
 index fcea1288661..c69b99a6450 100644
 --- a/Source/WebCore/rendering/RenderLayerCompositor.cpp
@@ -2859,6 +2945,93 @@ index fcea1288661..c69b99a6450 100644
      if (enable != m_compositing) {
          m_compositing = enable;
          
+diff --git a/Source/WebCore/rendering/RenderObject.cpp b/Source/WebCore/rendering/RenderObject.cpp
+index 62087d792f1..e34405d6eda 100644
+--- a/Source/WebCore/rendering/RenderObject.cpp
++++ b/Source/WebCore/rendering/RenderObject.cpp
+@@ -54,10 +54,12 @@
+ #include "Page.h"
+ #include "PseudoElement.h"
+ #include "ReferencedSVGResources.h"
++#include "RenderBlockFlow.h"
+ #include "RenderChildIterator.h"
+ #include "RenderCounter.h"
+ #include "RenderElementInlines.h"
+ #include "RenderElementStyleInlines.h"
++#include "RenderFlexibleBox.h"
+ #include "RenderFragmentedFlow.h"
+ #include "RenderGrid.h"
+ #include "RenderInline.h"
+@@ -708,6 +710,36 @@ void RenderObject::invalidateContainerPreferredLogicalWidths()
+     }
+ }
+ 
++// browsception: WebKit repaints a renderer in full whenever it re-lays itself
++// out (LayoutRepainter's selfNeedsLayout() test, and the NeedsFullRepaint layer
++// bit set by setNeedsLayout below). That blanket repaint exists to cover
++// reflowed INLINE content: RenderText has no repaint pass of its own, and the
++// containing block's repaint is what covers moved text (see
++// setFullRepaintOnParentInlineBoxLayerIfNeeded in RenderBlockFlow.cpp). For a
++// block container whose children are all block-level the protection is
++// redundant — every child repaints itself, either from its own layout()
++// (LayoutRepainter), from the layer-position pass, or, when it moves without
++// needing layout, from repaintDuringLayoutIfMoved (which we make unconditional
++// for the container types allowed here). The container's own painting
++// (background/border/outline) is still covered: with the full bit off,
++// repaintAfterLayoutIfNeeded diffs old and new rects and repaints the deltas,
++// including a full repaint when bounds move or decorations scale with size.
++//
++// Excluded because the container paints something spanning its children, which
++// only its own repaint covers: fieldsets (border gap around the legend),
++// multicolumn flows (column rules), tables and their parts (collapsed borders),
++// and the RenderView (document background propagation, full-page relayout).
++bool RenderObject::blockLevelChildrenIssueOwnRepaints() const
++{
++    if (isRenderView() || isTablePart() || isRenderTable())
++        return false;
++    if (auto* blockFlow = dynamicDowncast<RenderBlockFlow>(*this))
++        return !blockFlow->childrenInline() && !blockFlow->isFieldset() && !blockFlow->multiColumnFlow() && !blockFlow->isRenderFragmentedFlow();
++    if (is<RenderGrid>(*this) || is<RenderFlexibleBox>(*this))
++        return !downcast<RenderBlock>(*this).childrenInline();
++    return false;
++}
++
+ void RenderObject::setLayerNeedsFullRepaint()
+ {
+     ASSERT(hasLayer());
+diff --git a/Source/WebCore/rendering/RenderObject.h b/Source/WebCore/rendering/RenderObject.h
+index 01e78718e46..bff2d80b261 100644
+--- a/Source/WebCore/rendering/RenderObject.h
++++ b/Source/WebCore/rendering/RenderObject.h
+@@ -513,6 +513,11 @@ public:
+     bool beingDestroyed() const { return m_stateBitfields.hasFlag(StateFlag::BeingDestroyed); }
+ 
+     bool everHadLayout() const { return m_stateBitfields.hasFlag(StateFlag::EverHadLayout); }
++
++    // browsception: true for block containers whose every child issues its own
++    // repaint, so a blanket self-repaint after re-layout is redundant. See the
++    // definition in RenderObject.cpp for the correctness argument.
++    bool blockLevelChildrenIssueOwnRepaints() const;
+     std::optional<bool> wasSkippedDuringLastLayoutDueToContentVisibility() const { return everHadLayout() ? std::make_optional(m_stateBitfields.hasFlag(StateFlag::WasSkippedDuringLastLayoutDueToContentVisibility)) : std::nullopt; }
+ 
+     static ScrollAnchoringController* searchParentChainForScrollAnchoringController(const RenderObject&);
+diff --git a/Source/WebCore/rendering/RenderObjectInlines.h b/Source/WebCore/rendering/RenderObjectInlines.h
+index d3204d272d6..72ec947ad5f 100644
+--- a/Source/WebCore/rendering/RenderObjectInlines.h
++++ b/Source/WebCore/rendering/RenderObjectInlines.h
+@@ -90,7 +90,11 @@ inline void RenderObject::setNeedsLayout(MarkingBehavior markParents)
+     m_stateBitfields.setFlag(StateFlag::NeedsLayout);
+     if (markParents == MarkContainingBlockChain)
+         scheduleLayout(CheckedPtr { markContainingBlocksForLayout() });
+-    if (hasLayer())
++    // browsception: a layer'd block container whose children all repaint
++    // themselves does not need the blanket full-layer repaint; the layer
++    // position pass still repaints the old/new bounds diff.
++    // (See RenderObject::blockLevelChildrenIssueOwnRepaints.)
++    if (hasLayer() && !blockLevelChildrenIssueOwnRepaints())
+         setLayerNeedsFullRepaint();
+ }
+ 
 diff --git a/Source/WebCore/rendering/emscripten/RenderThemeEmscripten.cpp b/Source/WebCore/rendering/emscripten/RenderThemeEmscripten.cpp
 new file mode 100644
 index 00000000000..1486ed1c71a

@@ -101,10 +101,36 @@ re-bite on rebases or bound future features.
   everywhere else — convert with `bibLogicalPoint` at the ABI edge, never later.
 - **Scroll damage semantics**: `ScrollView::scrollContents` calls invalidateRootView(full rect)
   on every scroll *before* `ChromeClient::scroll` — it means "push backing store", not damage.
-  `canBlitOnScroll()` is false under fixed/sticky and virtualized/transformed scrollers. A single
-  unioned damage rect is structurally wrong for scroll (strip ∪ scrollbar ≈ 80% of frame) — the
-  4-entry merge-on-overlap damage list is what got 24 → 5.6 ms. (Working blit documented in
-  rendering-input.md; this is the why.)
+  **Fixed/sticky elements do NOT force the slow path in this port**: `useSlowRepaints` only
+  counts viewport-constrained objects behind a `platformWidget()` (we have none);
+  `scrollContentsFastPath` blits and then invalidates each sticky element's old+new rect.
+  `canBlitOnScroll()` is still false for `background-attachment: fixed` (slow-repaint objects)
+  and transformed/virtualized scrollers. A single unioned damage rect is structurally wrong for
+  scroll (strip ∪ scrollbar ≈ 80% of frame); merge-on-ANY-overlap is wrong too (sticky column ∪
+  full-width strip ≈ the whole frame) — the damage list is 8 slots with waste-bounded merging
+  (rendering-input.md § scrolling).
+- **`selfNeedsLayout()` ⇒ full self-repaint** — *patched out for block containers* (2026-08-15).
+  Upstream WebKit repaints a renderer in full whenever it re-lays-out, even to identical bounds,
+  from two places: `LayoutRepainter::repaintAfterLayout` (`selfNeedsLayout()`) and the layer
+  position pass (`RenderLayer::recursiveUpdateLayerPositions` → `RepaintStatus::NeedsFullRepaint`,
+  set by `RenderObject::setNeedsLayout` on any layer'd renderer). It exists because reflowed
+  inline text has no repaint pass of its own (comment at RenderBlockFlow.cpp
+  `setFullRepaintOnParentInlineBoxLayerIfNeeded`). For CPU raster that made guest JS which dirties
+  layout each scroll tick (Wikipedia's TOC tracker → preferred-width invalidation up the tree →
+  every top-level grid item self-relayouts) repaint the whole viewport per frame.
+  Our patch: `RenderObject::blockLevelChildrenIssueOwnRepaints()` (block flow / grid / flex with
+  `!childrenInline()`, excluding fieldset, multicol, fragmented flow, tables/parts, RenderView)
+  suppresses both blanket repaints; such a container falls back to the old/new geometry diff, and
+  the moved-child repaints in RenderBlockFlow/RenderGrid/RenderFlexibleBox lose their
+  `!selfNeedsLayout()` guard so nothing goes uncovered.
+- **The outline-bounds "decoration delta" repaint ignores whether there are decorations** —
+  also patched. The tail of `RenderElement::repaintAfterLayoutIfNeeded` repaints the band where a
+  border-box size change would affect background edges / border / outline / shadow. It runs even
+  for a box that paints none of those, and a box whose border box grows *inside* an unchanged
+  clipped overflow rect (children already overflowed that far — Wikipedia's `mw-content-container`
+  reads height 0 → 13997 across its own layout) then damages its full height. Gated on
+  `hasVisibleBoxDecorations() || outlineStyleForRepaint().usedOutlineSize()`. This gate was worth
+  more than the `selfNeedsLayout` work: without it the paint area did not move at all.
 
 ## Perf constraints (numbers that bound designs)
 

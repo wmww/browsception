@@ -24,8 +24,11 @@ export const PORT_BASE = process.env.BS_PORT_BASE
 //   +2/+3  smoke-fixtures' own fixture server http/https, +4 its dev server
 //   +5/+6  smoke-bridge / smoke-browse dev servers
 //   +7     smoke-leak dev server, +8/+9 its fixture server http/https
+//   +10/+11 bench fixture server http/https (tools/bench)
 export const HTTP_PORT = PORT_BASE;
 export const HTTPS_PORT = PORT_BASE + 1;
+export const BENCH_HTTP_PORT = PORT_BASE + 10;
+export const BENCH_HTTPS_PORT = PORT_BASE + 11;
 
 /**
  * Poll until a fixture server answers on `port` AND it is this checkout's.

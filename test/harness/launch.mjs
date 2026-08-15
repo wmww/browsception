@@ -47,16 +47,18 @@ export function requireStagedEngine(extensionDir) {
 
 /**
  * @param {{extensionDir?: string, headless?: boolean, args?: string[],
- *   needsEngine?: boolean}} opts
+ *   needsEngine?: boolean, extraResolverRules?: string}} opts
  * @returns {Promise<{context: import('playwright-core').BrowserContext,
  *   userDataDir: string, close: () => Promise<void>}>}
  */
 export async function launch(opts = {}) {
-  const { extensionDir, headless = true, args = [], needsEngine = false } = opts;
+  const { extensionDir, headless = true, args = [], needsEngine = false, extraResolverRules = '' } = opts;
   if (needsEngine) requireStagedEngine(extensionDir);
   const userDataDir = mkdtempSync(join(tmpdir(), 'bs-profile-'));
   const allArgs = [
-    `--host-resolver-rules=${RESOLVER_RULES}`,
+    // Extra rules first: a caller's specific MAP must win if Chromium
+    // first-matches (the bench server owns its own domain — tools/bench).
+    `--host-resolver-rules=${[extraResolverRules, RESOLVER_RULES].filter(Boolean).join(', ')}`,
     '--ignore-certificate-errors',
     '--no-first-run',
     '--disable-background-networking',

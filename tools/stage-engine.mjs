@@ -61,6 +61,20 @@ const snapshots = () => {
       .sort().reverse().map((n) => join(ARTIFACTS, n));
   } catch { return []; }
 };
+// Pruning-exempt archive: `engine/artifacts/keep/<stamp>/` is never touched by
+// build-engine.sh's retention sweep (it prunes `artifacts/2*` only), so a
+// notable build stays runnable — the depth limit on retro-benchmarking is
+// artifact availability, not the bench runner (notes/perf-measurement.md).
+// Copy one there with:  cp -a engine/artifacts/<stamp> engine/artifacts/keep/
+// and stage it with:    node tools/stage-engine.mjs --from keep/<stamp>
+const KEEP = join(ARTIFACTS, 'keep');
+const kept = () => {
+  try {
+    return readdirSync(KEEP)
+      .filter((n) => existsSync(join(KEEP, n, 'embedder.wasm')))
+      .sort().reverse().map((n) => join(KEEP, n));
+  } catch { return []; }
+};
 const stagedStillMatches = (hash) => {
   const m = readJson(STAGED_META);
   return (m.source_hashes ?? []).includes(hash)
@@ -82,16 +96,20 @@ if (listMode) {
   const staged = readJson(STAGED_META);
   console.log(`this checkout: ${basename(checkoutRoot)} (source_hash ${hash})` +
     (staged.pinned ? ` — PINNED to ${staged.stamp}` : ''));
-  for (const d of snapshots()) {
+  const show = (d, prefix) => {
     const m = readMeta(d);
     const marks = [
       isStagedFrom(d) ? 'staged' : null,
       snapshotHashes(d).includes(hash) ? 'matches-this-checkout' : null,
     ].filter(Boolean).join(', ');
-    console.log(`  ${basename(d)}  branch=${m.branch ?? '?'} checkout=${basename(m.checkout ?? '?')}` +
+    console.log(`  ${prefix}${basename(d)}  branch=${m.branch ?? '?'} checkout=${basename(m.checkout ?? '?')}` +
       ` source_hash=${m.source_hash ?? '?'} webkit_patch=${(m.webkit_patch ?? '?').slice(0, 12)}` +
       (marks ? `  [${marks}]` : ''));
-  }
+  };
+  for (const d of snapshots()) show(d, '');
+  for (const d of kept()) show(d, 'keep/');
+  if (!kept().length)
+    console.log(`  (no pruning-exempt archive; cp -a engine/artifacts/<stamp> ${KEEP}/ to keep one)`);
   process.exit(0);
 }
 

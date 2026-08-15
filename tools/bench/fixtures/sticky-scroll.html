@@ -1,0 +1,42 @@
+<!doctype html>
+<!-- bench fixture (diagnostic): sticky-scroll — sticky/fixed elements with NO
+     scroll handler, so the cost of the positioning itself separates from
+     article-scroll's TOC work. APPEND-ONLY (see text-scroll.html). -->
+<html><head><meta charset="utf-8"><title>BENCH-STICKY-SCROLL</title>
+<style>
+  html, body { margin: 0; background: #fff; color: #111; font: 15px/1.5 system-ui, sans-serif; }
+  #ruler { position: absolute; left: 0; top: 0; width: 10px; }
+  #ruler div { width: 10px; height: 120px; }
+  #main { margin: 0 200px 0 14px; }
+  header { position: sticky; top: 0; height: 48px; background: #f3f5f8;
+           border-bottom: 1px solid #ccd; font-weight: 600; padding: 12px; box-sizing: border-box; }
+  h3 { position: sticky; top: 48px; background: #fafbfd; margin: 0; padding: 4px 6px;
+       border-bottom: 1px solid #e3e6ea; font-size: 15px; }
+  #side { position: fixed; right: 0; top: 0; width: 190px; height: 100%;
+          background: #fbfbfc; border-left: 1px solid #dfe2e6; padding: 8px; box-sizing: border-box; }
+  section { padding: 2px 6px; }
+  p { margin: 0 0 5px; }
+</style></head>
+<body>
+<div id="ruler"></div>
+<aside id="side">fixed sidebar (inert)</aside>
+<div id="main"><header>sticky header</header><div id="doc"></div></div>
+<script>
+  const WORDS = ('sticky fixed position scroll paint layout compositing viewport offset element '
+    + 'document render frame damage rect update pass').split(' ');
+  let html = '';
+  for (let i = 0; i < 1500; i++) {
+    if (i % 20 === 0) html += '<h3>group ' + (i / 20) + '</h3>';
+    let s = '';
+    for (let k = 0; k < 16; k++) s += WORDS[(i * 7 + k * 3) % WORDS.length] + ' ';
+    html += '<section><p>' + i + ': ' + s + '</p><p>' + s + '</p></section>';
+  }
+  document.getElementById('doc').innerHTML = html;
+  const H = document.documentElement.scrollHeight;
+  let ruler = '';
+  for (let i = 0; i * 120 < H; i++)
+    ruler += '<div style="background:rgb(' + (i & 255) + ',' + ((i >> 8) & 255) + ',128)"></div>';
+  document.getElementById('ruler').innerHTML = ruler;
+  document.title = 'BENCH-STICKY-SCROLL ' + H;
+</script>
+</body></html>

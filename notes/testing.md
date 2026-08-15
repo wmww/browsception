@@ -33,6 +33,10 @@ Fixture pages are assertion-friendly by construction:
 - `hostile.bstest` — tries everything it shouldn't: fetch to `localhost`/RFC1918/bad ports,
   `file:` links, window.open spam, oversized responses. Exists so guard tests are one navigation.
 
+Bench fixtures are separate on purpose: `tools/bench/fixtures/` on `*.bsbench`, served by the
+bench suite's own server on its own port lane, **append-only** because saved results reference
+them by hash (notes/perf-measurement.md § Bench suite). Test fixtures stay free to change.
+
 **Rule: automated loops never touch real websites.** Real-site checks (Wikipedia/HN/MDN) are a
 short manual/agent smoke list run sparingly, not in CI and not in tight iteration loops.
 

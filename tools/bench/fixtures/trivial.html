@@ -1,0 +1,11 @@
+<!doctype html>
+<!-- bench fixture: trivial — engine startup with almost no page work.
+     APPEND-ONLY (see text-scroll.html). The 40x40 block at the top-left is
+     rgb(0,128,255) so first paint is verifiable from one pixel. -->
+<html><head><meta charset="utf-8"><title>BENCH-TRIVIAL</title>
+<style>
+  html, body { margin: 0; background: #fff; }
+  #mark { width: 40px; height: 40px; background: rgb(0,128,255); }
+  p { font: 15px/1.4 system-ui, sans-serif; margin: 8px; }
+</style></head>
+<body><div id="mark"></div><p>BENCH-TRIVIAL-SENTINEL</p></body></html>

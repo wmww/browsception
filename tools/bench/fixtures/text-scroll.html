@@ -1,0 +1,46 @@
+<!doctype html>
+<!-- bench fixture: text-scroll — the ratio denominator (plain long text).
+     APPEND-ONLY: editing this file invalidates every saved result that used
+     it (the runner hashes it into each record and --compare warns).
+
+     Left gutter (x 0..9) is a colour-encoded scroll ruler: the block covering
+     document row Y has colour rgb(i & 255, (i >> 8) & 255, 128) with
+     i = floor(Y / 120), so a pixel probe at (4, 4) decodes the scroll offset
+     to 120 px (notes/perf-measurement.md § Pixel-encoded page state). -->
+<html><head><meta charset="utf-8"><title>BENCH-TEXT-SCROLL</title>
+<style>
+  html, body { margin: 0; background: #fff; color: #111; }
+  body { font: 15px/1.5 system-ui, sans-serif; }
+  #ruler { position: absolute; left: 0; top: 0; width: 10px; }
+  #ruler div { width: 10px; height: 120px; }
+  #doc { margin-left: 14px; }
+  section { padding: 4px 8px; }
+  p { margin: 0 0 4px 0; }
+</style></head>
+<body>
+<div id="ruler"></div>
+<div id="doc"></div>
+<script>
+  const WORDS = ('lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor '
+    + 'incididunt ut labore et dolore magna aliqua enim ad minim veniam quis nostrud exercitation '
+    + 'ullamco laboris nisi aliquip commodo consequat duis aute irure reprehenderit voluptate').split(' ');
+  const words = (seed, n) => {
+    let s = '';
+    for (let k = 0; k < n; k++) s += WORDS[(seed * 7 + k * 3) % WORDS.length] + ' ';
+    return s;
+  };
+  let html = '';
+  for (let i = 0; i < 3000; i++) {
+    html += '<section><p>' + i + ': ' + words(i, 16) + '</p><p>' + words(i + 1, 16)
+      + '</p><p>' + words(i + 2, 16) + '</p></section>';
+  }
+  document.getElementById('doc').innerHTML = html;
+  // Ruler last: it needs the laid-out document height.
+  const H = Math.max(document.documentElement.scrollHeight, 4000);
+  let ruler = '';
+  for (let i = 0; i * 120 < H; i++)
+    ruler += '<div style="background:rgb(' + (i & 255) + ',' + ((i >> 8) & 255) + ',128)"></div>';
+  document.getElementById('ruler').innerHTML = ruler;
+  document.title = 'BENCH-TEXT-SCROLL ' + H;
+</script>
+</body></html>

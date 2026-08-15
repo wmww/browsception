@@ -72,6 +72,141 @@ the event is untrusted. Two knobs separate the two candidate cost models:
   logical row at 1.4 Mpx. Small strips are dominated by the fixed cost (a 60 px strip is 1/5 the
   time of a full frame, not 1/14).
 
+## Bench suite (`tools/bench/run.mjs`)
+
+The repeatable instrument built on everything above: same measurement protocol, fixed workloads,
+saved results, delta tables. **Report-only** — nothing here gates anything, results are
+per-machine and never committed. Free-form questions still belong in the probes below; the suite
+answers "did this change make things better or worse, and where".
+
+```sh
+node tools/bench/run.mjs --save baseline           # headline matrix, 3 reps, ~4 min
+#   ... change the engine, rebuild, node tools/stage-engine.mjs ...
+node tools/bench/run.mjs --save after --compare baseline
+node tools/bench/run.mjs --only article-scroll --reps 5 --secs 6
+node tools/bench/run.mjs --diagnostic              # + the localization tier
+node tools/bench/run.mjs --viewer-params 'rcap=5'  # any viewer/engine param
+node tools/bench/run.mjs --list        # saved runs
+node tools/bench/run.mjs --diff a b    # compare two saved runs, run nothing
+```
+
+Results land in the **main checkout's** `bench/<name>.json` (gitignored, shared by every
+worktree so cross-branch comparison doesn't mean hunting through worktrees); an unnamed run
+overwrites `bench/last.json`. Each record embeds engine identity (`.staged-meta.json`), the
+target checkout's rev/branch/dirty, the runner's rev, machine + chromium + load, fixture
+hashes, config, every rep, and one raw BIBPERF line as evidence of what that engine reported.
+
+### Scenarios
+
+Few scenarios, wide spread, composite over purified: one realistic page exercising four
+mechanisms at once is much harder to Goodhart than four synthetic pages each isolating one.
+Headline runs at 1600x900, plus a 2560x1330 pass for the scroll pair.
+
+| id | workload |
+|---|---|
+| `text-scroll` | plain long text, wheel at 60 px/host-frame — the **ratio denominator** |
+| `article-scroll` | sticky header + fixed TOC sidebar measuring every chapter per scroll tick + inline images + shadowed cards (the shape that made real Wikipedia slow) |
+| `text-scroll-2560`, `article-scroll-2560` | the same at a large framebuffer |
+| `app-update` | vendored Preact re-rendering a 240-row table every rAF: VDOM diff, GC pressure. The workload class for the rcap question (issues/rcap-dynamic-budget.md) |
+| `input-latency` | click -> painted response, per-key latency, 10-key burst |
+| `boot-trivial`, `boot-article` | navigation -> engine ready -> load complete -> first frame -> the page's own pixels |
+| diagnostic tier (`--diagnostic`) | `paint-heavy-scroll` (Skia raster), `image-scroll` (decode/upload), `sticky-scroll` (sticky/fixed without the TOC handler), `js-churn` (rAF + timers, no framework) — for localizing which subsystem moved, never headline numbers |
+
+### What comes out
+
+Engine-side from BIBPERF (fps, busy%, paint/layout ms/s, avg painted frame, Mpx/frame when the
+engine reports `paintRects`, wheel queue/merge ratio, blit fallbacks, heap/jsc growth) **plus
+host-side, which is not optional**: busy% covers only the engine thread, so work moved across
+the wasm boundary reads as a free win without `hostPresentMsPerSec` (time inside the
+`Module.bibFrame` wrapper, where the canvas blit lives), longtask ms/s and rAF p95 jitter.
+
+Every scenario verifies its output from pixels, so "faster because it stopped painting
+correctly" reads as a failure, not a win:
+
+- scroll: efficiency = decoded distance / dispatched distance, read after the backlog drains.
+  Efficiency below ~1.0 is a **headline regression signal** (the engine dropped scroll), not an
+  invalid rep. A rep is invalid only for harness reasons — the page bottomed out or the fixture
+  hash changed. "Bottomed out" and "the engine stopped responding to input" look identical from
+  the host (the offset just stops), so the runner nudges **down and then up**: responsive-but-
+  at-the-end moves back up, a wedged engine moves neither way and the rep stays VALID.
+- scroll/boot: a deterministic end-state checksum (scroll: back at offset 0; boot: the loaded
+  page at rest). Same pixels, same hash, any machine — `--compare` calls out a change.
+- input: the response colour is matched **exactly**; the click zone's colours differ by 1
+  between clicks, so any tolerance turns the pixel already on screen into a 0 ms false hit.
+  Latency is timestamped on the frame that carried the pixel (read straight out of the
+  framebuffer inside the `bibFrame` wrapper — no readback, no polling), so its floor is one
+  frame: this engine answers a click or a keystroke in ~16 ms on the input fixture, and stays
+  there even at a 4K framebuffer or with the rendering update throttled to 1/s
+  (issues/rcap-dynamic-budget.md). A regression that costs whole frames is what it can see.
+
+Output is `median ± rep spread` per metric, plus each scenario's ratio to text-scroll from the
+same run (ratios transfer across machines much better than absolute numbers). `--compare` flags
+a delta only when it clears `max(fixed floor, rep spread of both runs)` — floors are ~10% fps,
+5 points busy, 15% latency; smaller deltas print as `~`. Three reps is a weak spread estimate,
+so the floors carry most of the weight. Comparisons also warn when the two runs saw different
+machine load, viewer params, window lengths, fixture hashes or end-state checksums — **the load
+one matters**: a run started under load 20 measured `app-update` 20% slower than the same engine
+under load 8, which is bigger than most changes worth chasing.
+
+### The contract with the code under test
+
+Retro-benchmarking is a design goal: new scenarios must be runnable against old versions. The
+suite's entire contract with the target is these four things, and **breaking one must be a
+visible decision**, not a side effect:
+
+1. **Viewer URL scheme**: `viewer.html?<our params>url=<RAW target>` — params before `url=`, the
+   target never percent-encoded (the DNR `\0` contract, top of notes/README.md); `perflog=1`,
+   `persist=0`, `rcap=N`.
+2. **Host API**: `__bs.ready`, `__bs.state.progress`, `__bs.probe/readback`, `__bs.fb`,
+   `Module.bibFrame` (wrappable, and the framebuffer pixel is readable from `ptr`/stride inside
+   it), `Module._bib_wheel`.
+3. **BIBPERF console-line format**, parsed defensively — every field optional.
+4. **Target = an unpacked extension directory with a staged engine.**
+
+What keeps it decoupled: `--ext <dir>` names the extension under test (default: this checkout's
+`src/`), while fixtures, harness, parsing and metrics always come from the **runner's own**
+checkout — nothing is ever path-joined off `--ext` except the extension dir itself. Bench
+fixtures are served by the bench checkout's own server on its own port lane
+(`test/harness/ports.mjs` +10/+11, `*.bsbench`), independent of the tier-1/2 fixture server and
+its oracle. Missing hooks or fields are **feature-detected**: the metric records as absent and
+the run completes.
+
+**Fixtures under `tools/bench/fixtures/` are append-only.** Changing one silently invalidates
+every saved result that used it; a changed workload gets a **new scenario id**. Each record
+stores a hash of every fixture file it used and `--compare` warns when they differ.
+
+### Retro-running an old commit
+
+```sh
+git worktree add /tmp/bs-old <sha>
+cd /tmp/bs-old && node tools/stage-engine.mjs            # or --from <stamp> to pin a snapshot
+cd -    # back to the bench checkout
+node tools/bench/run.mjs --ext /tmp/bs-old/src --save old --compare baseline
+```
+
+The old engine pairs with its contemporaneous extension JS automatically, which matters because
+perf is engine + host JS together. Retro depth is bounded by **artifact availability**, not by
+the runner: snapshots get pruned (newest 12) and old builds are not reproducible through the
+drifting shared build tree, so a notable stamp worth keeping should be copied into the
+pruning-exempt `engine/artifacts/keep/` before it ages out (`cp -a
+engine/artifacts/<stamp> engine/artifacts/keep/`, then `node tools/stage-engine.mjs --from
+keep/<stamp>`).
+
+### Protocol details the runner already handles
+
+Everything in § Traps, plus:
+
+- Each rep resets to a known state, drives a **1 s warm-up that is thrown away**, then measures.
+- **No readback inside a measured window** (a full-frame readback per sample was once 70% of
+  the signal): offsets and counters are sampled just before and just after, and backlog drain
+  is detected from the presented-frame counter, which costs nothing.
+- Boot scenarios get a **fresh browser session and a throwaway first boot**: after a full
+  headline pass the same boot costs 2-3x more, which is the harness's memory pressure, not the
+  engine's startup. Boot numbers are therefore *warm*-boot numbers.
+- Scroll offsets decode at 120 px granularity, so efficiency carries about ±1% quantization.
+- A running engine build is detected and recorded **into the result file**, loudly: a concurrent
+  ninja skews every number in the run.
+
 ## Probes
 
 | Script | What it measures |
@@ -79,6 +214,9 @@ the event is untrusted. Two knobs separate the two candidate cost models:
 | `tools/scroll-speed-probe.mjs` | scroll fps / engine busy / wheel+blit breakdown vs scroll speed, framebuffer size, event rate (`--sweep --stride --epf --size --dpr --nosample --url`) |
 | `tools/perf-scroll-probe.mjs` | original dpr-focused scroll probe (2026-08-11 dpr!=1 fix) |
 | `tools/scroll-roundtrip.mjs` | pixel-exactness of the scroll blit vs a full repaint |
+
+The probes stay free-form exploration tools (sweeps, one-off questions); the bench suite above
+is the repeatable one. Both share the same measurement rules — the suite just codifies them.
 
 ## JS speed (`tools/js-speed-probe.mjs`)
 

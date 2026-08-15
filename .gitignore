@@ -20,3 +20,7 @@ engine/.webkit-patch.owner
 
 # Ephemeral git worktrees (a checkout must never be committed into its parent).
 .worktrees/
+
+# Bench results are per-machine lab output, never committed. Root-anchored:
+# a bare `bench/` would also swallow the suite's own source in tools/bench/.
+/bench/

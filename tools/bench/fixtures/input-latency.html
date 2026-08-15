@@ -1,0 +1,51 @@
+<!doctype html>
+<!-- bench fixture: input-latency — click and keystroke round trips, read back
+     from pixels. APPEND-ONLY (see text-scroll.html).
+
+     Every event repaints a fixed region with a DETERMINISTIC next colour, so
+     the host knows exactly which colour to wait for and can timestamp the
+     frame that carries it (test/fixtures/pages/input.html's feedback trick):
+       click zone   (0,0)-(200,200)   rgb(n & 255, 255, 0) after the n-th click
+       type zone    (0,300)-(200,400) rgb(c, c, c), c = sum of charCodes % 256
+     The text field sits at (0,220)-(190,254) and is focused on load. -->
+<html><head><meta charset="utf-8"><title>BENCH-INPUT-LATENCY</title>
+<style>
+  html, body { margin: 0; background: #fff; height: 100%; overflow: hidden;
+               font: 15px/1.4 system-ui, sans-serif; }
+  .zone { position: fixed; width: 200px; height: 200px; }
+  #click { left: 0; top: 0; background: #808080; }
+  #sum { position: fixed; left: 0; top: 300px; width: 200px; height: 100px; background: #000; }
+  #field { position: fixed; left: 0; top: 220px; width: 190px; height: 34px; font-size: 20px; }
+  #filler { position: absolute; left: 220px; top: 0; width: 700px; }
+  #filler p { margin: 0 0 6px; color: #333; }
+</style></head>
+<body>
+  <div class="zone" id="click"></div>
+  <input id="field" autofocus>
+  <div id="sum"></div>
+  <div id="filler"></div>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let clicks = 0;
+    $('click').addEventListener('click', () => {
+      clicks++;
+      $('click').style.background = 'rgb(' + (clicks & 255) + ',255,0)';
+    });
+    $('field').addEventListener('input', () => {
+      let c = 0;
+      for (const ch of $('field').value) c = (c + ch.charCodeAt(0)) % 256;
+      $('sum').style.background = 'rgb(' + c + ',' + c + ',' + c + ')';
+    });
+    // Some real content so the page is not a blank canvas (style/layout work
+    // exists, but nothing animates: latency is the only signal here).
+    const W = 'input latency probe deterministic pixel feedback zone'.split(' ');
+    let html = '';
+    for (let i = 0; i < 60; i++) {
+      let s = '';
+      for (let k = 0; k < 12; k++) s += W[(i * 3 + k) % W.length] + ' ';
+      html += '<p>' + i + ': ' + s + '</p>';
+    }
+    $('filler').innerHTML = html;
+    document.title = 'BENCH-INPUT-LATENCY';
+  </script>
+</body></html>

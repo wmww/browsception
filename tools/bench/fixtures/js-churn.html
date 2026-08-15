@@ -1,0 +1,48 @@
+<!doctype html>
+<!-- bench fixture (diagnostic): js-churn — plain DOM mutation from rAF plus a
+     fixed-rate timer, no framework, no scrolling. APPEND-ONLY (see
+     text-scroll.html). Top-left 12x12 block encodes the rAF-pass count as
+     rgb(n & 255, (n >> 8) & 255, 64), the same contract as app-update.html. -->
+<html><head><meta charset="utf-8"><title>BENCH-JS-CHURN</title>
+<style>
+  html, body { margin: 0; background: #fff; height: 100%; overflow: hidden;
+               font: 13px/1.3 system-ui, sans-serif; }
+  #counter { position: fixed; left: 0; top: 0; width: 12px; height: 12px; background: #000; z-index: 9; }
+  #grid { margin: 16px 0 0 16px; display: flex; flex-wrap: wrap; width: 900px; }
+  #grid div { width: 42px; height: 20px; margin: 1px; text-align: center; }
+</style></head>
+<body>
+<div id="counter"></div>
+<div id="grid"></div>
+<script>
+  const N = 300, grid = document.getElementById('grid'), counter = document.getElementById('counter');
+  const cells = [];
+  for (let i = 0; i < N; i++) {
+    const d = document.createElement('div');
+    d.textContent = i;
+    grid.appendChild(d);
+    cells.push(d);
+  }
+  let passes = 0, cursor = 0;
+  function step() {
+    for (let k = 0; k < 100; k++) {
+      const i = (cursor + k) % N;
+      const v = (passes * 7 + i * 13) % 360;
+      cells[i].style.background = 'hsl(' + v + ',70%,80%)';
+      cells[i].textContent = v;
+    }
+    cursor = (cursor + 41) % N;
+    passes++;
+    counter.style.background = 'rgb(' + (passes & 255) + ',' + ((passes >> 8) & 255) + ',64)';
+    requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+  // A timer stream alongside the rAF loop: timer/network bursts and painting
+  // share one engine thread (notes/engine-internals.md § Perf).
+  setInterval(() => {
+    const i = (passes * 3) % N;
+    cells[i].style.fontWeight = cells[i].style.fontWeight === 'bold' ? 'normal' : 'bold';
+  }, 20);
+  document.title = 'BENCH-JS-CHURN';
+</script>
+</body></html>

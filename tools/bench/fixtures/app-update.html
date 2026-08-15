@@ -1,0 +1,69 @@
+<!doctype html>
+<!-- bench fixture: app-update — framework app under continuous state churn.
+     APPEND-ONLY (see text-scroll.html).
+
+     Preact (vendored, /vendor/preact.min.js) re-renders a 240-row table every
+     rAF with ~a third of the rows changed: VDOM diffing, per-render handler
+     allocation, GC pressure, no scrolling. The workload class the rcap
+     rendering-update throttle is supposed to be tuned for
+     (issues/rcap-dynamic-budget.md).
+
+     Top-left 12x12 block encodes the completed-render count as
+     rgb(n & 255, (n >> 8) & 255, 64) — probe (4, 4) decodes it, so the host
+     measures updates/s from pixels alone (no guest JS question). -->
+<html><head><meta charset="utf-8"><title>BENCH-APP-UPDATE</title>
+<style>
+  html, body { margin: 0; background: #fff; color: #111; font: 13px/1.35 system-ui, sans-serif;
+               height: 100%; overflow: hidden; }
+  #counter { position: fixed; left: 0; top: 0; width: 12px; height: 12px; background: #000; z-index: 9; }
+  #app { margin: 16px 0 0 16px; }
+  table { border-collapse: collapse; }
+  td { padding: 1px 6px; border-bottom: 1px solid #eceff3; white-space: nowrap; }
+  td.n { text-align: right; font-variant-numeric: tabular-nums; }
+  .up { color: #0a7a34; } .down { color: #b0281a; } .sel { background: #fff4d6; }
+  .bar { display: inline-block; height: 8px; background: #4a7fd4; vertical-align: middle; }
+</style></head>
+<body>
+<div id="counter"></div>
+<div id="app"></div>
+<script src="/vendor/preact.min.js"></script>
+<script>
+  const { h, render } = preact;
+  const ROWS = 240;
+  const rows = [];
+  for (let i = 0; i < ROWS; i++)
+    rows.push({ id: i, name: 'row ' + i, v: (i * 37) % 991, d: 0, sel: false });
+
+  let renders = 0;
+  const counter = document.getElementById('counter');
+  const app = document.getElementById('app');
+
+  const Row = (r) => h('tr', { key: r.id, class: r.sel ? 'sel' : '' },
+    h('td', null, r.name),
+    h('td', { class: 'n ' + (r.d > 0 ? 'up' : r.d < 0 ? 'down' : '') }, String(r.v)),
+    h('td', { class: 'n' }, (r.d > 0 ? '+' : '') + r.d),
+    h('td', null, h('span', { class: 'bar', style: 'width:' + (r.v % 120 + 4) + 'px' })),
+    h('td', { onClick: () => (r.sel = !r.sel) }, r.sel ? 'clear' : 'pick'));
+
+  const App = () => h('table', null, h('tbody', null, rows.map(Row)));
+
+  // Deterministic churn: a moving window of 80 rows changes each frame.
+  let cursor = 0;
+  function step() {
+    for (let k = 0; k < 80; k++) {
+      const r = rows[(cursor + k) % ROWS];
+      const nv = (r.v * 31 + 17) % 991;
+      r.d = nv - r.v;
+      r.v = nv;
+      r.sel = ((cursor + k) % 17) === 0;
+    }
+    cursor = (cursor + 23) % ROWS;
+    render(h(App), app);
+    renders++;
+    counter.style.background = 'rgb(' + (renders & 255) + ',' + ((renders >> 8) & 255) + ',64)';
+    requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+  document.title = 'BENCH-APP-UPDATE';
+</script>
+</body></html>

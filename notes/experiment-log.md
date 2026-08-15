@@ -379,3 +379,60 @@ js-speed-probe.mjs` kept as the repeatable half.
 live imports) though `bibGPU:false` — issues/engine-links-webgl-imports.md. And one run showed
 `Array.prototype.join` returning a non-string under CLoop inside a long eval —
 issues/cloop-join-returned-nonstring.md.
+
+---
+
+## 2026-08-14 — Bench suite bring-up: is it repeatable, and does it see a planted regression?
+
+**Setup**: `tools/bench/run.mjs` (new), headless Chromium 151, engine
+`20260815-024910-d1ff7e9-dirty-wt_exGITbYkRGPnAr4G`, 1600x900 unless noted, 3 reps x 4 s
+windows, osprey (Ryzen AI 9 HX 370, 24 threads). Numbers are per-machine and live in the
+main checkout's gitignored `bench/`; this entry keeps the ones the questions below turn on.
+
+**Baseline** (`bench/quiet1.json`, medians):
+
+| scenario | fps | busy% | paint ms/s | frame ms | host present ms/s | other |
+|---|---|---|---|---|---|---|
+| text-scroll | 60.0 | 18 | 107 | 1.8 | 27 | eff 1.000, tail 4 ms, 0.10 Mpx/frame |
+| article-scroll | 59.9 | 34 | 193 | 3.2 | 26 | 1.9x text-scroll on paint and frame ms |
+| text-scroll-2560 | 37.0 | 19 | 87 | 2.4 | 45 | host present 1.6x the 1600x900 pass |
+| article-scroll-2560 | 34.7 | 28 | 142 | 4.1 | 43 | |
+| app-update (Preact) | 29.7 | 34 | 36 | 1.2 | 7 | 30 updates/s |
+| input-latency | — | ~0 | 2 | 0.6 | 1 | click 16.1 ms, key 16.2 ms, burst 15 ms |
+| boot-trivial | | | | | | ready 383 ms, load complete 539 ms, page pixels 534 ms |
+| boot-article | | | | | | ready 329 ms, load complete 724 ms, page pixels 559 ms |
+
+**Q1 — repeatable?** Two back-to-back full runs on the same staged engine (`quiet1` ->
+`quiet2`, machine load ~3): **every headline metric inside the noise band, zero flags.** The
+earlier attempt at load ~20 vs ~8 flagged app-update (fps +20%, updates/s +25%) — the machine,
+not the engine, which is why load1 is recorded per run and `--compare` now warns when it moved.
+
+**Q2 — planted regression?** `--viewer-params 'rcap=5'` vs baseline: app-update 24.8 -> 5.0 fps
+and 24.0 -> 5.0 updates/s (flagged WORSE); `rcap=1` takes it to 1.0/1.0. Scroll and input were
+untouched at both settings — the rendering-update cap prices rAF-driven rendering only, not the
+scroll blit path or input-response repaints (measured table in
+issues/rcap-dynamic-budget.md; the latency half of the plan's expectation was wrong about this
+engine, not unmeasured).
+
+**Q3 — decoupled from the target?** Ran the *current* runner against a worktree of `890f17b`
+(pre input-collapse) via `--ext .../bs-retro/src`: all 8 headline scenarios completed, the
+record carries target `890f17b` vs runner `ee64673`, every host hook was present on that older
+viewer, and the delta table against `quiet1` came out clean. Note the engine was NOT
+contemporaneous — no archived artifact matches those sources any more, so `stage-engine` fell
+back to today's build. That is the retro depth limit in practice, and the reason
+`engine/artifacts/keep/` (pruning-exempt) now exists.
+
+**Instrument checks worth keeping**: input latency is timestamped on the frame carrying the
+response pixel (read out of the framebuffer inside the `bibFrame` wrapper), so its floor is one
+frame — 16 ms here, unchanged at a 3840x2160 framebuffer where only the small dirty rect
+repaints (host longtask ms/s went 0 -> 187 in that run: the *host's* 4K blit is the cost, not
+the engine's). Response colours must be matched exactly: with a tolerance, the pixel already on
+screen answers instantly and every latency reads ~0.
+
+**Diagnostic tier** (1 rep, for the record): paint-heavy-scroll 45.6 fps / 97% busy / 918 ms/s
+paint / 20.1 ms per painted frame — box-shadow+blur+gradient raster is ~9x text-scroll's paint
+cost and is the only headline-or-diagnostic workload that saturates the engine thread;
+image-scroll 55.5 fps / 47% busy / 250 ms/s; sticky-scroll 59.9 fps / 35% busy / 181 ms/s,
+within ~6% of article-scroll's paint cost — a hint that the TOC scroll handler is not where
+article-scroll's cost sits, though the two pages differ in content as well, so it is a pointer
+for a follow-up, not a subtraction.

@@ -1,0 +1,105 @@
+<!doctype html>
+<!-- bench fixture: article-scroll — the composite headline scroll workload.
+     APPEND-ONLY (see text-scroll.html).
+
+     Four mechanisms at once, deliberately: a sticky header, a fixed sidebar
+     whose TOC handler measures every chapter with getBoundingClientRect() on
+     each scroll tick (forced layout per tick — the shape that made real
+     Wikipedia slow, and historically degenerated into full-viewport repaints),
+     inline data-URI images (deterministic, no network variance), and shadowed
+     infobox cards. Same left-gutter scroll ruler as text-scroll.html. -->
+<html><head><meta charset="utf-8"><title>BENCH-ARTICLE</title>
+<style>
+  html, body { margin: 0; background: #fff; color: #14171c; }
+  body { font: 15px/1.6 Georgia, serif; }
+  #ruler { position: absolute; left: 0; top: 0; width: 10px; }
+  #ruler div { width: 10px; height: 120px; }
+  #main { margin: 0 240px 0 14px; }
+  header { position: sticky; top: 0; height: 52px; background: #f6f7f9;
+           border-bottom: 1px solid #c7cbd1; display: flex; align-items: center;
+           padding: 0 12px; font: 600 20px/52px system-ui, sans-serif; z-index: 5; }
+  #bar { position: absolute; left: 0; bottom: -1px; height: 3px; background: #2a63c8; width: 0; }
+  #side { position: fixed; right: 0; top: 0; width: 220px; height: 100%;
+          overflow: hidden; background: #fbfbfc; border-left: 1px solid #dfe2e6;
+          font: 13px/1.4 system-ui, sans-serif; padding: 8px; box-sizing: border-box; }
+  #side li { list-style: none; padding: 2px 4px; color: #4a5260; white-space: nowrap;
+             overflow: hidden; text-overflow: ellipsis; }
+  #side li.active { background: #e7eefb; color: #12326e; font-weight: 600; padding-left: 8px; }
+  h2 { font: 600 22px/1.3 system-ui, sans-serif; margin: 18px 0 6px; }
+  section { padding: 2px 6px; }
+  p { margin: 0 0 6px; }
+  img { display: block; width: 240px; height: 140px; margin: 6px 0; }
+  .card { float: right; width: 210px; margin: 0 0 8px 12px; padding: 8px;
+          background: linear-gradient(180deg, #ffffff, #eef1f5);
+          border: 1px solid #d3d8de; border-radius: 6px;
+          box-shadow: 0 2px 6px rgba(20, 30, 50, .18); font: 12px/1.4 system-ui, sans-serif; }
+</style></head>
+<body>
+<div id="ruler"></div>
+<aside id="side"><ul id="toc"></ul></aside>
+<div id="main">
+  <header>Bench article<div id="bar"></div></header>
+  <div id="doc"></div>
+</div>
+<script>
+  const WORDS = ('the quick brown fox jumps over a lazy dog while every good citizen reads about '
+    + 'history geography chemistry and the long dull details of municipal administration in some '
+    + 'northern province during the late nineteenth century according to contemporary sources').split(' ');
+  const words = (seed, n) => {
+    let s = '';
+    for (let k = 0; k < n; k++) s += WORDS[(seed * 11 + k * 5) % WORDS.length] + ' ';
+    return s;
+  };
+  // Deterministic inline images: 6 distinct SVG data-URIs, no network.
+  const img = (i) => 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="140">'
+    + '<defs><linearGradient id="g"><stop offset="0" stop-color="hsl(' + (i * 47 % 360) + ',60%,72%)"/>'
+    + '<stop offset="1" stop-color="hsl(' + (i * 47 % 360) + ',60%,38%)"/></linearGradient></defs>'
+    + '<rect width="240" height="140" fill="url(#g)"/>'
+    + '<circle cx="' + (40 + i % 5 * 30) + '" cy="70" r="34" fill="rgba(255,255,255,.55)"/>'
+    + '<text x="10" y="130" font-size="14" fill="#123">plate ' + i + '</text></svg>');
+
+  const SECTIONS = 1500, CHAPTER = 50;
+  let html = '';
+  for (let i = 0; i < SECTIONS; i++) {
+    if (i % CHAPTER === 0) html += '<h2 id="ch' + (i / CHAPTER) + '">' + (i / CHAPTER + 1)
+      + '. ' + words(i, 3) + '</h2>';
+    html += '<section>';
+    if (i % 25 === 12) html += '<div class="card"><b>' + words(i, 2)
+      + '</b><br>' + words(i + 3, 12) + '</div>';
+    html += '<p>' + words(i, 18) + '</p><p>' + words(i + 1, 16) + '</p>';
+    if (i % 10 === 4) html += '<img src="' + img(i) + '" alt="">';
+    html += '<p>' + words(i + 2, 14) + '</p></section>';
+  }
+  document.getElementById('doc').innerHTML = html;
+
+  const chapters = [...document.querySelectorAll('h2')];
+  document.getElementById('toc').innerHTML =
+    chapters.map((h, i) => '<li id="t' + i + '">' + h.textContent + '</li>').join('');
+  const items = chapters.map((h, i) => document.getElementById('t' + i));
+  const bar = document.getElementById('bar');
+
+  // The expensive-by-design bit: every scroll tick measures all chapters and
+  // rewrites classes + the progress bar, dirtying layout each time.
+  let active = -1;
+  addEventListener('scroll', () => {
+    let cur = 0;
+    for (let i = 0; i < chapters.length; i++)
+      if (chapters[i].getBoundingClientRect().top <= 60) cur = i;
+    if (cur !== active) {
+      if (active >= 0) items[active].className = '';
+      items[cur].className = 'active';
+      active = cur;
+    }
+    const max = document.documentElement.scrollHeight - innerHeight;
+    bar.style.width = (max > 0 ? Math.round(scrollY / max * 100) : 0) + '%';
+  }, { passive: true });
+
+  const H = document.documentElement.scrollHeight;
+  let ruler = '';
+  for (let i = 0; i * 120 < H; i++)
+    ruler += '<div style="background:rgb(' + (i & 255) + ',' + ((i >> 8) & 255) + ',128)"></div>';
+  document.getElementById('ruler').innerHTML = ruler;
+  document.title = 'BENCH-ARTICLE ' + H;
+</script>
+</body></html>

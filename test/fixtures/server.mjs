@@ -13,31 +13,15 @@
 
 import http from 'node:http';
 import https from 'node:https';
-import { readFileSync, existsSync, mkdirSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CHECKOUT, HTTP_PORT as DEFAULT_HTTP, HTTPS_PORT as DEFAULT_HTTPS } from '../harness/ports.mjs';
+import { ensureCert } from '../harness/cert.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PAGES = join(HERE, 'pages');
 const CA_DIR = join(HERE, 'ca');
-
-// ---------------------------------------------------------------- TLS cert
-function ensureCert() {
-  const key = join(CA_DIR, 'bstest.key');
-  const crt = join(CA_DIR, 'bstest.crt');
-  if (!existsSync(key) || !existsSync(crt)) {
-    mkdirSync(CA_DIR, { recursive: true });
-    execFileSync('openssl', [
-      'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256',
-      '-keyout', key, '-out', crt, '-days', '3650', '-nodes',
-      '-subj', '/CN=bstest fixture',
-      '-addext', 'subjectAltName=DNS:bstest,DNS:*.bstest',
-    ]);
-  }
-  return { key: readFileSync(key), cert: readFileSync(crt) };
-}
 
 // ------------------------------------------------------------------ oracle
 const requests = [];
@@ -192,7 +176,7 @@ const bail = (what) => (e) => {
   console.error(`fixture server: ${what} — ${e.code === 'EADDRINUSE' ? `port already in use` : e.message}`);
   process.exit(1);
 };
-https.createServer(ensureCert(), (q, s) => handle(q, s, 'https'))
+https.createServer(ensureCert({ dir: CA_DIR }), (q, s) => handle(q, s, 'https'))
   .on('error', bail(`https :${HTTPS_PORT}`)).listen(HTTPS_PORT);
 http.createServer((q, s) => handle(q, s, 'http'))
   .on('error', bail(`http :${HTTP_PORT}`))

@@ -5,18 +5,24 @@
 <style>
   body { margin: 0; width: 300px; background: #1a1d23; color: #d6dae2;
          font: 13px system-ui; }
-  section { padding: 10px 12px; border-bottom: 1px solid #2c313b; }
+  section { padding: 10px 12px; }
+  section + section { padding-top: 0; }
+  /* Grouping by fill + spacing rather than divider lines. */
+  #tabsection > div { background: #20242c; border-radius: 6px; padding: 8px 10px; }
   .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   h1 { font-size: 13px; margin: 0; font-weight: 600; }
   #disposition { font-size: 11px; padding: 2px 7px; border-radius: 9px; }
   #disposition.sandboxed { background: #1d4634; color: #6fe0a8; }
   #disposition.native { background: #3a3320; color: #e0c46f; }
   #disposition.other { background: #2c313b; color: #8891a0; }
-  #host { font: 12px ui-monospace, monospace; word-break: break-all; margin: 6px 0; }
-  button { display: block; width: 100%; margin-top: 6px; padding: 6px 10px;
-           background: #2a303b; color: #cdd3de; border: 1px solid #3a4150;
+  #host { font: 12px ui-monospace, monospace; word-break: break-all; margin: 6px 0 0; }
+  /* Borderless controls (matches viewer chrome): fill reads as the box, an
+     outline only ever means focus. */
+  button { display: block; width: 100%; margin-top: 6px; padding: 7px 11px;
+           background: #2a303b; color: #cdd3de; border: none;
            border-radius: 5px; cursor: pointer; font: 12px system-ui; text-align: left; }
   button:hover { background: #363d4b; }
+  button:focus-visible { outline: 1px solid #4c8; }
   .subtle { background: none; border: none; color: #8891a0; text-align: center; }
   .subtle:hover { background: none; color: #cdd3de; text-decoration: underline; }
   input[type=checkbox] { accent-color: #44cc88; }
@@ -30,9 +36,11 @@
     <input type="checkbox" id="active"></label>
 </section>
 <section id="tabsection">
-  <div class="row"><span id="mode"></span><span id="disposition" class="other">—</span></div>
-  <div id="host"></div>
-  <div id="actions"></div>
+  <div>
+    <div class="row"><span id="mode"></span><span id="disposition" class="other">—</span></div>
+    <div id="host"></div>
+    <div id="actions"></div>
+  </div>
 </section>
 <section>
   <button id="modeswitch" class="subtle"></button>

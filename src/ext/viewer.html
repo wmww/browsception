@@ -10,11 +10,14 @@
                font: 13px system-ui; overflow: hidden; }
   body { display: flex; flex-direction: column; }
   #chrome { display: flex; gap: 4px; align-items: center; padding: 5px 6px;
-            background: #1f232b; border-bottom: 1px solid #343a46; }
-  #urlbar { flex: 1; font: 12px ui-monospace, monospace; padding: 4px 8px;
-            background: #14161a; color: #d6dae2; border: 1px solid #3a4150;
+            background: #1f232b; }
+  /* Borderless field: the fill alone reads as the box, an outline only ever
+     means focus. */
+  #urlbar { flex: 1; font: 12px ui-monospace, monospace; padding: 5px 9px;
+            background: #14161a; color: #d6dae2; border: none;
             border-radius: 4px; min-width: 0; }
   #urlbar:focus { outline: 1px solid #4c8; }
+  #urlbar:disabled { color: #7d8492; }
   #progresswrap { height: 2px; background: #1f232b; }
   #progress { height: 100%; width: 0; background: #4c8; opacity: 0;
               transition: width 0.15s linear, opacity 0.3s; }

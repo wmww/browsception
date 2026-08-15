@@ -18,8 +18,9 @@ import { launch, extensionIdFromManifest, requireStagedEngine, waitForFixtureSer
 const EXT_DIR = new URL('../../src', import.meta.url).pathname;
 const EXT_ID = extensionIdFromManifest(EXT_DIR);
 requireStagedEngine(EXT_DIR); // before spawning anything — a missing engine is a setup error
+// Own params precede url= (the raw-slice contract); `extra` like 'perflog=1'.
 const viewerURL = (target, extra = '') =>
-  `chrome-extension://${EXT_ID}/ext/viewer.html?url=${encodeURIComponent(target)}${extra}`;
+  `chrome-extension://${EXT_ID}/ext/viewer.html?${extra ? extra + '&' : ''}url=${encodeURIComponent(target)}`;
 
 const fixtures = spawn('node', [new URL('../fixtures/server.mjs', import.meta.url).pathname], {
   stdio: 'ignore',
@@ -317,7 +318,7 @@ test('input coalescing: a wheel burst keeps its distance and lands before a clic
 // back. The invariants: content lands exactly where the summed deltas put
 // it, and the sticky chrome pixels are back at their fixed positions.
 test('sticky chrome: scroll keeps its distance and the fixed elements stay put', { timeout: 300000 }, async () => {
-  const page = await bootViewer('https://scroll-sticky.bstest/');
+  const page = await bootViewer('https://scroll-sticky.bstest/', 'perflog=1');
   const box = await (await page.$('#screen')).boundingBox();
   await until(page, 4, 4, is([0, 0, 128]), 120000, 'sticky fixture at top');
   const fb = await page.evaluate(() => __bs.fb);
@@ -328,13 +329,38 @@ test('sticky chrome: scroll keeps its distance and the fixed elements stay put',
   await until(page, ...hdrAt, is(HDR), 60000, 'header before scroll');
   await until(page, ...sideAt, is(SIDE), 60000, 'sidebar before scroll');
 
-  const N = 10, PER = 300, TOTAL = N * PER; // 3000px = section 25
+  // Steady scroll spanning several 1s BIBPERF windows (see the tripwire below).
+  const N = 25, PER = 120, TOTAL = N * PER; // 3000px = section 25
   await page.mouse.move(box.x + 400, box.y + 300);
-  for (let i = 0; i < N; i++) await page.mouse.wheel(0, PER);
+  for (let i = 0; i < N; i++) {
+    await page.mouse.wheel(0, PER);
+    await page.waitForTimeout(100);
+  }
 
   await until(page, 4, 4, is([TOTAL / 120, 0, 128]), 60000, 'frame shows the summed offset');
   await until(page, ...hdrAt, is(HDR), 60000, 'header still in place after scroll');
   await until(page, ...sideAt, is(SIDE), 60000, 'sidebar still in place after scroll');
+
+  // Painted-area tripwire: sticky-page scrolling must repaint sticky chrome +
+  // strips (~30-45% of the frame), not the full viewport. Full-frame per-frame
+  // painting here (Mpx/frame ≈ fb area) is the signature of losing either the
+  // waste-based damage merging (BibPageClients.h) or the WebKit patch's
+  // layout-repaint refinement (LayoutRepainter/RenderObjectInlines hunks) — a
+  // rebase can drop the latter silently while every correctness test stays
+  // green. Damage area is content-determined, not timing-determined, so the
+  // generous 65% bound is stable; take the MINIMUM over scroll windows (one
+  // clean window suffices; degeneration makes every window ~100%).
+  const fbMpx = (fb.w * fb.h) / 1e6;
+  const perFrame = page.consoleLines
+    .map((l) => /painted=(\d+).*?paintRects=\d+\([\d.]+Mpx, ([\d.]+)Mpx\/frame\)/.exec(l))
+    .filter((m) => m && Number(m[1]) >= 5) // windows that actually scrolled
+    .map((m) => Number(m[2]));
+  assert.ok(perFrame.length >= 1, `no scrolling BIBPERF window seen (${page.consoleLines.length} console lines)`);
+  const minPerFrame = Math.min(...perFrame);
+  assert.ok(
+    minPerFrame < 0.65 * fbMpx,
+    `sticky scroll repaints ${minPerFrame} Mpx/frame of a ${fbMpx.toFixed(2)} Mpx frame — full-viewport repaint degeneration`,
+  );
   await page.close();
 });
 

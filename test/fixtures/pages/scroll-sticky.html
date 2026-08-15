@@ -18,6 +18,7 @@
           background: #f8f9fa; border-left: 1px solid #a2a9b1; overflow: hidden;
           padding: 8px 12px; box-sizing: border-box; z-index: 2; }
   #side li { margin: 0 0 6px 0; font-size: 13px; }
+  #side li.active { font-weight: bold; }
 </style></head>
 <body>
 <div id="hdr"><b>sticky scroll fixture</b> — header band</div>
@@ -42,6 +43,16 @@
   let toc = '';
   for (let i = 0; i < 30; i++) toc += '<li>' + words[i % words.length] + ' ' + i + '</li>';
   document.getElementById('toc').innerHTML = toc;
+  // Vector-2022-style active-section tracking: toggling a class per scroll
+  // tick dirties layout up the tree every frame — the mechanism that made
+  // real Wikipedia repaint the full viewport per scroll (engine-internals.md
+  // § selfNeedsLayout ⇒ full self-repaint). Bold width change forces real
+  // preferred-width invalidation, like Vector's bolded active TOC entry.
+  const items = document.querySelectorAll('#toc li');
+  addEventListener('scroll', () => {
+    const i = Math.floor(scrollY / 480) % items.length;
+    items.forEach((li, k) => li.classList.toggle('active', k === i));
+  });
   document.title = 'sticky scroll fixture ' + N * H;
 </script>
 </body></html>

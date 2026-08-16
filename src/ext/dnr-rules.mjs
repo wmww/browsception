@@ -120,6 +120,34 @@ export function sweepAction(state, tab, viewerBase, escapeEntry = null) {
 }
 
 /**
+ * Order the DNR calls a reconcile makes. The catch-all ruleset and the dynamic
+ * rules are two separate (individually atomic) calls, so there is always a
+ * window between them, and a navigation started inside it sees exactly the
+ * half-applied state we left there. Order them so that window is never LESS
+ * intercepting than either the old or the new state: catch-all ON before the
+ * dynamic swap, OFF after it.
+ *
+ * Getting this backwards is not cosmetic: whitelist->blacklist then had a few
+ * ms with the catch-all already off and no redirect rule yet, in which any
+ * navigation ran natively (and the sweep's rescue aborted it mid-flight).
+ * The price of this order is that deactivating over-sandboxes for the same few
+ * ms; the sweep takes such a tab native immediately after.
+ *
+ * @param {string[]} enabledRulesets currently enabled static ruleset ids
+ * @param {{enabledStaticRulesets: string[], dynamicRules: object[]}} desired
+ * @returns {({op: 'catchall', enable: boolean}|{op: 'dynamic', rules: object[]})[]}
+ */
+export function applyPlan(enabledRulesets, desired) {
+  const want = desired.enabledStaticRulesets.includes(CATCHALL_RULESET_ID);
+  const toggle = want !== enabledRulesets.includes(CATCHALL_RULESET_ID);
+  return [
+    ...(toggle && want ? [{ op: 'catchall', enable: true }] : []),
+    { op: 'dynamic', rules: desired.dynamicRules },
+    ...(toggle && !want ? [{ op: 'catchall', enable: false }] : []),
+  ];
+}
+
+/**
  * Compute the complete desired DNR state.
  * @param {{
  *   active: boolean,

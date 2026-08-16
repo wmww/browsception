@@ -222,9 +222,17 @@ GL-free stubs. Wasm imports 377 → 88, `embedder.js` 268 KB → 159 KB, `embedd
 ran). Tripwire: tier-0 `engine-imports.test.mjs`; contract in engine-build.md § No-GPU link
 contract.
 
+*Reconcile no longer un-intercepts mid-flight* (2026-08-15) — the DNR apply turned the static
+catch-all **off before** installing the new dynamic rules, so every whitelist→blacklist edit had a
+few ms in which nothing intercepted and a navigation started there ran natively (the sweep then
+rescued it, aborting that navigation — the intermittent tier-1 sweep flake). Order is now owned by
+`applyPlan()`: catch-all on before the dynamic swap, off after, so the gap is never less
+intercepting than either state (tier-0 tripwire). The test's other half was its own bug: a sweep
+that re-navigates a pre-commit tab rejects `page.goto` with ERR_ABORTED even when the tab lands
+correctly, so tier-1 asserts on the settled URL now (security.md § reconcile gap, testing.md 6b).
+
 Open issues in issues/ (guest-JS wedge, rcap dynamic budget, host-present ceiling at large
-framebuffers, CLoop `join` returned a non-string, an intermittent tier-1 sweep escape-hatch
-flake). Next work: [roadmap.md](roadmap.md).
+framebuffers, CLoop `join` returned a non-string). Next work: [roadmap.md](roadmap.md).
 
 ## Key decisions
 

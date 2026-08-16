@@ -79,11 +79,23 @@ test('sweep catches a tab whose navigation is still in flight', async () => {
   await victim.close();
 });
 
+// A reconcile's sweep re-navigates every tab whose disposition it cannot
+// vouch for — including one that is still pre-commit, because it has no way
+// to know the rules already caught that request (that ignorance IS the
+// startup-race backstop). Landing on top of an in-flight navigation aborts
+// it, even though the tab then goes exactly where the redirect was taking it.
+// So assert on where the tab settles, never on the goto promise.
+async function gotoSandboxed(page, url) {
+  await page.goto(url).catch((e) => {
+    if (!/ERR_ABORTED/.test(e.message)) throw e;
+  });
+  await pollUntil(() => page.url().startsWith(viewerPrefix()), `sandboxed: ${url}`);
+}
+
 test('sweep does not revoke the "open natively" escape hatch', async () => {
   await setState({ active: true, mode: 'blacklist', blacklist: ['127.0.0.1'], whitelist: [] });
   const page = await context.newPage();
-  await page.goto(`${base}/ok`);
-  assert.ok(page.url().startsWith(viewerPrefix()), `sandboxed: ${page.url()}`);
+  await gotoSandboxed(page, `${base}/ok`);
 
   const tabId = (await tabs()).find((t) => t.url.startsWith(viewerPrefix())).id;
   const res = await cfg.evaluate(
@@ -106,8 +118,7 @@ test('sweep does not revoke the "open natively" escape hatch', async () => {
 
   // The grant is tab-scoped: a second tab on the same host is still sandboxed.
   const other = await context.newPage();
-  await other.goto(`${base}/ok`);
-  assert.ok(other.url().startsWith(viewerPrefix()), `other tab still sandboxed: ${other.url()}`);
+  await gotoSandboxed(other, `${base}/ok`);
   await other.close();
   await page.close();
 });

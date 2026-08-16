@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  applyPlan,
   desiredRuleState,
   catchallRules,
   entryRegex,
@@ -208,4 +209,42 @@ test('sweepAction leaves an escaped tab native (the grant outranks the sweep)', 
   });
   // grant follows the host, not the URL: same-host navigation stays native
   assert.equal(sweep({ url: 'https://escaped.example/elsewhere' }, 'escaped.example'), null);
+});
+
+// Every reconcile is two DNR calls with a gap between them; a navigation that
+// starts in the gap sees whatever half-applied state we left. The catch-all
+// must therefore go on BEFORE the dynamic swap and off AFTER it — the other
+// order left whitelist->blacklist momentarily un-intercepted (a real escape,
+// which also aborted the racing navigation when the sweep rescued it).
+test('applyPlan never opens an un-intercepted window', () => {
+  const states = [
+    { active: false, mode: 'whitelist', whitelist: [], blacklist: [] },
+    { active: true, mode: 'whitelist', whitelist: [], blacklist: [] },
+    { active: true, mode: 'whitelist', whitelist: ['a.com'], blacklist: [] },
+    { active: true, mode: 'blacklist', whitelist: [], blacklist: [] },
+    { active: true, mode: 'blacklist', whitelist: [], blacklist: ['a.com'] },
+  ];
+  const label = (s) => (s.active ? `${s.mode}(${[...s.whitelist, ...s.blacklist].join()})` : 'off');
+  for (const from of states)
+    for (const to of states) {
+      const enabled = desiredRuleState(from, VIEWER).enabledStaticRulesets;
+      const plan = applyPlan(enabled, desiredRuleState(to, VIEWER));
+      const dyn = plan.findIndex((s) => s.op === 'dynamic');
+      assert.equal(dyn >= 0, true, 'the dynamic swap always happens');
+      for (const [i, step] of plan.entries())
+        if (step.op === 'catchall')
+          assert.equal(
+            step.enable,
+            i < dyn,
+            `${label(from)}->${label(to)}: catchall ${step.enable ? 'on' : 'off'} on the wrong side`,
+          );
+      // Nothing to do for the catch-all when both states agree about it.
+      assert.equal(
+        plan.length,
+        enabled.includes(CATCHALL_RULESET_ID) ===
+          desiredRuleState(to, VIEWER).enabledStaticRulesets.includes(CATCHALL_RULESET_ID)
+          ? 1
+          : 2,
+      );
+    }
 });

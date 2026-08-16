@@ -166,6 +166,18 @@ get right (tier-1 `sweep.test.mjs`): the racing tab is usually still **pre-commi
 reports as `url: 'about:blank'` + `pendingUrl: <target>` — reading only `tab.url` there misses
 exactly the tab the sweep exists for and leaves it native indefinitely.
 
+### The reconcile's own gap must never intercept less than either state
+
+A reconcile is two DNR calls (static catch-all toggle, dynamic-rule swap) with an unavoidable
+window between them, and a navigation started inside it sees the half-applied state. Until
+2026-08-15 the catch-all was turned **off first**, so a whitelist→blacklist edit had a few ms with
+no catch-all and no redirect rule yet: any navigation in that window ran natively — a
+self-inflicted second instance of the startup race, on a state change the user just requested.
+`applyPlan()` (dnr-rules.mjs) now fixes the order — catch-all ON before the swap, OFF after — so
+the window is always at least as intercepting as both the old and the new state; deactivating
+over-sandboxes for those same few ms instead, and the sweep undoes that immediately. Tripwire:
+tier-0 `dnr-rules.test.mjs` § applyPlan.
+
 ## Honest limitations (say these out loud in any writeup)
 
 1. Layer two is thinner than layer one but not zero (shim + host-fetch + blit surface).

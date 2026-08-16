@@ -11,6 +11,7 @@
 // it cannot un-execute anything.
 
 import {
+  applyPlan,
   desiredRuleState,
   sweepAction,
   tabUrl,
@@ -35,23 +36,27 @@ async function doApply() {
   const state = await getState();
   const desired = desiredRuleState(state, VIEWER);
 
-  const enabled = await chrome.declarativeNetRequest.getEnabledRulesets();
-  const wantCatchall = desired.enabledStaticRulesets.includes(CATCHALL_RULESET_ID);
-  if (wantCatchall !== enabled.includes(CATCHALL_RULESET_ID))
-    await chrome.declarativeNetRequest.updateEnabledRulesets(
-      wantCatchall
-        ? { enableRulesetIds: [CATCHALL_RULESET_ID] }
-        : { disableRulesetIds: [CATCHALL_RULESET_ID] },
-    );
-
-  // Dynamic rules replaced wholesale (one atomic update). Session rules are
-  // NOT touched here: the bridge's header rules and (2.3) escape hatches live
+  // Step order matters — applyPlan owns it (a reconcile's mid-flight window
+  // must never intercept less than both the old and the new state). Dynamic
+  // rules are replaced wholesale in one atomic update; session rules are NOT
+  // touched here: the bridge's header rules and (2.3) escape hatches live
   // there, each managing its own id namespace.
-  const existing = await chrome.declarativeNetRequest.getDynamicRules();
-  await chrome.declarativeNetRequest.updateDynamicRules({
-    removeRuleIds: existing.map((r) => r.id),
-    addRules: desired.dynamicRules,
-  });
+  const enabled = await chrome.declarativeNetRequest.getEnabledRulesets();
+  for (const step of applyPlan(enabled, desired)) {
+    if (step.op === 'catchall') {
+      await chrome.declarativeNetRequest.updateEnabledRulesets(
+        step.enable
+          ? { enableRulesetIds: [CATCHALL_RULESET_ID] }
+          : { disableRulesetIds: [CATCHALL_RULESET_ID] },
+      );
+    } else {
+      const existing = await chrome.declarativeNetRequest.getDynamicRules();
+      await chrome.declarativeNetRequest.updateDynamicRules({
+        removeRuleIds: existing.map((r) => r.id),
+        addRules: step.rules,
+      });
+    }
+  }
 
   // Only now: un-sandboxing a tab before its allow rule exists would just
   // bounce off the catch-all back into the viewer. (Sweeping the sandbox

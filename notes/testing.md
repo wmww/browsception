@@ -121,6 +121,10 @@ integration that unit tests can't and that doesn't need the 100 MB engine:
    navigation is still in flight gets sandboxed (a local server that accepts and never answers
    pins it pre-commit, where `tab.url` is 'about:blank'), and an escape-hatch tab survives a
    later reconcile. Both are the security-critical half of the startup race (security.md).
+   Never assert on a `page.goto` promise in a test that also edits state: the reconcile's sweep
+   re-navigates any tab it finds mid-flight, which rejects the goto with `ERR_ABORTED` although
+   the tab lands exactly where it should. Assert on the settled `page.url()` instead
+   (`gotoSandboxed()` there) — that was a long-running tier-1 flake.
 
 ### Tier 2 — full integration, real engine (~30 s, per-merge + nightly; needs prebuilt engine artifact)
 Headless Chromium + extension + **real wasm WebKit** + fixtures. The small set that proves the

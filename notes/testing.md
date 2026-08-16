@@ -97,6 +97,11 @@ Pure-function tests, Node + vitest (or similar):
 2. **DNR rule generation**: (mode, lists, escape-hatch state) → exact expected rule JSON for the
    whitelist/blacklist/inactive matrix, priority ordering, tab-scoped session rule.
 3. **List semantics**: domain matching (subdomains, eTLD+1 suggestion, exact-host entries).
+4. **No-GPU imports** (`engine-imports.test.mjs`): the staged `embedder.js` — emscripten's glue
+   *is* the module's import list — must contain no `webgl`/`glctx`/`_emscripten_gl`/`_egl`/
+   `offscreencanvas`/`webgpu`. security.md's "the engine cannot reach the GPU driver" is a claim
+   about imports, and imports appear from a link flag, not from a call (engine-build.md § No-GPU
+   link contract). Skips when no engine is staged.
 
 ### Tier 1 — bridge integration, no engine (<30 s, per-commit)
 Headless Chromium + extension + fixture server + a **stub engine** (tiny worker speaking the shim

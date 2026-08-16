@@ -67,10 +67,7 @@
   <pre id="log"></pre>
   <script src="bib-net.js"></script>
   <!-- Build-stamped engine-threading mode (window.BIB_PTHREAD_BUILD). Emitted
-       into build/webcore/bin by embedder.cmake; served at /engine/. The host
-       MUST know this before choosing #screen's context (context type is
-       exclusive: 2d vs bitmaprenderer vs engine-owned webgl2). Missing (stale
-       build) => the inline script defaults to true (the pthread daily-driver). -->
+       into build/webcore/bin by embedder.cmake; served at /engine/. -->
   <script src="engine/bib-build-config.js"></script>
   <script>
     document.getElementById("coi").textContent = String(globalThis.crossOriginIsolated);
@@ -87,123 +84,10 @@
     }
 
     const canvas = document.getElementById("screen");
-    // Present mode is chosen ONCE per page load — a <canvas>'s context type is
-    // EXCLUSIVE (2d vs bitmaprenderer vs engine-owned webgl2), so the host must
-    // pick #screen's context before the engine boots:
-    //   raster-2d    : CPU pixels via Module.bibBlit → putImageData (safety net;
-    //                  pixel-exact gates; automation default).
-    //   gpu-bitmap   : BIB_PTHREAD build — the engine paints on its worker and
-    //                  ships zero-copy ImageBitmaps to a bitmaprenderer #screen
-    //                  (fixes the W-B2 OffscreenCanvas commit starvation).
-    //   gpu-implicit : BIB_PTHREAD=OFF build — the engine owns #screen's webgl2
-    //                  context on the main thread and presents implicitly (the
-    //                  pre-W-B1 MotionMark 109@144fps path; no SharedArrayBuffer).
-    // Default GPU for humans (G3/M2: 2.6-3.4× paint), raster for automation so
-    // the pixel-exact gates keep their semantics; ?gpu=0/1 overrides. The boot
-    // present-bench still demotes software-GL contexts to raster automatically.
-    const gpuParam = new URLSearchParams(location.search).get("gpu");
-    const requestedGPU = gpuParam !== null ? gpuParam !== "0" : !navigator.webdriver;
-    // Build-stamped (bib-build-config.js, emitted by embedder.cmake). Missing
-    // (stale build) => default true, the pthread daily-driver. Must NOT be
-    // inferred after getContext() — context acquisition is one-way.
-    const BIB_PTHREAD_BUILD =
-      (typeof window.BIB_PTHREAD_BUILD === "boolean") ? window.BIB_PTHREAD_BUILD : true;
-    function supportsBitmapPresent() {
-      if (typeof OffscreenCanvas !== "function") return false;
-      try { return !!document.createElement("canvas").getContext("bitmaprenderer"); }
-      catch { return false; }
-    }
-    // A pthread build needs bitmaprenderer to present GPU frames; if it's
-    // unsupported, fall back to raster rather than show a blank screen.
-    const gpuMode = requestedGPU && (!BIB_PTHREAD_BUILD || supportsBitmapPresent());
-    const presentMode =
-      !gpuMode ? "raster-2d" :
-      BIB_PTHREAD_BUILD ? "gpu-bitmap" : "gpu-implicit";
-    let ctx = null;        // raster putImageData target
-    let bitmapCtx = null;  // gpu-bitmap ImageBitmap present target
-    if (presentMode === "raster-2d") {
-      ctx = canvas.getContext("2d");
-      if (!ctx) throw new Error("BIB: failed to create #screen 2d context");
-    } else if (presentMode === "gpu-bitmap") {
-      bitmapCtx = canvas.getContext("bitmaprenderer");
-      if (!bitmapCtx) throw new Error("BIB: failed to create #screen bitmaprenderer context");
-    } // gpu-implicit: leave #screen untouched — the engine creates webgl2 on it.
-    log(`present mode: ${presentMode} (pthreadBuild=${BIB_PTHREAD_BUILD})`);
-
-    // gpu-bitmap present receiver: catch the engine worker's one-time hello
-    // (self.postMessage from C++ → engine-pre.js), take the transferred
-    // MessagePort, and paint each ImageBitmap onto #screen via bitmaprenderer.
-    // Credit model: ack {t:"ready"} on receive — before compositing — so the
-    // engine isn't serialized behind each present round-trip. Depth = maxInFlight
-    // (DEFAULT 1; ?inflight=N to A/B). The old depth-3 default floods the page
-    // main thread under load and collapses delivery (the "random stutter"), so 1
-    // is now default; see the maxInFlight config below + engine-pre.js
-    // bibBitmapPresentReady. The shared main-thread rAF caps production.
-    // The Worker subclass MUST be installed before embedder.js so Emscripten's
-    // pthread pool is constructed through it.
-    const bibPresent = { bound: false, port: null, frames: 0, lastFrameId: 0 };
-    function installBibPresentWorkerHook() {
-      if (presentMode !== "gpu-bitmap") return;
-      const NativeWorker = window.Worker;
-      window.Worker = class BIBPresentWorker extends NativeWorker {
-        constructor(url, options) {
-          super(url, options);
-          this.addEventListener("message", (e) => {
-            const d = e.data || {};
-            // Only the proxied-main engine worker sends this exact hello;
-            // Emscripten's own cmd-tagged messages never match.
-            if (d.__bibPresent !== "hello" || bibPresent.bound) return;
-            const port = e.ports && e.ports[0];
-            if (!port) { log("present: hello arrived without a port"); return; }
-            bibPresent.bound = true;
-            bibPresent.port = port;
-            port.onmessage = (ev) => {
-              const m = ev.data || {};
-              if (m.t !== "frame") return;
-              const bitmap = m.bitmap, id = m.id || 0;
-              // Return the credit IMMEDIATELY — before compositing — so the
-              // engine can render the next frame concurrently (triple-buffered,
-              // never blocked on the transferFromImageBitmap round-trip). The
-              // old code acked only AFTER compositing, serializing the engine
-              // behind every present and causing the hard-graphics stutter.
-              port.postMessage({ t: "ready", id });
-              if (!bitmap) return;
-              try {
-                bitmapCtx.transferFromImageBitmap(bitmap); // consumes the bitmap
-                bibPresent.frames++;
-                bibPresent.lastFrameId = id;
-                if (typeof bib !== "undefined") bib.frames = bibPresent.frames;
-                blitsEl.textContent = bibPresent.frames;
-              } catch (err) {
-                console.error("BIB: bitmap present failed:", err);
-                try { bitmap.close(); } catch {}
-              }
-            };
-            if (port.start) port.start();
-            // Present depth. DEFAULT 1 (strict one-in-flight). The old depth-3
-            // default floods the page main thread under high render rate (engine
-            // posts faster than transferFromImageBitmap drains) and collapses
-            // delivery — the "random stutter" non-determinism. inflight A/B,
-            // Discord, 2026-06-13 (research-06): depth-3 was BIMODAL (cv
-            // 0.6–4.3, one run near-frozen at 2.4fps); depth-1 was STEADY
-            // (cv ~0.77 every run). ?inflight=N overrides (1–8; 3 = old
-            // triple-buffer) for A/B. Sent before the first ready so it applies
-            // from the very first frame.
-            const inflightParam = new URLSearchParams(location.search).get("inflight");
-            const n = inflightParam !== null
-              ? Math.max(1, Math.min(8, parseInt(inflightParam, 10) || 1))
-              : 1;
-            port.postMessage({ t: "config", maxInFlight: n });
-            log("present: maxInFlight=" + n);
-            port.postMessage({ t: "ready", id: 0 }); // unblock the worker's first frame
-            log("present: gpu-bitmap port bound");
-          });
-        }
-      };
-      // Preserve enough constructor shape for Emscripten-generated code.
-      Object.setPrototypeOf(window.Worker, NativeWorker);
-      window.Worker.prototype = NativeWorker.prototype;
-    }
+    // The engine has no GPU path (security.md — its wasm imports carry no GL
+    // entry point), so #screen is always a 2d putImageData target.
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("BIB: failed to create #screen 2d context");
 
     // --- Event-driven engine pump (perf) --------------------------------
     // The engine pokes Module.bibWakeUp on every RunLoop wake-up (dispatch,
@@ -656,9 +540,7 @@
     });
 
     // Same region assertions as the offscreen gate (hello demo only).
-    // tol=0 (CPU) keeps the blue test pixel-exact; GPU passes tol=2 so the
-    // gate doesn't fail on driver-level rounding (shading has matched the
-    // CPU raster exactly so far — M1 readback was pixel-identical).
+    // Pixel-exact: the CPU raster path is deterministic.
     function judgeHelloFrame(pixels, w, h, tol = 0) {
       let exactBlue = 0, redGlyph = 0;
       for (let y = 0; y < h; y++) {
@@ -686,32 +568,6 @@
       if (!pendingMove || bib.dead) return;
       Module._bib_mouse_move(pendingMove[0], pendingMove[1], pendingMove[2]);
       pendingMove = null;
-    }
-
-    // GPU context loss: G4 (W-B2) recovers IN PLACE engine-side — the
-    // canvas (OffscreenCanvas under pthreads, the DOM canvas otherwise)
-    // fires lost/restored on the engine's side and it rebuilds its Ganesh
-    // world there. This reload protocol is only the FALLBACK, invoked by
-    // the engine (Module.bibGpuLostReload) when restore never arrives or
-    // the rebuild fails. No page-side webglcontextlost listener anymore:
-    // under pthreads the page canvas is a placeholder that gets no events,
-    // and in single-threaded builds a page listener would race the
-    // engine's in-place recovery. Loss state rides the URL (?gpulost=1),
-    // NOT sessionStorage: opaque-origin / privacy-hardened contexts throw
-    // on storage access, which would kill the handler and leave the page
-    // dead (Codex, G3). A second loss means this GPU/driver can't hold a
-    // context → ?gpu=0.
-    function gpuLostReload() {
-      // gpuMode guard mirrors bibGpuFallback: a stray engine call on a
-      // raster page must not bolt ?gpulost=1 onto a working session.
-      if (!gpuMode || bib.dead) return;
-      const u = new URL(location.href);
-      const second = u.searchParams.get("gpulost") === "1";
-      if (second) u.searchParams.set("gpu", "0");
-      else u.searchParams.set("gpulost", "1");
-      log(`WebGL context lost — reloading${second ? " in raster mode" : ""}`);
-      statusEl.textContent = "GPU context lost — reloading";
-      location.replace(u.href);
     }
 
     // W-B1: the rAF loop only provides CADENCE — _bib_tick self-proxies to
@@ -766,9 +622,7 @@
       if (bib.dead || !ctx) return;
       const pixels = new Uint8ClampedArray(bytes.buffer, bytes.byteOffset, w * h * 4);
       ctx.putImageData(new ImageData(pixels, w, h), x, y);
-      // tol=2 in GPU mode absorbs driver-level rounding (Ganesh paint differs
-      // from CPU raster by ≤1-2 LSB); raster stays pixel-exact (tol=0).
-      if (bib.frames === 0 && demo === "hello") judgeHelloFrame(pixels, w, h, gpuMode ? 2 : 0);
+      if (bib.frames === 0 && demo === "hello") judgeHelloFrame(pixels, w, h, 0);
       bib.frames++;
       blitsEl.textContent = bib.frames;
     }
@@ -970,36 +824,6 @@
     // global scope `var Module` re-declares without clobbering the value.
     window.Module = {
       bibInteractive: true,
-      // Ganesh-over-WebGL2 paint path (decision-005 G2/G3). Default-on for
-      // humans, ?gpu=0 to force raster; the engine falls back to CPU raster
-      // if context/caps setup fails.
-      bibGPU: gpuMode,
-      // Guest 2D canvases texture-backed (CanvasUsesAcceleratedDrawing) —
-      // default-on with GPU since the G3 A/B: 600-arc canvas anim 51.97
-      // (cpu) / 29.08 (gpu) / 18.73 (this) ms/frame, and guest getImageData
-      // showed NO readback penalty (2.70ms vs 3.14 cpu — CLoop dominates).
-      // Bonus: canvas buffers leave the 4GB wasm heap. ?canvasgpu=0 escapes.
-      bibCanvasGPU: gpuMode && params.get("canvasgpu") !== "0",
-      // Engine GPU boot failed AFTER the host committed to GPU mode (no 2d
-      // context, bib_render pointers ignored) — engine-side CPU fallback
-      // alone would never reach the screen. Reload in raster mode
-      // (?gpu=0 skips the GPU boot entirely, so this cannot loop).
-      bibGpuFallback: () => {
-        if (!gpuMode) return;
-        log("engine GPU setup failed — reloading in raster mode");
-        const u = new URL(location.href);
-        u.searchParams.set("gpu", "0");
-        location.replace(u.href);
-      },
-      // G4 fallback: engine-side context restore never arrived or the
-      // Ganesh rebuild failed — reload (?gpulost=1, second loss ?gpu=0).
-      bibGpuLostReload: gpuLostReload,
-      // ?gpubench=0 disables the software-renderer present-bench POLICY
-      // (the engine still prints the measurement). Worker OffscreenCanvas
-      // contexts land on SwiftShader in many environments — including
-      // playwright headless — where GPU mode is correct but slower than
-      // raster; gate8 uses this to validate the pipeline there.
-      bibGpuBench: params.get("gpubench") !== "0",
       bibHTML: demo === "hello" ? helloHTML : demo === "scripttest" ? scriptTestHTML : interactiveHTML,
       // Guest wasm shim: the engine reads the polyfill source once at first
       // window-object setup and calls bibWasm2js per module (see shim block
@@ -1041,22 +865,10 @@
       // the engine page is loaded, laid out, and painted once.
       onEngineReady: function () {
         bib.ready = true;
-        statusEl.textContent = `engine live (${demo}${gpuMode ? ", gpu" : ""})`;
+        statusEl.textContent = `engine live (${demo})`;
         wireInput();
         canvas.focus();
         requestAnimationFrame(blitLoop);
-        // Hello-gate verdict: raster-2d judges in bibBlit (first putImageData).
-        // gpu-bitmap/gpu-implicit never call bibBlit (frames go via
-        // bitmaprenderer / implicit present), so judge from a readback instead
-        // — gate8 waits on __bib.verdict. The readback reads the engine's
-        // texture surface, independent of the present path. tol=2 (GPU rounding).
-        if (demo === "hello" && presentMode !== "raster-2d") {
-          const judgeViaReadback = (tries) => bib.readback().then((frame) => {
-            if (frame) judgeHelloFrame(frame.data, frame.w, frame.h, 2);
-            else if (tries > 0) setTimeout(() => judgeViaReadback(tries - 1), 100);
-          });
-          judgeViaReadback(20);
-        }
         urlbarEl.disabled = false;
         gobtnEl.disabled = false;
         // Same allowlist as the URL bar — ?url= arrives from arbitrary
@@ -1084,7 +896,7 @@
         // FIRST abort reason stays readable at the top of the log.
         bib.dead = true;
         bib.verdict = "abort";
-        statusEl.textContent = "ENGINE CRASHED — reload the tab" + (gpuMode ? " (or retry with ?gpu=0)" : "");
+        statusEl.textContent = "ENGINE CRASHED — reload the tab";
         urlbarEl.disabled = true;
         gobtnEl.disabled = true;
         clearTimeout(pumpTimer.id);
@@ -1107,12 +919,7 @@
       // localStorage waits per-origin for first touch.
       Module.bibSeedState = seedState;
       if (seedState) log(`persist: profile loaded (${seedState.length} bytes)`);
-      // Install the gpu-bitmap present Worker subclass BEFORE embedder.js so
-      // Emscripten's pthread pool (incl. the proxied-main engine worker) is
-      // created through it (no-op unless presentMode==="gpu-bitmap").
-      installBibPresentWorkerHook();
-      // Worker tracker LAST (outermost wrapper) so __bib.workers sees every
-      // engine-spawned worker regardless of present mode.
+      // Worker tracker: __bib.workers sees every engine-spawned worker.
       {
         const Prev = window.Worker;
         window.Worker = class BIBTrackedWorker extends Prev {

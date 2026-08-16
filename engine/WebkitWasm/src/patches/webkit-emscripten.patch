@@ -514,10 +514,10 @@ index 00000000000..0fc6a680f4b
 +list(APPEND PAL_LIBRARIES OpenSSL::Crypto)
 diff --git a/Source/WebCore/PlatformEmscripten.cmake b/Source/WebCore/PlatformEmscripten.cmake
 new file mode 100644
-index 00000000000..60cf206a3af
+index 00000000000..457e97ec653
 --- /dev/null
 +++ b/Source/WebCore/PlatformEmscripten.cmake
-@@ -0,0 +1,137 @@
+@@ -0,0 +1,136 @@
 +# WebCore platform file for PORT=Emscripten.
 +# Structure cribbed from PlatformPlayStation.cmake / PlatformWin.cmake:
 +# ImageDecoders + Skia for graphics, the curl port's platform TYPES for
@@ -628,13 +628,12 @@ index 00000000000..60cf206a3af
 +    platform/generic/KeyedDecoderGeneric.cpp
 +    platform/generic/KeyedEncoderGeneric.cpp
 +
-+    # Skia GPU (G2): upstream display/EGL machinery compiles as-is over
-+    # Emscripten's EGL; the port file owns the boot context + GLContext defs.
-+    platform/graphics/PlatformDisplay.cpp
-+    platform/graphics/egl/GLDisplay.cpp
-+
++    # No GPU path: upstream PlatformDisplay.cpp / egl/GLDisplay.cpp are
++    # deliberately NOT compiled — they call into Emscripten's EGL, which
++    # creates WebGL contexts and would put GL entry points in the module's
++    # imports (notes/security.md). GLStubsEmscripten.cpp resolves the few
++    # symbols the Skia paths reference.
 +    platform/graphics/emscripten/GLStubsEmscripten.cpp
-+    platform/graphics/emscripten/PlatformDisplayEmscripten.cpp
 +    platform/graphics/emscripten/SystemFontDatabaseEmscripten.cpp
 +
 +    platform/text/Hyphenation.cpp
@@ -1917,27 +1916,162 @@ index b5733a12183..bbe18359ba7 100644
          if (registerRemoteEngine && !mockMediaDeviceRouteControllerEnabled())
 diff --git a/Source/WebCore/platform/graphics/emscripten/GLStubsEmscripten.cpp b/Source/WebCore/platform/graphics/emscripten/GLStubsEmscripten.cpp
 new file mode 100644
-index 00000000000..539cdf6a24d
+index 00000000000..adcb09d3ae4
 --- /dev/null
 +++ b/Source/WebCore/platform/graphics/emscripten/GLStubsEmscripten.cpp
-@@ -0,0 +1,33 @@
+@@ -0,0 +1,168 @@
 +/*
-+ * PORT=Emscripten GL/compositing link stubs. The Skia GPU phase (G2) moved
-+ * PlatformDisplay/GLContext to real implementations (upstream
-+ * PlatformDisplay.cpp + GLDisplay.cpp + PlatformDisplayEmscripten.cpp);
-+ * what remains here is referenced-but-never-run code — wasm static linking
-+ * has no lazy binding, so every referenced symbol must resolve.
++ * PORT=Emscripten GL/compositing link stubs.
++ *
++ * This port has NO GPU path: the engine's wasm module must import no GL,
++ * WebGL or EGL entry point at all (notes/security.md — "an owned engine
++ * cannot reach the GPU driver" is a property of the import list, not an
++ * argument about reachability). So PlatformDisplay is never created, no GL
++ * context ever exists, and Skia paints CPU raster only.
++ *
++ * What remains here is referenced-but-never-run code: wasm static linking
++ * has no lazy binding, so every referenced symbol must resolve. Each stub
++ * fails in the way its callers already handle (null context / no display),
++ * which is exactly the state they saw before, when GPU mode was merely
++ * never switched on.
 + */
 +
 +#include "config.h"
++#include "GLContext.h"
 +#include "GLFence.h"
 +#include "GraphicsLayer.h"
++#include "PlatformDisplay.h"
 +
 +namespace WebCore {
 +
-+// Accelerated-canvas fence sync. WebGL2 has fenceSync (proven in the G1
-+// spike) — wire a real GLFence when the accelerated 2D canvas path lands;
-+// every caller tolerates a null fence by falling back to a plain flush.
++// ---- PlatformDisplay: never created. -------------------------------------
++// sharedDisplayIfExists() is the guard every caller in this port takes
++// (ImageBufferSkiaAcceleratedBackend degrades to the unaccelerated backend
++// on null); sharedDisplay() itself is unreachable, and upstream's version
++// RELEASE_ASSERTs on the same condition.
++
++void PlatformDisplay::setSharedDisplay(std::unique_ptr<PlatformDisplay>&&)
++{
++    RELEASE_ASSERT_NOT_REACHED();
++}
++
++PlatformDisplay& PlatformDisplay::sharedDisplay()
++{
++    RELEASE_ASSERT_NOT_REACHED();
++}
++
++PlatformDisplay* PlatformDisplay::sharedDisplayIfExists()
++{
++    return nullptr;
++}
++
++PlatformDisplay::~PlatformDisplay() = default;
++
++GLContext* PlatformDisplay::sharingGLContext()
++{
++    return nullptr;
++}
++
++void PlatformDisplay::clearGLContexts()
++{
++}
++
++// ---- GLContext: a type the Skia paths mention, never an object. ----------
++
++GLContextWrapper::~GLContextWrapper() = default;
++
++bool GLContextWrapper::isCurrent() const
++{
++    return false;
++}
++
++GLContextWrapper* GLContextWrapper::currentContext()
++{
++    return nullptr;
++}
++
++void GLContextWrapper::didMakeContextCurrent()
++{
++}
++
++void GLContextWrapper::didUnmakeContextCurrent()
++{
++}
++
++GLContext::GLContext(GLDisplay& display, EGLContext context, EGLSurface surface, EGLConfig config)
++    : m_display(display)
++    , m_context(context)
++    , m_surface(surface)
++    , m_config(config)
++{
++}
++
++GLContext::~GLContext() = default;
++
++std::unique_ptr<GLContext> GLContext::createOffscreen(PlatformDisplay&)
++{
++    return nullptr;
++}
++
++std::unique_ptr<GLContext> GLContext::createSharing(PlatformDisplay&)
++{
++    return nullptr;
++}
++
++GLContext* GLContext::current()
++{
++    return nullptr;
++}
++
++bool GLContext::makeCurrentImpl()
++{
++    return false;
++}
++
++bool GLContext::unmakeCurrentImpl()
++{
++    return false;
++}
++
++bool GLContext::makeContextCurrent()
++{
++    return false;
++}
++
++bool GLContext::unmakeContextCurrent()
++{
++    return false;
++}
++
++unsigned GLContext::version() const
++{
++    return 0;
++}
++
++unsigned GLContext::glVersion() const
++{
++    return 0;
++}
++
++RefPtr<GLDisplay> GLContext::display() const
++{
++    return m_display.get();
++}
++
++void GLContext::swapBuffers()
++{
++}
++
++GCGLContext GLContext::platformContext() const
++{
++    return m_context;
++}
++
++// ---- Fences / compositing. ----------------------------------------------
++// Every GLFence caller tolerates a null fence by falling back to a plain
++// flush. GraphicsLayer::create is compositing-only; accelerated compositing
++// is off in this port (RenderLayerCompositor never enables it).
++
 +std::unique_ptr<GLFence> GLFence::create(const GLDisplay&)
 +{
 +    return nullptr;
@@ -1952,393 +2086,6 @@ index 00000000000..539cdf6a24d
 +{
 +    RELEASE_ASSERT_NOT_REACHED();
 +}
-+
-+} // namespace WebCore
-diff --git a/Source/WebCore/platform/graphics/emscripten/PlatformDisplayEmscripten.cpp b/Source/WebCore/platform/graphics/emscripten/PlatformDisplayEmscripten.cpp
-new file mode 100644
-index 00000000000..c7b1bdfa23c
---- /dev/null
-+++ b/Source/WebCore/platform/graphics/emscripten/PlatformDisplayEmscripten.cpp
-@@ -0,0 +1,323 @@
-+/*
-+ * PORT=Emscripten PlatformDisplay + GLContext (Skia GPU phase, G2).
-+ *
-+ * Single-context world: the embedder boots ONE WebGL2 context on the engine
-+ * canvas (initializePlatformDisplayEmscripten). Upstream PlatformDisplay.cpp
-+ * and egl/GLDisplay.cpp are compiled as-is over Emscripten's EGL; this file
-+ * supplies the port subclass, the GLContext member definitions (upstream
-+ * GLContext.cpp stays excluded — it drives real EGL surfaces we don't have),
-+ * the GLContextWrapper bookkeeping (upstream file hard-includes ANGLE
-+ * headers), and the Skia GLES interface assembled over
-+ * emscripten_webgl_get_proc_address.
-+ *
-+ * Two getProc-level shims proven in the G1 spike (src/spike/gpu-spike.cpp,
-+ * decision-005 "G1 results") MUST stay in front of Skia:
-+ *  1. glGetString(GL_VERSION): Emscripten reports
-+ *     "OpenGL ES 3.0 (WebGL 2.0 (...))" and Skia's parser takes the WebGL
-+ *     number → ES2 cap → RGBA8 loses renderability. Truncate at first '('.
-+ *  2. glGetInternalformativ: Emscripten's symbol is a silent no-op, leaving
-+ *     GrGLCaps' per-format sample counts empty → no format is renderable.
-+ *     Implement over WebGL2 getInternalformatParameter.
-+ */
-+
-+#include "config.h"
-+#include "PlatformDisplayEmscripten.h"
-+
-+#if USE(SKIA)
-+
-+#include "GLContext.h"
-+
-+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
-+#include <skia/gpu/ganesh/gl/GrGLAssembleInterface.h>
-+#include <skia/gpu/ganesh/gl/GrGLInterface.h>
-+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
-+
-+#include <EGL/egl.h>
-+#include <GLES3/gl3.h>
-+#include <cstring>
-+#include <emscripten/em_js.h>
-+#include <emscripten/html5_webgl.h>
-+
-+namespace WebCore {
-+
-+// ---- GLContextWrapper bookkeeping (upstream GLContextWrapper.cpp is
-+// excluded: it hard-includes ANGLE headers; the logic is this trivial). ----
-+
-+static thread_local GLContextWrapper* s_currentGLContextWrapper = nullptr;
-+
-+GLContextWrapper::~GLContextWrapper()
-+{
-+    if (s_currentGLContextWrapper == this)
-+        s_currentGLContextWrapper = nullptr;
-+}
-+
-+bool GLContextWrapper::isCurrent() const
-+{
-+    return s_currentGLContextWrapper == this;
-+}
-+
-+GLContextWrapper* GLContextWrapper::currentContext()
-+{
-+    return s_currentGLContextWrapper;
-+}
-+
-+void GLContextWrapper::didMakeContextCurrent()
-+{
-+    s_currentGLContextWrapper = this;
-+}
-+
-+void GLContextWrapper::didUnmakeContextCurrent()
-+{
-+    s_currentGLContextWrapper = nullptr;
-+}
-+
-+// ---- The boot WebGL2 context. ----
-+
-+static EMSCRIPTEN_WEBGL_CONTEXT_HANDLE s_webglContext = 0;
-+
-+EMSCRIPTEN_WEBGL_CONTEXT_HANDLE emscriptenSkiaWebGLContext()
-+{
-+    return s_webglContext;
-+}
-+
-+// ---- GLContext: facades over the boot context. ----
-+
-+GLContext::GLContext(GLDisplay& display, EGLContext context, EGLSurface surface, EGLConfig config)
-+    : m_display(display)
-+    , m_context(context)
-+    , m_surface(surface)
-+    , m_config(config)
-+{
-+    m_version = 300;
-+}
-+
-+GLContext::~GLContext() = default;
-+
-+std::unique_ptr<GLContext> GLContext::createOffscreen(PlatformDisplay& platformDisplay)
-+{
-+    if (!s_webglContext)
-+        return nullptr;
-+    return std::unique_ptr<GLContext>(new GLContext(platformDisplay.glDisplay(), reinterpret_cast<EGLContext>(s_webglContext), nullptr, nullptr));
-+}
-+
-+std::unique_ptr<GLContext> GLContext::createSharing(PlatformDisplay&)
-+{
-+    // WebGL has no share groups; nothing on this port consumes a sharing
-+    // context (referenced by PlatformDisplay::sharingGLContext()).
-+    return nullptr;
-+}
-+
-+GLContext* GLContext::current()
-+{
-+    auto* wrapper = GLContextWrapper::currentContext();
-+    if (wrapper && wrapper->type() == GLContextWrapper::Type::Native)
-+        return static_cast<GLContext*>(wrapper);
-+    return nullptr;
-+}
-+
-+bool GLContext::makeCurrentImpl()
-+{
-+    return emscripten_webgl_make_context_current(reinterpret_cast<EMSCRIPTEN_WEBGL_CONTEXT_HANDLE>(m_context)) == EMSCRIPTEN_RESULT_SUCCESS;
-+}
-+
-+bool GLContext::unmakeCurrentImpl()
-+{
-+    return emscripten_webgl_make_context_current(0) == EMSCRIPTEN_RESULT_SUCCESS;
-+}
-+
-+bool GLContext::makeContextCurrent()
-+{
-+    if (!makeCurrentImpl())
-+        return false;
-+    didMakeContextCurrent();
-+    return true;
-+}
-+
-+bool GLContext::unmakeContextCurrent()
-+{
-+    if (!unmakeCurrentImpl())
-+        return false;
-+    didUnmakeContextCurrent();
-+    return true;
-+}
-+
-+unsigned GLContext::version() const
-+{
-+    return m_version;
-+}
-+
-+unsigned GLContext::glVersion() const
-+{
-+    return m_version;
-+}
-+
-+RefPtr<GLDisplay> GLContext::display() const
-+{
-+    return m_display.get();
-+}
-+
-+void GLContext::swapBuffers()
-+{
-+    // WebGL presents implicitly when control returns to the event loop.
-+}
-+
-+GCGLContext GLContext::platformContext() const
-+{
-+    return m_context;
-+}
-+
-+// ---- Skia GLES interface with the two WebGL2 shims (G1-proven). ----
-+
-+static const GLubyte* bibGetString(GLenum name)
-+{
-+    const GLubyte* string = glGetString(name);
-+    if (name == GL_VERSION && string) {
-+        // "OpenGL ES 3.0 (WebGL 2.0 (...))" → "OpenGL ES 3.0 " so Skia's
-+        // GLES parser wins over its WebGL parser (which would cap us at 2.0).
-+        static char fixed[64];
-+        if (!fixed[0]) {
-+            const char* src = reinterpret_cast<const char*>(string);
-+            size_t i = 0;
-+            for (; src[i] && src[i] != '(' && i < sizeof(fixed) - 1; ++i)
-+                fixed[i] = src[i];
-+            fixed[i] = '\0';
-+        }
-+        return reinterpret_cast<const GLubyte*>(fixed);
-+    }
-+    return string;
-+}
-+
-+EM_JS(void, bibQueryInternalformat, (uint32_t ifmt, uint32_t pname, int bufSize, uintptr_t outPtr), {
-+    var ctx = GL.currentContext.GLctx;
-+    var arr = ctx.getInternalformatParameter(0x8D41 /* RENDERBUFFER */, ifmt, 0x80A9 /* SAMPLES */);
-+    if (!arr) {
-+        if (bufSize >= 1)
-+            HEAP32[outPtr >> 2] = 0; // never leave the out-param unwritten
-+        return;
-+    }
-+    if (pname == 0x9380 /* NUM_SAMPLE_COUNTS */) {
-+        if (bufSize >= 1)
-+            HEAP32[outPtr >> 2] = arr.length;
-+    } else if (pname == 0x80A9 /* SAMPLES */) {
-+        for (var i = 0; i < Math.min(bufSize, arr.length); i++)
-+            HEAP32[(outPtr >> 2) + i] = arr[i];
-+    }
-+});
-+
-+static void bibGetInternalformativ(GLenum target, GLenum internalformat, GLenum pname, GLsizei bufSize, GLint* params)
-+{
-+    UNUSED_PARAM(target); // GrGLCaps only ever queries GL_RENDERBUFFER
-+    bibQueryInternalformat(internalformat, pname, bufSize, reinterpret_cast<uintptr_t>(params));
-+}
-+
-+// enableExtensionsByDefault only enables the extensions Emscripten's GL
-+// library KNOWS; glGetStringi still advertises everything the browser
-+// returned from getSupportedExtensions (GL.stringiCache). Skia trusts the
-+// advertised list and emits #extension directives that ANGLE rejects
-+// unless getExtension() actually enabled them — first seen as
-+// GL_NV_shader_noperspective_interpolation shader-compile failures on
-+// worker OffscreenCanvas contexts (W-B2; main-thread contexts never
-+// exposed that extension). Enable everything so advertised == enabled.
-+EM_JS(void, bibEnableAllWebGLExtensions, (), {
-+    var ctx = GL.currentContext && GL.currentContext.GLctx;
-+    if (!ctx || !ctx.getSupportedExtensions)
-+        return;
-+    ctx.getSupportedExtensions().forEach(function(name) { ctx.getExtension(name); });
-+});
-+
-+static GrGLFuncPtr bibGetProc(void*, const char name[])
-+{
-+    if (!strcmp(name, "glGetString"))
-+        return reinterpret_cast<GrGLFuncPtr>(bibGetString);
-+    if (!strcmp(name, "glGetInternalformativ"))
-+        return reinterpret_cast<GrGLFuncPtr>(bibGetInternalformativ);
-+    void* proc = emscripten_webgl_get_proc_address(name);
-+    if (!proc)
-+        WTFLogAlways("PlatformDisplayEmscripten: getProc MISS %s", name);
-+    return reinterpret_cast<GrGLFuncPtr>(proc);
-+}
-+
-+sk_sp<const GrGLInterface> createSkiaGLInterfaceEmscripten()
-+{
-+    return GrGLMakeAssembledGLESInterface(nullptr, bibGetProc);
-+}
-+
-+// ---- The port display + boot init. ----
-+
-+std::unique_ptr<PlatformDisplayEmscripten> PlatformDisplayEmscripten::create()
-+{
-+    auto glDisplay = GLDisplay::create(eglGetDisplay(EGL_DEFAULT_DISPLAY));
-+    if (!glDisplay)
-+        return nullptr;
-+    return std::unique_ptr<PlatformDisplayEmscripten>(new PlatformDisplayEmscripten(glDisplay.releaseNonNull()));
-+}
-+
-+PlatformDisplayEmscripten::PlatformDisplayEmscripten(Ref<GLDisplay>&& glDisplay)
-+    : PlatformDisplay(WTF::move(glDisplay))
-+{
-+}
-+
-+bool initializePlatformDisplayEmscripten(const char* canvasSelector)
-+{
-+    if (s_webglContext)
-+        return true;
-+
-+    // G1 attributes, minus preserveDrawingBuffer (spike-only — the engine
-+    // redraws every presented frame, and preserve has a real cost in Chrome).
-+    EmscriptenWebGLContextAttributes attributes;
-+    emscripten_webgl_init_context_attributes(&attributes);
-+    attributes.majorVersion = 2;
-+    attributes.minorVersion = 0;
-+    attributes.alpha = false;
-+    attributes.depth = false;
-+    attributes.stencil = true;
-+    attributes.antialias = false;
-+    attributes.preserveDrawingBuffer = false;
-+    attributes.enableExtensionsByDefault = true;
-+#if defined(__EMSCRIPTEN_PTHREADS__) && defined(BIB_GPU_READBACK_PRESENT)
-+    // LEGACY (Approach R, GPU→CPU readback present) ONLY — off by default.
-+    // renderViaOffscreenBackBuffer (needs -sOFFSCREEN_FRAMEBUFFER in
-+    // embedder.cmake) forces preserveDrawingBuffer=true and routes rendering
-+    // through an offscreen FBO so a per-frame readback didn't capture stale
-+    // pixels. The current zero-copy present (transferToImageBitmap → page
-+    // bitmaprenderer) deliberately does NOT enable these: an offscreen
-+    // backbuffer would make GL FBO 0 an intermediate buffer, and the
-+    // OffscreenCanvas' transferToImageBitmap captures the REAL default
-+    // framebuffer — so the indirection produces blank/stale ImageBitmaps.
-+    // Define BIB_GPU_READBACK_PRESENT (+ keep -sOFFSCREEN_FRAMEBUFFER) only to
-+    // resurrect the old readback path for debugging. See
-+    // handoff-2026-06-13-gpu-present-rearchitecture.md.
-+    attributes.explicitSwapControl = true;
-+    attributes.renderViaOffscreenBackBuffer = true;
-+#endif
-+
-+    auto context = emscripten_webgl_create_context(canvasSelector, &attributes);
-+    if (!context) {
-+        WTFLogAlways("PlatformDisplayEmscripten: emscripten_webgl_create_context(%s) failed", canvasSelector);
-+        return false;
-+    }
-+
-+    if (emscripten_webgl_make_context_current(context) != EMSCRIPTEN_RESULT_SUCCESS) {
-+        WTFLogAlways("PlatformDisplayEmscripten: make_context_current failed");
-+        emscripten_webgl_destroy_context(context);
-+        return false;
-+    }
-+
-+    bibEnableAllWebGLExtensions();
-+
-+    auto display = PlatformDisplayEmscripten::create();
-+    if (!display) {
-+        WTFLogAlways("PlatformDisplayEmscripten: GLDisplay::create failed");
-+        emscripten_webgl_make_context_current(0);
-+        emscripten_webgl_destroy_context(context);
-+        return false;
-+    }
-+
-+    s_webglContext = context;
-+    PlatformDisplay::setSharedDisplay(WTF::move(display));
-+    return true;
-+}
-+
-+} // namespace WebCore
-+
-+#endif // USE(SKIA)
-diff --git a/Source/WebCore/platform/graphics/emscripten/PlatformDisplayEmscripten.h b/Source/WebCore/platform/graphics/emscripten/PlatformDisplayEmscripten.h
-new file mode 100644
-index 00000000000..654dad6569a
---- /dev/null
-+++ b/Source/WebCore/platform/graphics/emscripten/PlatformDisplayEmscripten.h
-@@ -0,0 +1,52 @@
-+/*
-+ * PORT=Emscripten PlatformDisplay: the Skia-GPU (Ganesh over WebGL2)
-+ * provider. One WebGL2 context is created on the engine canvas at boot;
-+ * every WebCore GLContext is a facade over it (single-context world).
-+ */
-+
-+#pragma once
-+
-+#include "PlatformDisplay.h"
-+#include <emscripten/html5_webgl.h>
-+
-+#if USE(SKIA)
-+#include <skia/core/SkRefCnt.h>
-+struct GrGLInterface;
-+#endif
-+
-+namespace WebCore {
-+
-+class PlatformDisplayEmscripten final : public PlatformDisplay {
-+public:
-+    static std::unique_ptr<PlatformDisplayEmscripten> create();
-+
-+    virtual ~PlatformDisplayEmscripten() = default;
-+
-+private:
-+    explicit PlatformDisplayEmscripten(Ref<GLDisplay>&&);
-+
-+    Type type() const override { return PlatformDisplay::Type::Surfaceless; }
-+};
-+
-+// Boot-time GPU init, called by the embedder when BIB_GPU=1: creates the
-+// WebGL2 context on the engine canvas, makes it current, and installs the
-+// shared PlatformDisplay. Returns false on any failure, leaving the CPU
-+// raster path untouched (setSharedDisplay is never called on failure).
-+bool initializePlatformDisplayEmscripten(const char* canvasSelector);
-+
-+// The boot context handle (0 until initialize succeeds). The embedder uses
-+// it to wrap framebuffer 0 for the present pass. NOTE: an EM_JS helper,
-+// bibEnableAllWebGLExtensions() (C linkage, defined in the .cpp), enables
-+// every browser-offered extension on the current context — the embedder
-+// re-declares and re-calls it after a G4 context restore, because
-+// restoration invalidates every previously enabled extension (WebGL spec).
-+EMSCRIPTEN_WEBGL_CONTEXT_HANDLE emscriptenSkiaWebGLContext();
-+
-+#if USE(SKIA)
-+// Assembled GLES interface over emscripten_webgl_get_proc_address, with the
-+// two shims WebGL2 needs (GL_VERSION truncation + real glGetInternalformativ).
-+// Consumed by skiaGLInterface() in PlatformDisplaySkia.cpp.
-+sk_sp<const GrGLInterface> createSkiaGLInterfaceEmscripten();
-+#endif
 +
 +} // namespace WebCore
 diff --git a/Source/WebCore/platform/graphics/emscripten/SystemFontDatabaseEmscripten.cpp b/Source/WebCore/platform/graphics/emscripten/SystemFontDatabaseEmscripten.cpp
@@ -2400,42 +2147,59 @@ index 5731b7e2be0..74bdd63a1ca 100644
      if (!glContext || !glContext->makeContextCurrent())
          return nullptr;
 diff --git a/Source/WebCore/platform/graphics/skia/PlatformDisplaySkia.cpp b/Source/WebCore/platform/graphics/skia/PlatformDisplaySkia.cpp
-index 134a1cf11d3..5fdbf8fa072 100644
+index 134a1cf11d3..4c60b353c14 100644
 --- a/Source/WebCore/platform/graphics/skia/PlatformDisplaySkia.cpp
 +++ b/Source/WebCore/platform/graphics/skia/PlatformDisplaySkia.cpp
-@@ -30,6 +30,10 @@
- #include "FontRenderOptions.h"
- #include "GLContext.h"
+@@ -76,7 +76,13 @@ static const unsigned s_defaultSampleCount = 4;
+ static const unsigned s_defaultSampleCount = 0;
+ #endif
+ 
+-#if !(PLATFORM(PLAYSTATION) && USE(COORDINATED_GRAPHICS))
++// PORT=Emscripten: no GPU path at all. Compiling the SkiaGLContext world in
++// would pull Skia's Ganesh GL backend (GrDirectContexts::MakeGL) into the
++// link, and with it every gl* entry point as a wasm import — the engine must
++// import none (notes/security.md). Skia paints CPU raster; the accessors
++// below answer "no GL context", which is the state every caller in this port
++// already handles.
++#if !(PLATFORM(PLAYSTATION) && USE(COORDINATED_GRAPHICS)) && !defined(__EMSCRIPTEN__)
+ static sk_sp<const GrGLInterface> skiaGLInterface()
+ {
+     static NeverDestroyed<sk_sp<const GrGLInterface>> grGLInterface {
+@@ -278,6 +284,26 @@ private:
+ };
+ #endif
  
 +#if defined(__EMSCRIPTEN__)
-+#include "PlatformDisplayEmscripten.h"
-+#endif
++GLContext* PlatformDisplay::skiaGLContext()
++{
++    return nullptr;
++}
 +
- WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
- #include <skia/core/SkColorSpace.h>
- #include <skia/gpu/ganesh/GrBackendSurface.h>
-@@ -82,6 +86,12 @@ static sk_sp<const GrGLInterface> skiaGLInterface()
-     static NeverDestroyed<sk_sp<const GrGLInterface>> grGLInterface {
- #if USE(LIBEPOXY)
-         GrGLInterfaces::MakeEpoxyEGL()
-+#elif defined(__EMSCRIPTEN__)
-+        // Assembled over emscripten_webgl_get_proc_address with the WebGL2
-+        // shims (GL_VERSION truncation + glGetInternalformativ) — see
-+        // PlatformDisplayEmscripten.cpp. Emscripten's EGL cannot back
-+        // GrGLInterfaces::MakeEGL().
-+        createSkiaGLInterfaceEmscripten()
- #else
-         GrGLInterfaces::MakeEGL()
- #endif
-@@ -280,7 +290,7 @@ private:
- 
++GrDirectContext* PlatformDisplay::skiaGrContext() const
++{
++    return nullptr;
++}
++
++unsigned PlatformDisplay::msaaSampleCount() const
++{
++    return 0;
++}
++
++void PlatformDisplay::clearSkiaGLContext()
++{
++}
++#else
  GLContext* PlatformDisplay::skiaGLContext()
  {
--#if PLATFORM(GTK) || PLATFORM(WPE) || (PLATFORM(PLAYSTATION) && !USE(COORDINATED_GRAPHICS))
-+#if PLATFORM(GTK) || PLATFORM(WPE) || (PLATFORM(PLAYSTATION) && !USE(COORDINATED_GRAPHICS)) || defined(__EMSCRIPTEN__)
-     if (!s_skiaGLContext) {
-         s_skiaGLContext = SkiaGLContext::create(*this);
-         m_skiaGLContexts.add(*s_skiaGLContext);
+ #if PLATFORM(GTK) || PLATFORM(WPE) || (PLATFORM(PLAYSTATION) && !USE(COORDINATED_GRAPHICS))
+@@ -308,6 +334,7 @@ void PlatformDisplay::clearSkiaGLContext()
+ {
+     s_skiaGLContext = nullptr;
+ }
++#endif // !defined(__EMSCRIPTEN__)
+ 
+ } // namespace WebCore
+ 
 diff --git a/Source/WebCore/platform/network/NetworkStorageSession.h b/Source/WebCore/platform/network/NetworkStorageSession.h
 index 0708ea1a644..2549b60f9bb 100644
 --- a/Source/WebCore/platform/network/NetworkStorageSession.h

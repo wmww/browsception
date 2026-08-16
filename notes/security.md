@@ -70,8 +70,14 @@ pthread wasm module.
 ## Deliberate non-features (attack-surface decisions, final unless revisited explicitly)
 
 - **No JIT** in the nested engine; no runtime wasm-module generation/instantiation.
-- **No GPU access for the engine** — no WebGL/WebGPU imports; Skia CPU raster only. (Blit-only
-  WebGL in the *shim* is fine: fixed trusted shader, attacker controls pixel data only.)
+- **No GPU access for the engine** — no WebGL/WebGPU imports; Skia CPU raster only. This is a
+  property of the **import list**, not of reachability: the module defines no GL entry point to
+  call (2026-08-15 — before that 289 of its 377 wasm imports were emscripten's GL/EGL table,
+  carried by link flags left over from the retired Ganesh present; now 88 imports, none GPU).
+  Enforced by `test/tier0/engine-imports.test.mjs`, which scans the staged glue (emscripten's glue
+  *is* the import list); the link contract that keeps it true is engine-build.md
+  § No-GPU link contract. (Blit-only WebGL in the *shim* is fine: fixed trusted shader, attacker
+  controls pixel data only — the viewer's presenter is exactly that.)
 - **No raw TCP/UDP**, no external proxy infrastructure.
 - **No host credentials** on bridge requests, ever (`credentials:'omit'` hardcoded).
 - **No EME/DRM**, no nested-wasm-passthrough to host wasm.

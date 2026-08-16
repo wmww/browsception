@@ -7,8 +7,10 @@ design defect rather than a perf problem (fixed 2026-08-14; rendering-input.md Â
 ## BIBPERF (`?perflog=1`)
 
 One `WTFLogAlways` line per second from `bib_tick`, forwarded to the host console. Fields:
-`ticks/painted/busy%/heap/jsc | runloop renderUpd layout paint present pushOther persist |
-pump(max,n) | wheel(n,q) blit(mv,wr,n,fb,rows) | avgPaintedFrame`.
+`ticks/painted/busy%/heap/jsc | runloop renderUpd layout paint pushOther persist |
+pump(max,n) | wheel(n,q) blit(mv,wr,n,fb,rows) | avgPaintedFrame`. (Engines built before
+2026-08-15 also report a `present` phase â€” the GPU present, now gone; the parser keeps it
+optional so old artifacts still read.)
 
 **busy% only covers what runs inside `bib_tick`.** Anything the host proxies to the engine thread as
 its own task (`bib_wheel`, `bib_mouse_*`, `bib_key`) runs in the same queue but *outside* the tick

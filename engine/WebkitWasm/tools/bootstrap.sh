@@ -75,6 +75,6 @@ echo "      emsdk   Emscripten $EMSDK_VERSION"
 echo "      sysroot $(ls "$TP/wasm-sysroot/lib"/*.a 2>/dev/null | wc -l) static libs"
 echo
 echo "Next — build the engine:"
-echo "      bash tools/build-webcore.sh                  # main branch: pthread GPU"
-echo "      BIB_PTHREAD=0 bash tools/build-webcore.sh    # non-pthread branch default: main-thread GPU"
+echo "      bash tools/build-webcore.sh                  # engine on its own pthread (default)"
+echo "      BIB_PTHREAD=0 bash tools/build-webcore.sh    # single-threaded (no SAB) build"
 echo "Then serve + open: see BUILD.md"

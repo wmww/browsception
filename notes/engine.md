@@ -108,8 +108,7 @@ Engine-side gaps the ABI deliberately papers over until 1.2/1.3 land (per the em
 resize does not exist yet (800×600 hard-coded), chrome signals are greenfield
 (`BibFrameLoaderClient`/`ChromeClient` overrides needed), boot config today is ~14 separate
 blocking `Module.bib*` reads to collapse into one `Module.bibConfig` JSON read, and presentation
-must move from bibBlit/putImageData + GPU-bitmap paths to the single `bibFrame` heap-framebuffer
-push. The stable seam for the network transplant is `BibResourceLoad`'s WebCore-facing callbacks
+must move from bibBlit/putImageData to the single `bibFrame` heap-framebuffer push. The stable seam for the network transplant is `BibResourceLoad`'s WebCore-facing callbacks
 (`didReceiveResponse/Buffer/FinishLoading/Fail` in EmbedderStrategies.cpp) — everything below it
 (CurlRequest/CurlStream/scheduler patches/SOCKFS/wisp) was deleted in one cut (2026-08-13);
 cookie assembly (`appendEmbedderCookieHeader`/`storeResponseCookies`) and hand-rolled redirect

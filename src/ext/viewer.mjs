@@ -521,9 +521,6 @@ async function bootEngine() {
 
   window.Module = {
     bibInteractive: true,
-    bibGPU: false, // no nested GPU, permanently (security.md)
-    bibCanvasGPU: false,
-    bibGpuBench: false,
     bibHTML: bootHTML,
     // Guest wasm shim + injection text: unused on this (pthread) build — the
     // engine thread reads its OWN Module, which engine-pre.js fills from

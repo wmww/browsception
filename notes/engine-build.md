@@ -101,9 +101,9 @@ not the ~90 s embedder loop. Same for `NetworkStorageSession.h`, `CertificateInf
 
 ## Divergences from upstream WebKit
 
-Single patch `src/patches/webkit-emscripten.patch`: 68 files, ~3.2k lines (was 68/~3.5k
-before the curl cut — deleting the transport files took their patch hunks with them).
-Breakdown: 31 files in `Source/WebCore/platform` (the port's platform glue), 7 `Source/WTF`,
+Single patch `src/patches/webkit-emscripten.patch`: 75 files, ~3.1k lines (shrinks whenever a
+subsystem is cut — the curl transport, then the GPU path, took their hunks with them).
+Breakdown: 29 files in `Source/WebCore/platform` (the port's platform glue), 7 `Source/WTF`,
 7 `Source/JavaScriptCore`, 5 loader (three of them behavioural: the relaxed
 `Empty*Client` finals, plus the two "a refused navigation tells nobody" notifications in
 FrameLoader/DocumentLoader — networking.md), 4 workers, 3 accessibility, 2 Modules, plus the
@@ -111,6 +111,37 @@ port pattern (`OptionsEmscripten.cmake`/`PlatformEmscripten.cmake` additions) an
 editing/crypto/bindings/fileapi touches. The real port logic (embedder, net bridge, host
 page) lives in WebkitWasm's own `src/`, outside the WebKit tree. Tracks a WebKit
 **release branch** (webkitglib/2.52), consistent with our rebase-on-tags policy.
+
+## No-GPU link contract
+
+security.md's "no WebGL/WebGPU imports" is a claim about the module's **import list**, and it only
+holds if nothing in the link references a GL entry point — wasm has no lazy binding, so a
+referenced-but-never-called `glDrawArrays` is still an import. Until 2026-08-15 it *was* one (289
+of the module's 377 imports; 88 now): the
+Ganesh/WebGL2 present path had been replaced by CPU raster, but the flags and code that pulled
+emscripten's GL library stayed, and the module imported 278 `gl*` + 5 `egl*` + 3
+`emscripten_webgl_*` functions that nothing called.
+
+Four places keep it out; changing any of them re-links GL:
+
+1. `src/embedder/embedder.cmake` — **no** `-sMAX_WEBGL_VERSION` / `-sFULL_ES3` /
+   `-sOFFSCREENCANVAS_SUPPORT` / `-Wl,--wrap=pthread_create`. (The wrap only existed to
+   neutralize `crt1_proxy_main`'s `(char*)-1` canvas-transfer sentinel; with
+   OFFSCREENCANVAS_SUPPORT off, emscripten's pthread JS never reads that field.)
+2. `Source/WebCore/PlatformEmscripten.cmake` — upstream `platform/graphics/PlatformDisplay.cpp`
+   and `platform/graphics/egl/GLDisplay.cpp` are **not** compiled: they call emscripten's EGL,
+   which creates WebGL contexts.
+3. `PlatformDisplaySkia.cpp` — the `SkiaGLContext` world is `#if`'d out for `__EMSCRIPTEN__`
+   (it would pull `GrDirectContexts::MakeGL`, i.e. Skia's whole Ganesh GL backend); the four
+   `PlatformDisplay::skia*` accessors answer "no GL context".
+4. `GLStubsEmscripten.cpp` — GL-free definitions for the handful of `GLContext`/`PlatformDisplay`
+   symbols the Skia paths still reference. Every stub fails the way its callers already handle.
+
+Tripwire: `test/tier0/engine-imports.test.mjs` scans the staged `embedder.js` (emscripten's glue
+*is* the import list) for `webgl`/`glctx`/`_emscripten_gl`/`_egl`/`offscreencanvas`/`webgpu`.
+
+Cost of the cut: `embedder.js` 268 KB → 159 KB, `embedder.wasm` 104.1 MB → 103.4 MB, and ~690
+lines of dead GPU code out of `main.cpp` (plus the harness's three present modes).
 
 ## Fork state
 

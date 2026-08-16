@@ -512,3 +512,55 @@ directions.
 **Decision**: coherence is worth single-digit busy pp with fps flat; "tearing accepted" is
 retired from the ABI/comments. The host-present ceiling issue is unchanged (upload band size
 identical).
+
+## 2026-08-15 — Dropping the dead GPU path: does removing 690 lines of it cost anything?
+
+**Hypothesis**: the engine's WebGL/Ganesh code has been unreachable since the CPU-raster present
+landed, so deleting it (and the link flags that import emscripten's GL table) is free — no
+behaviour change, no perf change, ~700 KB less wasm.
+
+**Why it mattered**: not size. security.md accounts for the engine's capabilities by its *import
+list*, and the module imported 278 `gl*` + 5 `egl*` + 3 `emscripten_webgl_*` functions. Nothing
+called them (`bibGPU: false`), so "an owned engine cannot reach the GPU driver" was an argument
+about reachability — exactly the kind of argument a memory-safety bug in the engine invalidates.
+The EGL five came in through `PlatformDisplay.cpp`/`GLDisplay.cpp`, which are upstream WebCore
+files this port compiled; the 278 came from Skia's Ganesh GL backend, pulled by
+`GrDirectContexts::MakeGL` in upstream `PlatformDisplaySkia.cpp`. Neither is reachable from the
+embedder's link flags alone — dropping `-sMAX_WEBGL_VERSION`/`-sFULL_ES3` got the count to
+164/0/1, and the rest needed the WebKit patch.
+
+**What ran**: full removal (embedder link flags + `--wrap=pthread_create`/OFFSCREENCANVAS
+machinery, `main.cpp` GPU boot/present/context-loss/software-bench, engine-pre.js's ImageBitmap
+present bridge, the harness's `gpu-bitmap`/`gpu-implicit` present modes, and WebCore-side
+`PlatformDisplay.cpp` + `egl/GLDisplay.cpp` + `PlatformDisplayEmscripten.*` + Skia's
+`SkiaGLContext` world → GL-free stubs in `GLStubsEmscripten.cpp`). Then tiers 0-2 and a
+back-to-back bench A/B (old artifact staged, new artifact staged, same session, same load).
+
+**Numbers**: wasm imports 377 → 88 — the 289 gone are 278 `gl*` + 5 `egl*` + 3
+`emscripten_webgl_*` + the present hooks. `embedder.js`
+268,634 → 159,226 B; `embedder.wasm` 104.11 → 103.43 MB; `main.cpp` 2989 → 2299 lines; WebKit
+patch 77 → 75 files, 3378 → 3142 lines. Tier 0/1 (79) and all 26 tier-2 scenarios green.
+
+Bench, three passes (headline matrix pre; same matrix post under load; then a quiet back-to-back
+A/B, old artifact staged then new, one session): every engine-side delta is inside run-to-run
+spread and the SIGN flips between passes — article-scroll paint ms/s read 212 (old, quiet), 268
+(old, A/B), 229 (new, loaded), 220 (new, A/B), so the loaded pass's "+8-24% paint" and the A/B's
+"BETTER, -18%" are the same noise seen from two sides. fps, click/key latency, boot, scroll
+efficiency and Mpx/frame flat throughout. Expected: nothing on the raster path was touched —
+`RenderingMode::Unaccelerated` was already what `g_gpu == false` selected, and every deleted
+branch was behind `if (g_gpu)`.
+
+**Method note**: the first post-run started at load 4.4 vs the baseline's 0.4 and reported paint
+up 8-24% with fps flat — a shape that looks like a real paint regression. The quiet back-to-back
+A/B (both artifacts, one session, load ~1.5) is what settled it. Bench comparisons across
+sessions are worth about ±20% on the ms/s metrics on this box; only same-session A/B pairs carry
+smaller deltas.
+
+**Trap worth keeping**: `crt1_proxy_main` unconditionally marks the proxied-main
+`pthread_create` with a `(char*)-1` transferred-canvas sentinel, which is why the embedder carried
+a `__wrap_pthread_create` interceptor. With `-sOFFSCREENCANVAS_SUPPORT` off, emscripten's pthread
+JS never reads that field, so the wrap could go with it.
+
+**Decision**: no GPU code in the engine at all; the security claim is now a property of the import
+list, enforced per-commit by tier-0 `engine-imports.test.mjs` (it fails on any pre-2026-08-15
+artifact). Contract for keeping it true: engine-build.md § No-GPU link contract.

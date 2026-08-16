@@ -31,8 +31,8 @@ faster than display.
 DPR & resize (implemented): the canvas fills the window (viewer.html flex column);
 `ResizeObserver` (device-pixel-content-box, dpr fallback) → 100 ms trailing debounce →
 `bib_set_viewport(w, h, dpr)`; the engine reallocates the framebuffer, resizes the frame view, and
-answers with a full frame whose fbW/fbH resize the canvas backing store (raster only — GPU mode
-ignores resize; engine clamps to 1–8192 px, dpr 0.25–8). Input coords scale by the live
+answers with a full frame whose fbW/fbH resize the canvas backing store (engine clamps to
+1–8192 px, dpr 0.25–8). Input coords scale by the live
 backing/CSS ratio so clicks stay aligned while the engine catches up. Tier-2 scenario 14 covers
 boot-size, grow, shrink, and post-resize input.
 
@@ -45,8 +45,8 @@ boot-size, grow, shrink, and post-resize input.
   `devicePixelRatio`: the two agree except mid-resize, and the ratio is what the blit is actually
   showing, so clicks stay aligned while the engine catches up.
 - The **engine** does device→logical (`bibLogicalPoint`, ÷ `g_dpr`), because only it knows the
-  dpr in force — it clamps viewport requests (1–8192 px, dpr 0.25–8), ignores them in GPU mode,
-  and adopts them asynchronously. WebCore's `PlatformMouseEvent`/`PlatformWheelEvent` positions
+  dpr in force — it clamps viewport requests (1–8192 px, dpr 0.25–8) and adopts them
+  asynchronously. WebCore's `PlatformMouseEvent`/`PlatformWheelEvent` positions
   are logical; the device scale factor is applied at *paint* time, not to event coordinates.
 - **Wheel deltas are the exception**: logical (CSS) px, forwarded unscaled — that is what the DOM
   reports and what WebCore wants.
@@ -110,8 +110,7 @@ boot-size, grow, shrink, and post-resize input.
 - **The present is a coherent snapshot + one frame in flight** (2026-08-15). `bibPushFrameIfDirty`
   memcpys the dirty band `g_blitPixels → g_presentPixels` on the ENGINE thread, posts `bibFrame`
   pointing at the snapshot, and skips painting until the main thread signals consumption
-  (`_bib_present_done`, called in the EM_ASM's finally — the GPU bitmap path's backpressure
-  pattern; damage stays armed and coalesces). Before this, `bibFrame` pointed at the live
+  (`_bib_present_done`, called in the EM_ASM's finally; damage stays armed and coalesces). Before this, `bibFrame` pointed at the live
   framebuffer and the async `texSubImage2D` raced engine mutations — comment said "transient
   tearing, accepted, self-correcting", but it was the **scroll-up duplicated-band glitch**:
   scroll-up (dy>0) shifts rows with a BOTTOM-UP memmove while the upload reads top-down; they
@@ -131,8 +130,7 @@ boot-size, grow, shrink, and post-resize input.
   (`bibScrollBlit` shifts the surface's own pixels once, `notifyContentWillChange` +
   `peekPixels`). The premul/unpremul "blocker" was a non-issue: the root frame is opaque
   (alpha 255 ⇒ premul == unpremul byte-for-byte) and the WebGL presenter ignores alpha anyway
-  (`alpha:false` context, no blending). Host and probes now see premul bytes; GPU-mode readback
-  switched to a premul dst to match. (Historical: the blit mirror was once a `writePixels`
+  (`alpha:false` context, no blending). Host and probes now see premul bytes. (Historical: the blit mirror was once a `writePixels`
   unpremul→premul conversion, ~9x the memmove — 13 vs 1.4 ms at 5.6 Mpx.)
 - **Damage merge is waste-based** (2026-08-14): `addDamage` used to unite ANY intersecting pair;
   on sticky-chrome pages (Wikipedia: full-width header band + tall sticky columns) the sidebar

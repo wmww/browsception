@@ -47,6 +47,9 @@ result appended here (keep the question, add `**Answer (date):**`).
 
 5. **Skia CPU raster in the Emscripten port.** Effort to switch WebkitWasm from Ganesh/WebGL2 to
    CPU raster + our framebuffer export; can we get dirty rects out of WebCore's paint path cheaply?
+   **ANSWERED**: done, and dirty rects came out cheaply (ChromeClient invalidation → damage list;
+   rendering-input.md). The Ganesh/WebGL2 path was deleted outright on 2026-08-15 — including
+   every GL entry point it left in the module's imports (engine-build.md § No-GPU link contract).
 6. **Sync XHR / blocking loads in the pthread build.** Confirm atomics-blocking network waits don't
    deadlock with `PROXY_TO_PTHREAD` (main-thread proxying rules). Decide policy for sync XHR.
 7. **Chrome PNA (Private Network Access) and extension fetches.** Does Chrome apply any

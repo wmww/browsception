@@ -7,7 +7,7 @@
 //
 // Current line (2026-08 engine):
 //   BIBPERF/s ticks=N painted=N elapsed=Nms busy=N% heap=NMB jsc=NMB |
-//   runloop(JS)=N renderUpd=N layout=N paint=N present=N pushOther=N persist=N ms |
+//   runloop(JS)=N renderUpd=N layout=N paint=N pushOther=N persist=N ms |
 //   pump=N(maxN nN) | wheel=N(nN evN qN) blit=N(mvN wrN nN fbN rowsN) |
 //   avgPaintedFrame=Nms
 // Newer engines may add: paintRects=N(<total>Mpx, <X>Mpx/frame)
@@ -23,6 +23,7 @@ const FIELDS = {
   renderUpdMs: /renderUpd=(-?[\d.]+)/,
   layoutMs: /layout=(-?[\d.]+)/,
   paintMs: /paint=(-?[\d.]+)/,
+  // Legacy: engines before 2026-08-15 (the GPU path) reported a present phase.
   presentMs: /present=(-?[\d.]+)/,
   pushOtherMs: /pushOther=(-?[\d.]+)/,
   persistMs: /persist=(-?[\d.]+)/,

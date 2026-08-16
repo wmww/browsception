@@ -63,7 +63,7 @@ lives in [roadmap.md](roadmap.md). Phase summaries:
   gate: tools/smoke-mvp.mjs real-site pass — sandboxed example.com/wikipedia, whitelist→native
   sweep (experiment-log.md 2026-08-10).
 
-Tests: `npm test` = tiers 0–1, pure headless, per-commit (78 tests). `npm run test:tier2` = 25
+Tests: `npm test` = tiers 0–1, pure headless, per-commit (79 tests). `npm run test:tier2` = 26
 scenarios (incl. 6 HiDPI at dpr 2/1.5) against the staged engine artifact (~45 s; restage with
 tools/stage-engine.mjs after engine rebuilds — it also stages the extension's host-root assets;
 src/engine/, src/vendor/ and the two injection payloads are gitignored). Engine iteration is
@@ -194,12 +194,26 @@ artifact, and binaryen moved devDependencies → dependencies (it ships, 13 MB a
 wasm). Guest wasm now compiles and runs end-to-end in the extension. Tier-2 scenario 22;
 contract table in engine-build.md § Host-root asset contract.
 
+*The GPU path is gone — no GL in the imports* (2026-08-15) — security.md says the engine has "no
+WebGL/WebGPU imports", but the link still carried `-sMAX_WEBGL_VERSION=2 -sFULL_ES3=1` from the
+retired Ganesh present, so the module imported emscripten's whole GL table (278 `gl*` + 5 `egl*`
++ 3 `emscripten_webgl_*` — 289 of the wasm's 377 imports) and only the viewer's `bibGPU: false`
+kept anything from *calling* it: the claim rested on reachability, not on the import list.
+Removed at every layer: the link flags and the `--wrap=pthread_create`/`OFFSCREENCANVAS_SUPPORT` canvas-transfer machinery, ~690
+lines of Ganesh/present/context-loss code in `main.cpp`, the worker's ImageBitmap present bridge,
+the harness's two GPU present modes, and — on the WebCore side — `PlatformDisplay.cpp`,
+`egl/GLDisplay.cpp`, `PlatformDisplayEmscripten.*` and Skia's `SkiaGLContext` world, replaced by
+GL-free stubs. Wasm imports 377 → 88, `embedder.js` 268 KB → 159 KB, `embedder.wasm` 104.1 →
+103.4 MB, WebKit patch 77 files → 75. Perf unchanged (same-session bench A/B; nothing deleted
+ran). Tripwire: tier-0 `engine-imports.test.mjs`; contract in engine-build.md § No-GPU link
+contract.
+
 Open issues in issues/ (guest-JS wedge, rcap dynamic budget, host-present ceiling at large
-framebuffers, engine links WebGL imports, CLoop `join` returned a non-string). The two viewer
-`?url=` issues (encoding vs sweep, scheme allowlist) were folded into
-plans/viewer-url-contract.md — which also records a CONFIRMED bridge hole: navigationPolicy is
-consulted before the scheme guard, so a guest top-level `file:` navigation reaches
-`location.replace` natively. Next work: [roadmap.md](roadmap.md).
+framebuffers, CLoop `join` returned a non-string). The two viewer `?url=` issues (encoding vs
+sweep, scheme allowlist) were folded into plans/viewer-url-contract.md — which also records a
+CONFIRMED bridge hole: navigationPolicy is consulted before the scheme guard, so a guest
+top-level `file:` navigation reaches `location.replace` natively. Next work:
+[roadmap.md](roadmap.md).
 
 ## Key decisions
 

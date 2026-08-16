@@ -54,32 +54,19 @@ if (BIB_PTHREAD)
         "SHELL:-pthread"
         "SHELL:-sPROXY_TO_PTHREAD"
         "SHELL:-sPTHREAD_POOL_SIZE=4"
-        # W-B2: the engine pthread drives the page canvas through an
-        # OffscreenCanvas transferred at proxied-main spawn. The transfer
-        # list is RUNTIME-decided (GPU mode only) via __wrap_pthread_create
-        # in main.cpp — deliberately NOT -sOFFSCREENCANVASES_TO_PTHREAD:
-        # that list is compile-time-fixed and a missing canvas fails
-        # pthread_create outright (node gates have no DOM; raster mode
-        # must keep the page's 2d context on the canvas).
-        "SHELL:-sOFFSCREENCANVAS_SUPPORT=1"
-        # NOTE: -sOFFSCREEN_FRAMEBUFFER=1 was required ONLY by the legacy
-        # Approach R readback present — renderViaOffscreenBackBuffer (in
-        # PlatformDisplayEmscripten) needed it to force preserveDrawingBuffer.
-        # The zero-copy bitmap present (transferToImageBitmap → page
-        # bitmaprenderer) needs the OffscreenCanvas' REAL default framebuffer,
-        # which an offscreen backbuffer would hide → blank/stale ImageBitmaps.
-        # So it is intentionally NOT set. To debug the old path, re-add it AND
-        # compile PlatformDisplayEmscripten with -DBIB_GPU_READBACK_PRESENT.
-        # See handoff-2026-06-13-gpu-present-rearchitecture.md.
-        "SHELL:-Wl,--wrap=pthread_create"
+        # No OffscreenCanvas/GL settings here on purpose: the engine has no
+        # GPU path (security.md — the module must import no GL entry point),
+        # so nothing transfers a canvas to the engine thread. With
+        # OFFSCREENCANVAS_SUPPORT off, Emscripten's pthread JS never reads the
+        # (char*)-1 transfer-list sentinel crt1_proxy_main sets, which is why
+        # the old __wrap_pthread_create interceptor could go too.
     )
 endif ()
 
 # Stamp the engine-threading mode into a tiny JS the host page (web/browser.html)
-# loads BEFORE it picks #screen's canvas context — context type is EXCLUSIVE
-# (2d / bitmaprenderer / engine-owned webgl2), and BIB_PTHREAD=ON vs OFF needs
-# different ones (gpu-bitmap vs gpu-implicit). Emitted next to embedder.js so the
-# dev server's /engine mount serves it at /engine/bib-build-config.js. Regenerates
+# loads before boot: a pthread build pumps from the engine worker, a
+# single-threaded one from the page. Emitted next to embedder.js so the dev
+# server's /engine mount serves it at /engine/bib-build-config.js. Regenerates
 # on reconfigure (the script re-syncs BIB_PTHREAD when the env var flips).
 file(GENERATE
     OUTPUT "$<TARGET_FILE_DIR:BibEmbedder>/bib-build-config.js"
@@ -119,13 +106,6 @@ target_link_options(BibEmbedder PRIVATE
     # real function names instead of wasm-function[N]. Costs binary size
     # only (no codegen change) — load-bearing for site-abort diagnosis.
     "SHELL:--profiling-funcs"
-    # Skia GPU (decision-005 G2): Ganesh drives a WebGL2 context created at
-    # boot when Module.bibGPU is set. FULL_ES3 ships the JS shadow-buffer
-    # emulation of glMapBufferRange & co — the SK_ASSUME_GL_ES=1 archive's
-    # GLES3 interface validation requires them (G1 finding 3). Inert in
-    # node/gate mode: nothing creates a context there.
-    "SHELL:-sMAX_WEBGL_VERSION=2"
-    "SHELL:-sFULL_ES3=1"
 )
 
 # ICU data archive at the same absolute path ICU compiled in as its default

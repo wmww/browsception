@@ -14,11 +14,11 @@ import {
   desiredRuleState,
   sweepAction,
   tabUrl,
-  viewerTarget,
   escapeSessionRule,
   escapeRuleId,
   CATCHALL_RULESET_ID,
 } from './dnr-rules.mjs';
+import { viewerTarget } from './viewer-url.mjs';
 import { normalizeEntry } from './list-match.mjs';
 import { getState } from './state.mjs';
 

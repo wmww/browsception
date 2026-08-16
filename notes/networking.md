@@ -51,7 +51,10 @@ Applied to every bridge request, before fetch:
    malicious nested site from riding the user's real logged-in sessions. Enforced structurally
    (the fetch call site literally hardcodes it), not per-request.
 2. **Scheme allowlist**: `https:` and `http:` only (no `file:`, `chrome-extension:`, `data:` is
-   engine-internal and never hits the bridge, no `ws(s):` until WebSocket bridging lands).
+   engine-internal and never hits the bridge, no `ws(s):` until WebSocket bridging lands). The
+   guard must stay the *first* thing a main-frame request meets: the 2.4 native-handoff policy is
+   consulted only for http(s) URLs, so a non-http(s) top-level load ends here rather than at
+   `location.replace` on the real tab (security.md § Sandbox→host sinks).
 3. **Private-network blocking** (default-on, per-profile override): reject hostnames that are IP
    literals in loopback/RFC1918/link-local/ULA ranges, `localhost`, `.local`, `.internal`. Known
    residual risk: DNS rebinding (fetch hides resolution) — document, and revisit if Chrome's PNA

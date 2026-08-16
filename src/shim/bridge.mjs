@@ -36,6 +36,18 @@ const isDropped = (name) =>
 // credit window honest against coalesced fetch chunks).
 const SLICE_BYTES = 64 * 1024;
 
+// Deliberate duplicate of src/ext/viewer-url.mjs isHttpUrl — the shim layer
+// stays free of the viewer's ?url= codec. Keep the two in sync.
+function isHttpUrl(url) {
+  let protocol;
+  try {
+    ({ protocol } = new URL(url));
+  } catch {
+    return false;
+  }
+  return protocol === 'http:' || protocol === 'https:';
+}
+
 export class Bridge {
   #inflight = new Map(); // reqId -> {ctrl, ruleId, unacked, ackWaiter, idleTimer}
   #nextRuleId = BRIDGE_RULE.PER_REQUEST_MIN_ID;
@@ -57,10 +69,11 @@ export class Bridge {
     this.module = module;
     this.capture = opts.capture;
     this.userAgent = opts.userAgent;
-    // 2.4 sandboxed->native boundary: called with the URL of every TOP-LEVEL
-    // document request ("main":1 from the engine); returning 'native' cancels
-    // the request engine-side and fires onNativeNavigation (the viewer then
-    // navigates the real tab).
+    // 2.4 sandboxed->native boundary: called with the URL of every http(s)
+    // TOP-LEVEL document request ("main":1 from the engine); returning
+    // 'native' cancels the request engine-side and fires onNativeNavigation
+    // (the viewer then navigates the real tab). Non-http(s) main loads never
+    // reach it — they are the guard's business, not the policy's.
     this.navigationPolicy = opts.navigationPolicy ?? null;
     this.onNativeNavigation = opts.onNativeNavigation ?? null;
     // Called when a TOP-LEVEL document request fails for a reason other than
@@ -160,7 +173,12 @@ export class Bridge {
     };
     this.#inflight.set(id, st);
 
-    if (req.main && this.navigationPolicy && this.navigationPolicy(req.url) === 'native') {
+    // Handing a URL to the real tab is a sandbox->host crossing, so only
+    // http(s) may take this branch: `file:`/`javascript:`/… main loads (a
+    // guest link, JS, or a 302 hop the engine re-issues) fall through to the
+    // guard below, fail with NET_ERR.GUARD, and surface as a load-failed
+    // strip with the tab intact.
+    if (req.main && isHttpUrl(req.url) && this.navigationPolicy?.(req.url) === 'native') {
       this.#fail(id, NET_ERR.CANCELLED, 'native disposition');
       this.onNativeNavigation?.(req.url);
       return;

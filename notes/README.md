@@ -63,8 +63,8 @@ lives in [roadmap.md](roadmap.md). Phase summaries:
   gate: tools/smoke-mvp.mjs real-site pass — sandboxed example.com/wikipedia, whitelist→native
   sweep (experiment-log.md 2026-08-10).
 
-Tests: `npm test` = tiers 0–1, pure headless, per-commit (79 tests). `npm run test:tier2` = 26
-scenarios (incl. 6 HiDPI at dpr 2/1.5) against the staged engine artifact (~45 s; restage with
+Tests: `npm test` = tiers 0–1, pure headless, per-commit (90 tests). `npm run test:tier2` = 30
+scenarios (incl. 6 HiDPI at dpr 2/1.5) against the staged engine artifact (~65 s; restage with
 tools/stage-engine.mjs after engine rebuilds — it also stages the extension's host-root assets;
 src/engine/, src/vendor/ and the two injection payloads are gitignored). Engine iteration is
 genuinely incremental (~90 s for embedder-only changes; engine-build.md fix 6) and works from any
@@ -72,8 +72,11 @@ worktree branch (worktrees.md § Engine work).
 
 Load-bearing implementation facts:
 
-- Viewer parses `?url=` **raw** — DNR `\0` substitution is un-encoded, so our own params must
-  precede `url=` and everything after it is the target (sw.mjs mirrors this in the sweep).
+- `?url=` has exactly one owner: `src/ext/viewer-url.mjs`. Format is **raw** — DNR `\0`
+  substitution is un-encoded, so our own params must precede `url=` and everything after it is the
+  target; a percent-encoded absolute http(s) target is tolerated on read (old tabs/bookmarks) and
+  canonicalized back to raw on rewrite. Viewer, sweep and popup all read it through that module,
+  and every host-world sink is gated by its `isHttpUrl` (security.md § Sandbox→host sinks).
 - src/manifest.json + src/rules/ are **generated** by tools/gen-ext.mjs (pinned key/id; CSP needs
   `'wasm-unsafe-eval'`). The manifest's catch-all `enabled: true` must agree with DEFAULT_STATE.
 - Portability gotchas: TextDecoder rejects SAB views (copy first — heap.mjs); assigning a class's
@@ -183,6 +186,17 @@ backpressure (`_bib_present_done`); fps unchanged, engine busy +3pp/+7pp (1600/2
 Tier-2 scenario 21 is the tripwire (pre-fix it tore on 13-60% of presents). Forced readbacks
 also no longer swallow pending canvas damage (rendering-input.md § present snapshot).
 
+*Viewer `?url=` contract + scheme gates* (2026-08-15) — one codec module (`src/ext/viewer-url.mjs`)
+replaced three slightly different `?url=` parsers, and every sandbox→host sink got an explicit
+http(s) gate. Two real bugs died: the sweep couldn't parse a percent-encoded target, so it declared
+a perfectly healthy viewer tab "not sandboxable" and `tabs.update`d the raw `https%3A…` string —
+which resolves against the extension origin and ERR_FILE_NOT_FOUNDs the tab; and the bridge
+consulted `navigationPolicy` *before* the scheme guard, so any non-http(s) top-level load
+(`ftp://`, `bsx://` — `file:` is refused earlier by WebCore) was dispositioned `'native'` and handed
+to `location.replace` on the real tab. Gates now live at `tabs.update`, `location.replace`, the
+popup's disposition, and `bib_load_url`. Tier-0 `viewer-url.test.mjs`, tier-1 native-handoff test,
+tier-2 `scheme gates` scenarios (security.md § Sandbox→host sinks).
+
 *Guest wasm + media stubs reached the extension* (2026-08-15) — the engine worker's pre-js fetches
 its guest-injection payloads and the wasm2js translator from **origin-absolute host-root** paths
 (`/wasm-polyfill.js`, `/media-stub.js`, `/vendor/binaryen/index.js`). Only the dev harness served
@@ -209,11 +223,8 @@ ran). Tripwire: tier-0 `engine-imports.test.mjs`; contract in engine-build.md §
 contract.
 
 Open issues in issues/ (guest-JS wedge, rcap dynamic budget, host-present ceiling at large
-framebuffers, CLoop `join` returned a non-string). The two viewer `?url=` issues (encoding vs
-sweep, scheme allowlist) were folded into plans/viewer-url-contract.md — which also records a
-CONFIRMED bridge hole: navigationPolicy is consulted before the scheme guard, so a guest
-top-level `file:` navigation reaches `location.replace` natively. Next work:
-[roadmap.md](roadmap.md).
+framebuffers, CLoop `join` returned a non-string, an intermittent tier-1 sweep escape-hatch
+flake). Next work: [roadmap.md](roadmap.md).
 
 ## Key decisions
 

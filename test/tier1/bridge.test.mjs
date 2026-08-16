@@ -244,6 +244,29 @@ test('a failed TOP-LEVEL load is reported to the viewer; cancels and hops are no
   );
 });
 
+test('the native handoff is http(s)-only: other schemes die at the guard', async () => {
+  // The sandbox->host crossing (viewer: location.replace on the REAL tab).
+  // navigationPolicy is consulted before the guard, and shouldSandbox is
+  // false for every non-http scheme, so without the precondition a guest
+  // top-level ftp://, bsx:// or file:// load lands on the host browser.
+  await boot({ nativeAll: true });
+  const natives = () => page.evaluate(() => __bs.natives.slice());
+  for (const url of ['file:///etc/passwd', 'ftp://app.bstest/x', 'bsx://evil/x', 'javascript:alert(1)']) {
+    const t = await request({ url, main: 1 });
+    assert.equal(t.error.kind, NET_ERR.GUARD, `${url} must fail at the guard`);
+    assert.deepEqual(await natives(), [], `${url} must not reach the native handoff`);
+  }
+  // http(s) still takes the branch (cancelled engine-side, handed to the host).
+  const ok = await request({ url: 'https://app.bstest/', main: 1 });
+  assert.equal(ok.error.kind, NET_ERR.CANCELLED);
+  assert.deepEqual(await natives(), ['https://app.bstest/']);
+  // ...and only for TOP-LEVEL loads: a subresource is never a crossing.
+  const sub = await request({ url: 'https://app.bstest/api/data' });
+  assert.equal(sub.status, 200);
+  assert.deepEqual(await natives(), ['https://app.bstest/']);
+  await boot({});
+});
+
 test('every finished request leaves the capture queue empty', async () => {
   // Unclaimed entries would be handed to the next fetch of the same URL.
   await request({ url: 'https://app.bstest/set-cookie?n=a&v=1' });

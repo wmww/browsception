@@ -19,9 +19,11 @@ import { launch, extensionIdFromManifest, requireStagedEngine, waitForFixtureSer
 const EXT_DIR = new URL('../../src', import.meta.url).pathname;
 const EXT_ID = extensionIdFromManifest(EXT_DIR);
 requireStagedEngine(EXT_DIR); // before spawning anything — a missing engine is a setup error
-// Own params precede url= (the raw-slice contract); `extra` like 'perflog=1'.
+const VIEWER_BASE = `chrome-extension://${EXT_ID}/ext/viewer.html`;
+// The canonical form: own params precede url=, target RAW (viewer-url.mjs).
+// `extra` is a bare param string like 'perflog=1'.
 const viewerURL = (target, extra = '') =>
-  `chrome-extension://${EXT_ID}/ext/viewer.html?${extra ? extra + '&' : ''}url=${encodeURIComponent(target)}`;
+  `${VIEWER_BASE}?${extra ? extra + '&' : ''}url=${target}`;
 
 const fixtures = spawn('node', [new URL('../fixtures/server.mjs', import.meta.url).pathname], {
   stdio: 'ignore',
@@ -563,8 +565,6 @@ async function pollUntil(fn, what, timeoutMs = 30000) {
 // the engine's, so the browser's own controls drive it. Asserting tab.url
 // tracks nested navigation is also the regression test for the popup escape
 // hatch, which slices the live target out of it.
-const rawViewerURL = (target) => `chrome-extension://${EXT_ID}/ext/viewer.html?url=${target}`;
-
 test('chrome: tab URL + native back/forward/reload drive the engine', { timeout: 300000 }, async () => {
   const page = await bootViewer('https://input.bstest/');
   const box = await (await page.$('#screen')).boundingBox();
@@ -577,10 +577,10 @@ test('chrome: tab URL + native back/forward/reload drive the engine', { timeout:
 
   await until(page, 500, 100, is([0, 0, 255]), 120000, 'fixture load');
   await pollUntil(async () => (await urlbar()) === 'https://input.bstest/', 'urlbar shows fixture URL');
-  // Entry-point tab URL (percent-encoded here) is REPLACED by the live one,
-  // raw — popup/sweep slice at url= without decoding.
+  // The tab URL is REPLACED by the live one on every commit (raw, canonical
+  // — popup/sweep slice at url= without decoding).
   await pollUntil(
-    () => page.url() === rawViewerURL('https://input.bstest/'),
+    () => page.url() === viewerURL('https://input.bstest/'),
     'tab URL synced to the committed URL',
   );
   assert.ok(await page.evaluate(() => !document.getElementById('back')), 'no in-viewer back button');
@@ -590,7 +590,7 @@ test('chrome: tab URL + native back/forward/reload drive the engine', { timeout:
   await until(page, 400, 300, is([102, 51, 153]), 120000, 'link nav');
   await pollUntil(async () => (await urlbar()) === 'https://input.bstest/final.html', 'urlbar follows link');
   await pollUntil(
-    () => page.url() === rawViewerURL('https://input.bstest/final.html'),
+    () => page.url() === viewerURL('https://input.bstest/final.html'),
     'tab URL follows nested navigation',
   );
   await pollUntil(() => page.evaluate(() => __bs.state.canGoBack), 'engine can go back');
@@ -602,7 +602,7 @@ test('chrome: tab URL + native back/forward/reload drive the engine', { timeout:
   await until(page, 500, 100, is([0, 0, 255]), 120000, 'back re-renders fixture');
   await pollUntil(async () => (await urlbar()) === 'https://input.bstest/', 'urlbar after back');
   await pollUntil(
-    () => page.url() === rawViewerURL('https://input.bstest/'),
+    () => page.url() === viewerURL('https://input.bstest/'),
     'tab URL after back',
   );
   assert.equal(
@@ -615,7 +615,7 @@ test('chrome: tab URL + native back/forward/reload drive the engine', { timeout:
   await forward();
   await until(page, 400, 300, is([102, 51, 153]), 120000, 'forward re-renders target');
   await pollUntil(
-    () => page.url() === rawViewerURL('https://input.bstest/final.html'),
+    () => page.url() === viewerURL('https://input.bstest/final.html'),
     'tab URL after forward',
   );
 
@@ -651,8 +651,7 @@ test('escape hatch: popup reopens the tab natively; other tabs stay sandboxed', 
   await chromeUI.goto(`chrome-extension://${EXT_ID}/ext/viewer.html?stub=1`);
   const ok = await chromeUI.evaluate(async () => {
     const tabs = await chrome.tabs.query({});
-    const target = tabs.find((t) => (t.url ?? '').includes('viewer.html?url=https%3A%2F%2Fgrid.bstest%2F')
-      || (t.url ?? '').includes('viewer.html?url=https://grid.bstest/'));
+    const target = tabs.find((t) => (t.url ?? '').includes('viewer.html?url=https://grid.bstest/'));
     if (!target) return false;
     const r = await chrome.runtime.sendMessage({
       type: 'open-natively', url: 'https://grid.bstest/', tabId: target.id,
@@ -746,6 +745,150 @@ test('invariants: hostile.bstest — guard blocks private-network; no target doc
   const httpFrameUrls = page.frames().map((f) => f.url()).filter((u) => /^https?:/.test(u));
   assert.deepEqual(httpFrameUrls, [], `no http(s)-origin frame in the tab (got ${JSON.stringify(httpFrameUrls)})`);
   assert.deepEqual(cdpTargets, [], 'no top-level target navigated to a fixture origin');
+  await page.close();
+});
+
+// --- Scheme gates: nothing but http(s) crosses into host-world -------------
+// plans/viewer-url-contract.md. Host-world sinks are bib_load_url (?url=
+// param, URL bar), tabs.update (sweep) and location.replace (bridge native
+// handoff); the guest must not be able to steer any of them at file:,
+// javascript: or data:.
+
+test('scheme gates: a non-http(s) ?url= target never boots the engine', { timeout: 300000 }, async () => {
+  for (const target of ['javascript:alert(1)', 'file:///etc/passwd', 'data:text/html,x', 'javascript%3Aalert(1)']) {
+    const page = await session.context.newPage();
+    await page.goto(viewerURL(target));
+    const strip = await pollUntil(
+      async () => {
+        const t = await page.evaluate(() => document.getElementById('boot').textContent);
+        return t && t.includes('blocked') ? t : null;
+      },
+      `blocked strip for ${target}`,
+      15000,
+    );
+    assert.match(strip, /only http\(s\) URLs/, `${target}: ${strip}`);
+    // No engine at all: the refusal happens before the embedder script loads.
+    assert.equal(await page.evaluate(() => !!globalThis.Module), false, `${target}: engine never loaded`);
+    assert.ok(page.url().startsWith(`chrome-extension://${EXT_ID}/`), `${target}: tab stays extension-origin`);
+    await page.close();
+  }
+});
+
+test('scheme gates: an encoded ?url= boots, canonicalizes, and survives the sweep', { timeout: 300000 }, async () => {
+  // The tolerated legacy form (old bookmarks, hand-built URLs). Tab URLs are
+  // not under our control, so every consumer has to read it the same way.
+  const encoded = viewerURL(encodeURIComponent('https://grid.bstest/'));
+  const page = await session.context.newPage();
+  await page.goto(encoded);
+  await page.waitForFunction(() => globalThis.__bs?.ready, undefined, { timeout: BOOT_TIMEOUT });
+  await until(page, 100, 100, is([255, 0, 0]), 120000, 'encoded entry point renders');
+  // Canonicalize on rewrite: the tab-history mirror re-emits the raw form.
+  await pollUntil(() => page.url() === viewerURL('https://grid.bstest/'), 'tab URL canonicalized to raw');
+
+  // Now put the legacy shape back and force a reconcile. The sweep used to
+  // fail to parse 'https%3A…', call the tab "not sandboxable" and
+  // tabs.update() that string — which resolves against the extension origin
+  // (chrome-extension://<id>/https%3A…) and ERR_FILE_NOT_FOUNDs a live tab.
+  await page.evaluate((u) => history.replaceState(history.state, '', u), encoded);
+  await configure({ blacklist: [...FIXTURE_BLACKLIST, 'sweep-trigger.bstest'] }, () =>
+    chrome.declarativeNetRequest
+      .getDynamicRules()
+      .then((r) => r.some((x) => x.condition.regexFilter.includes('sweep-trigger'))),
+  );
+  await page.waitForTimeout(2000); // the sweep runs right after the rule update
+  assert.equal(page.url(), encoded, 'sweep left the correctly-sandboxed tab alone');
+  assert.equal(await page.evaluate(() => __bs.ready && !__bs.dead), true, 'engine still live');
+
+  // And when the disposition really does flip, the sweep must hand
+  // tabs.update the DECODED target — the whole point of reading the legacy
+  // form instead of just refusing it.
+  await configure({ blacklist: FIXTURE_BLACKLIST.filter((d) => d !== 'grid.bstest') });
+  await pollUntil(() => page.url() === 'https://grid.bstest/', 'encoded tab swept native, decoded');
+  await page.close();
+  await configure({ blacklist: FIXTURE_BLACKLIST });
+});
+
+test('scheme gates: the URL bar refuses non-http(s)', { timeout: 300000 }, async () => {
+  const page = await bootViewer('https://grid.bstest/');
+  await until(page, 100, 100, is([255, 0, 0]), 120000, 'fixture render');
+  const before = await page.evaluate(() => __bs.state.url);
+
+  // Driven the way a user does it: type into the bar, press Enter.
+  await page.click('#urlbar');
+  await page.fill('#urlbar', 'javascript:alert(1)');
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(1000);
+  assert.equal(await page.evaluate(() => __bs.state.url), before, 'engine URL unchanged');
+  await until(page, 100, 100, is([255, 0, 0]), 30000, 'still on the fixture');
+
+  for (const bad of ['javascript:alert(1)', 'file:///etc/passwd', 'data:text/html,x', 'chrome-extension://x/y.html'])
+    assert.equal(await page.evaluate((u) => __bs.navigate(u), bad), false, `navigate refused ${bad}`);
+  assert.equal(await page.evaluate(() => __bs.state.url), before, 'engine URL still unchanged');
+  await page.close();
+});
+
+test('scheme gates: a guest cannot steer the real tab at a non-http(s) URL', { timeout: 300000 }, async () => {
+  // The confirmed hole: the bridge consulted navigationPolicy BEFORE the
+  // guard, so a non-http(s) main load got disposition 'native' (shouldSandbox
+  // is false for every non-http scheme) and the URL reached location.replace
+  // on the REAL tab. Each attempt below must instead end in a refusal the
+  // viewer reports, with the tab and the engine untouched.
+  const hostTargets = []; // any top-level target that left the extension origin
+  const page = await bootViewer('https://hostile.bstest/');
+  const cdp = await session.context.newCDPSession(page);
+  await cdp.send('Target.setDiscoverTargets', { discover: true });
+  cdp.on('Target.targetInfoChanged', ({ targetInfo }) => {
+    if (targetInfo.type === 'page' && !/^(chrome-extension:|about:blank$|$)/.test(targetInfo.url))
+      hostTargets.push(targetInfo.url);
+  });
+  await pollUntil(
+    () => page.evaluate(() => __bs.state.url === 'https://hostile.bstest/'),
+    'hostile page committed',
+  );
+
+  const attempts = [
+    // file: never reaches the loader at all — WebCore's own canDisplay
+    // refuses it. (The fork-era file:/MEMFS finding, structurally closed by
+    // the curl-less port: there is no local-file backend left to hit.)
+    ['link click', "document.getElementById('filelink').click()", /file:\/\/\/etc\/passwd.*engine refused it.*Not allowed to load local resource/],
+    ['location assign', "location.href = 'file:///etc/passwd'", /file:\/\/\/etc\/passwd.*engine refused it.*Not allowed to load local resource/],
+    // A 302 to file: never becomes a hop either: the host fetch refuses the
+    // unsafe redirect, so the capture sees no 3xx and the load just fails.
+    ['302 hop to file:', "location.href = '/redir-file'", /hostile\.bstest\/redir-file.*network error/],
+    // These two DO reach the bridge as main loads, so they are what the
+    // http(s) precondition on the native-handoff branch actually stops.
+    ['ftp assign', "location.href = 'ftp://hostile.bstest/x'", /ftp:\/\/hostile\.bstest\/x.*blocked by the sandbox guard.*scheme:ftp/],
+    ['custom scheme', "location.href = 'bsx://evil/x'", /bsx:\/\/evil\/x.*blocked by the sandbox guard.*scheme:bsx/],
+  ];
+  for (const [what, js, expected] of attempts) {
+    // Clear the previous attempt's strip (a commit would, but nothing here is
+    // allowed to commit — that's the point).
+    await page.evaluate(() => {
+      const b = document.getElementById('boot');
+      b.textContent = '';
+      b.style.display = 'none';
+    });
+    await page.evaluate((code) => __bs.eval(code), js);
+    const strip = await pollUntil(
+      async () => {
+        const t = await page.evaluate(() => document.getElementById('boot').textContent);
+        return t && /couldn.t load/.test(t) ? t : null;
+      },
+      `${what}: the viewer must report a refusal`,
+      30000,
+    );
+    assert.match(strip, expected, `${what}: ${strip}`);
+    assert.ok(page.url().startsWith(`chrome-extension://${EXT_ID}/`), `${what}: tab stays extension-origin`);
+    assert.equal(
+      await page.evaluate(() => __bs.state.url),
+      'https://hostile.bstest/',
+      `${what}: engine still on the hostile page`,
+    );
+  }
+  assert.deepEqual(hostTargets, [], 'no top-level target ever left the extension origin');
+  // The engine survived all of them: a real navigation still works.
+  await page.evaluate(() => __bs.navigate('https://grid.bstest/'));
+  await until(page, 100, 100, is([255, 0, 0]), 120000, 'engine usable after the blocked attempts');
   await page.close();
 });
 

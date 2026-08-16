@@ -10,6 +10,7 @@
 // subresources must never hit these rules.
 
 import { entryMatches, isIpLiteral, listMatches } from './list-match.mjs';
+import { isHttpUrl, viewerTarget, viewerURLFor } from './viewer-url.mjs';
 
 export const CATCHALL_RULESET_ID = 'catchall';
 
@@ -43,8 +44,8 @@ export function entryRegex(entry) {
 // The static catch-all ruleset (whitelist mode). Generated at build time into
 // rules/catchall.json; requires a pinned extension id (manifest "key") because
 // regexSubstitution needs an absolute URL.
-// \0 carries the raw matched URL un-encoded; the viewer must slice
-// location.search at the first "url=" rather than using URLSearchParams.
+// \0 carries the raw matched URL un-encoded — viewer-url.mjs owns that
+// contract on both sides.
 export function catchallRules(viewerBase) {
   return [
     {
@@ -52,7 +53,7 @@ export function catchallRules(viewerBase) {
       priority: PRIORITY.CATCHALL,
       action: {
         type: 'redirect',
-        redirect: { regexSubstitution: `${viewerBase}?url=\\0` },
+        redirect: { regexSubstitution: viewerURLFor(viewerBase, '\\0') },
       },
       condition: {
         regexFilter: '^https?://.*',
@@ -92,14 +93,6 @@ export function tabUrl(tab) {
   return tab.pendingUrl || tab.url || '';
 }
 
-// Target URL of a viewer tab, or null. The `?url=` slice is raw: DNR's \0
-// substitution is un-encoded (viewer.mjs mirrors this).
-export function viewerTarget(url, viewerBase) {
-  if (!url.startsWith(`${viewerBase}?`)) return null;
-  const i = url.indexOf('url=');
-  return i < 0 ? null : url.slice(i + 4);
-}
-
 /**
  * What the sweep should do with one tab: sandbox it, take it native, or
  * nothing. Symmetric by design (ui.md § toggle/edit behavior).
@@ -110,15 +103,20 @@ export function viewerTarget(url, viewerBase) {
 export function sweepAction(state, tab, viewerBase, escapeEntry = null) {
   const url = tabUrl(tab);
   const target = viewerTarget(url, viewerBase);
-  if (target !== null)
-    return shouldSandbox(state, target) ? null : { op: 'native', url: target };
+  if (target !== null) {
+    if (shouldSandbox(state, target)) return null; // correctly sandboxed
+    // Taking a tab native means tabs.update(target) — a host-world sink. A
+    // non-http(s) target would resolve against the extension origin and
+    // 404 the tab; the viewer already shows "blocked" for it. Leave it.
+    return isHttpUrl(target) ? { op: 'native', url: target } : null;
+  }
   if (!shouldSandbox(state, url)) return null;
   if (escapeEntry) {
     try {
       if (entryMatches(escapeEntry, new URL(url).hostname)) return null;
     } catch {}
   }
-  return { op: 'sandbox', url: `${viewerBase}?url=${url}` };
+  return { op: 'sandbox', url: viewerURLFor(viewerBase, url) };
 }
 
 /**
@@ -157,7 +155,7 @@ export function desiredRuleState(state, viewerBase) {
         priority: PRIORITY.LIST_REDIRECT,
         action: {
           type: 'redirect',
-          redirect: { regexSubstitution: `${viewerBase}?url=\\0` },
+          redirect: { regexSubstitution: viewerURLFor(viewerBase, '\\0') },
         },
         condition: { regexFilter: entryRegex(entry), resourceTypes: MAIN_FRAME },
       });

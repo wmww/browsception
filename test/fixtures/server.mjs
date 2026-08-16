@@ -79,6 +79,11 @@ function handle(req, res, scheme) {
     const code = Number(url.searchParams.get('code') ?? 302);
     return send(res, code, '', 'txt', { location: to });
   }
+  // Scheme-gate fixture: a 302 to a non-http(s) URL. The engine re-issues a
+  // redirect hop as a fresh main request, so this is the "guest steers the
+  // top level at file: without a link" case.
+  if (path === '/redir-file')
+    return send(res, 302, '', 'txt', { location: 'file:///etc/passwd' });
   if (path === '/set-cookie') {
     // /set-cookie?n=name&v=value&attrs=;Path=/;SameSite=None;Secure&then=/cookie-echo
     const n = url.searchParams.get('n') ?? 'bs';

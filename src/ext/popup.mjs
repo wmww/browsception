@@ -6,7 +6,8 @@
 import { getState } from './state.mjs';
 import { primaryActions } from './actions.mjs';
 import { normalizeEntry } from './list-match.mjs';
-import { tabUrl, viewerTarget } from './dnr-rules.mjs';
+import { tabUrl } from './dnr-rules.mjs';
+import { isHttpUrl, viewerTarget } from './viewer-url.mjs';
 
 const VIEWER = chrome.runtime.getURL('ext/viewer.html');
 const $ = (id) => document.getElementById(id);
@@ -15,11 +16,11 @@ function inspectTab(tab) {
   const url = tab ? tabUrl(tab) : '';
   const target = viewerTarget(url, VIEWER);
   if (target !== null) {
-    try {
-      return { disposition: 'sandboxed', host: new URL(target).hostname, url: target };
-    } catch {
-      return { disposition: 'other', host: null, url: null };
-    }
+    // A viewer tab whose target isn't http(s) is a tab the viewer already
+    // refused to load: no host, no per-site actions, nothing to open
+    // natively. (sw.mjs re-validates the open-natively URL regardless.)
+    if (!isHttpUrl(target)) return { disposition: 'other', host: null, url: null };
+    return { disposition: 'sandboxed', host: new URL(target).hostname, url: target };
   }
   if (/^https?:/.test(url)) return { disposition: 'native', host: new URL(url).hostname, url };
   return { disposition: 'other', host: null, url: null };

@@ -32,6 +32,8 @@ Fixture pages are assertion-friendly by construction:
   notes/perf-measurement.md).
 - `hostile.bstest` — tries everything it shouldn't: fetch to `localhost`/RFC1918/bad ports,
   `file:` links, window.open spam, oversized responses. Exists so guard tests are one navigation.
+  Its `#filelink` and the `/redir-file` route (302 → `file:///etc/passwd`) are driven by the
+  scheme-gate scenario, not by the page's own pass.
 
 Bench fixtures are separate on purpose: `tools/bench/fixtures/` on `*.bsbench`, served by the
 bench suite's own server on its own port lane, **append-only** because saved results reference
@@ -179,7 +181,16 @@ whole machine, end to end:
     nothing but three worker console warnings said so (2026-08-15). Asserts the guest-visible end
     state, so it catches any future break in that chain, not just a missing file.
 
-That's ~22 scenarios total. Growth policy: a new test requires a new *class* of failure it would
+23. **Scheme gates** (4 tests, plans-era `viewer-url-contract`): the sandbox→host boundary in
+    both directions. A non-http(s) `?url=` never boots the engine; a percent-encoded `?url=`
+    (legacy tabs/bookmarks) boots, is rewritten raw, survives a sweep, and — when its disposition
+    flips — is handed to `tabs.update` **decoded** (the ERR_FILE_NOT_FOUND regression); the URL
+    bar refuses non-http(s); and a guest driving the top level at `file:`/`ftp:`/an unknown scheme
+    (link, `location.href`, a 302 to `file:`) always ends in a refusal strip with the tab and
+    engine intact. That last one is the only cover for the bridge's native-handoff gate reaching
+    `location.replace` — see security.md § Sandbox→host sinks for which schemes get how far.
+
+That's ~26 scenarios total. Growth policy: a new test requires a new *class* of failure it would
 catch (or a regression that escaped); prefer extending an existing scenario's probes over adding
 scenarios.
 

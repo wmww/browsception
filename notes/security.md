@@ -103,6 +103,47 @@ The shim never re-implements web security; it implements *capability* security.
   entry), other extensions' content scripts run there, origin credentials ambient. Documented in
   architecture.md; extension-page mode remains primary partly for this reason.
 
+### Sandbox→host sinks: only http(s) crosses
+
+**Rule: a URL derived from guest content or from a `?url=` param may reach a host-world sink only
+if it is absolute http(s).** Host-world sinks are the three places a string becomes real browser
+behavior: `tabs.update` (the sweep), `location.replace` (the bridge's native handoff), and
+`bib_load_url` (host→engine, the reverse direction — same gate). `data:`/`blob:`/`javascript:`
+*inside* the engine are not crossings: guest-authored content rendering in guest context has the
+page's own privilege, and the gates are what stop it from ever becoming host behavior.
+
+`?url=` is parsed in exactly one place — `src/ext/viewer-url.mjs` (the wire format, incl. the
+tolerated percent-encoded legacy form); `isHttpUrl` from the same module is the gate. The shim
+keeps a deliberate two-line copy of `isHttpUrl` (bridge.mjs) rather than importing extension-layer
+code.
+
+| Entry point | Gate |
+|---|---|
+| `viewer.html?url=` → `bib_load_url` | `normalizeEngineURL` (http(s) only) → boot strip "blocked: only http(s) URLs" |
+| URL bar / popstate / retry → `bs.navigate` | same `normalizeEngineURL` |
+| bridge fetches (subresources, redirect hops) | guard.mjs scheme allowlist → `NET_ERR.GUARD` |
+| bridge **native handoff** → `location.replace` | http(s) precondition *before* `navigationPolicy`; anything else falls through to the guard |
+| sweep native branch → `tabs.update` | `isHttpUrl(target)`, else leave the tab alone |
+| popup `inspectTab` | non-http(s) target → disposition `other`, no host, no actions |
+| popup "open natively" → SW | SW re-validates http(s) server-side (defense in depth) |
+
+The native-handoff row was a **live hole** until 2026-08-15: `navigationPolicy` ran before the
+guard, and `shouldSandbox` is false for every non-http scheme, so any non-http(s) top-level load
+was dispositioned `'native'` and handed to `location.replace` on the real tab. Measured reality of
+what can reach it (tier-2 `scheme gates` scenario):
+
+- `file:` top-level (link, `location.href`) never reaches the loader at all — WebCore's own
+  `canDisplay` refuses it ("Not allowed to load local resource"). The fork-era `file:`/MEMFS
+  finding is structurally closed twice over: the curl-less port has no local-file backend, so
+  `file:` would only be a bridge request, and the bridge would deny it.
+- A `302` to `file:` never becomes a hop either: the host `fetch` refuses the unsafe redirect, the
+  capture sees no 3xx, and the load fails as a network error.
+- `ftp:` and unknown schemes (`bsx://…`) **do** arrive at the bridge as main loads — those are what
+  the precondition actually stops today, and they are what the test pins.
+
+Failure mode after the gate is the right one: guard denial → `NET_ERR.GUARD` → the viewer's
+load-failed strip ("blocked by the sandbox guard (scheme:ftp)"), tab and engine intact.
+
 ### Startup race: one navigation per browser start runs natively
 
 Measured 2026-08-14 (Chromium 151; packed CRX external-install *and* unpacked `--load-extension`,

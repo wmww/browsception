@@ -7,7 +7,6 @@ import {
   shouldSandbox,
   sweepAction,
   tabUrl,
-  viewerTarget,
   PRIORITY,
   CATCHALL_RULESET_ID,
 } from '../../src/ext/dnr-rules.mjs';
@@ -150,13 +149,6 @@ test('tabUrl prefers the in-flight navigation over the placeholder url', () => {
   assert.equal(tabUrl({}), '');
 });
 
-test('viewerTarget slices the raw ?url= tail', () => {
-  assert.equal(viewerTarget(`${VIEWER}?url=https://a.example/?q=1`, VIEWER), 'https://a.example/?q=1');
-  assert.equal(viewerTarget(`${VIEWER}?dpr=2&url=https://a.example/`, VIEWER), 'https://a.example/');
-  assert.equal(viewerTarget('https://a.example/', VIEWER), null);
-  assert.equal(viewerTarget(`${VIEWER}`, VIEWER), null);
-});
-
 test('sweepAction sandboxes a tab whose navigation is still in flight', () => {
   assert.deepEqual(sweep({ url: 'about:blank', pendingUrl: 'https://raced.example/x' }), {
     op: 'sandbox',
@@ -175,6 +167,34 @@ test('sweepAction is symmetric and idempotent', () => {
   });
   assert.equal(sweep({ url: `${VIEWER}?url=https://other.example/a` }), null);
   assert.equal(sweep(sweep({ url: 'https://other.example/a' })), null); // {url} of the redirect
+});
+
+test('sweepAction reads an ENCODED viewer target like the viewer does', () => {
+  // Regression: viewerTarget used to hand the raw 'https%3A…' slice to
+  // shouldSandbox, which can't parse it → "not sandboxable" → tabs.update
+  // with a relative-looking string → chrome-extension://<id>/https%3A… →
+  // ERR_FILE_NOT_FOUND on a tab that was perfectly fine.
+  const enc = (u) => encodeURIComponent(u);
+  assert.equal(sweep({ url: `${VIEWER}?url=${enc('https://other.example/a?q=1')}` }), null);
+  // still-native target: taken native with the DECODED url
+  assert.deepEqual(sweep({ url: `${VIEWER}?url=${enc('https://trusted.com/a?q=1')}` }), {
+    op: 'native',
+    url: 'https://trusted.com/a?q=1',
+  });
+});
+
+test('sweepAction never sends a non-http(s) viewer target to tabs.update', () => {
+  // The viewer already refuses these ("blocked: only http(s) URLs"); the
+  // sweep's job is to leave the tab alone, not to navigate it to garbage.
+  for (const target of [
+    'javascript:alert(1)',
+    'file:///etc/passwd',
+    'data:text/html,x',
+    'javascript%3Aalert(1)',
+    'not a url',
+    '',
+  ])
+    assert.equal(sweep({ url: `${VIEWER}?url=${target}` }), null, `target ${target}`);
 });
 
 test('sweepAction leaves an escaped tab native (the grant outranks the sweep)', () => {

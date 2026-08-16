@@ -14,14 +14,13 @@ import { RedirectCapture } from '../shim/redirect-capture.mjs';
 import { createStubModule } from '../shim/engine-stub.mjs';
 import { createPresenter } from './blit.mjs';
 import { shouldSandbox } from './dnr-rules.mjs';
+import { sliceTarget, viewerParams, viewerURLFor } from './viewer-url.mjs';
 import { getState, onStateChanged } from './state.mjs';
 
 // Viewer params must precede url= — the raw target URL after it may contain
 // its own query (&stub=, &blit=, …) that must NOT be read as ours.
-const _urlIdx = location.search.indexOf('url=');
-const params = new URLSearchParams(
-  _urlIdx >= 0 ? location.search.slice(0, _urlIdx) : location.search,
-);
+const ownParams = viewerParams(location.search);
+const params = new URLSearchParams(ownParams);
 const bootEl = document.getElementById('boot');
 const statusEl = document.getElementById('status');
 const canvas = document.getElementById('screen');
@@ -33,8 +32,14 @@ globalThis.__bsBoot = async (opts = {}) => {
   if (current) await current.bridge.dispose();
   const module = createStubModule(opts.stub ?? {});
   const mainFailures = [];
+  const natives = [];
   const bridge = new Bridge(module, {
     capture: new RedirectCapture(),
+    // opts.nativeAll: a policy that natives EVERYTHING, so a tier-1 test can
+    // prove it is the bridge's http(s) precondition — not the policy — that
+    // keeps a non-http(s) main load away from the host-world handoff.
+    navigationPolicy: opts.nativeAll ? () => 'native' : undefined,
+    onNativeNavigation: (url) => natives.push(url),
     onMainLoadFailed: (url, kind, message) => mainFailures.push({ url, kind, message }),
     userAgent: opts.userAgent ?? 'BrowsceptionBridge/0.1',
     guardOpts: opts.guardOpts,
@@ -49,30 +54,17 @@ globalThis.__bsBoot = async (opts = {}) => {
     request: (req) => module.stub.request(req),
     cancel: (id) => module.stub.cancel(id),
     mainFailures,
+    natives,
     capturePending: () => bridge.capture.pending(),
     liveAllocs: () => module.stub.liveAllocs(),
   };
   return true;
 };
 
-// The DNR redirect's \0 carries the matched URL RAW (un-encoded), so the
-// target's own query would be truncated by URLSearchParams — slice at the
-// first "url=" instead. Manual/test paths pass it percent-encoded; decode
-// only that form. A raw target's #fragment ends up as OUR fragment (the tab
-// URLs we write back carry it), so it has to be glued back on.
-function rawUrlParam() {
-  const q = location.search;
-  const i = q.indexOf('url=');
-  if (i < 0) return null;
-  let raw = q.slice(i + 4);
-  if (/^https?%3A/i.test(raw)) {
-    try {
-      raw = decodeURIComponent(raw);
-    } catch {}
-    return raw;
-  }
-  return raw + location.hash;
-}
+// The ?url= target of THIS page (viewer-url.mjs owns the wire format).
+// location.search excludes the fragment, so a raw target's own #frag — which
+// landed as ours — gets glued back on.
+const rawUrlParam = () => sliceTarget(location.search, location.hash);
 
 // http(s) only: anything else must never reach bib_load_url (?url= arrives
 // from arbitrary intercepted navigations).
@@ -282,15 +274,9 @@ async function bootEngine() {
   // Every mirrored entry carries a real URL, so an entry the engine can't
   // traverse to (fresh engine after a native reload, pruned list) still
   // cold-boots correctly via bib_load_url.
-  const viewerParams = (() => {
-    const q = location.search;
-    const i = q.indexOf('url=');
-    if (i >= 0) return q.slice(0, i); // "?" or "?blit=2d&" — must precede url=
-    return q ? `${q}&` : '?';
-  })();
-  // Raw, never percent-encoded: popup/sweep slice at the first url= without
-  // decoding (the DNR \0 contract).
-  const tabURLFor = (url) => location.pathname + viewerParams + 'url=' + url;
+  // Canonical RAW form, never percent-encoded (the DNR \0 contract): a
+  // legacy encoded entry point is rewritten raw the first time we mirror.
+  const tabURLFor = (url) => viewerURLFor(location.pathname, url, ownParams);
   const sameURL = (a, b) => {
     if (a === b) return true;
     if (!a || !b) return false;

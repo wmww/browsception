@@ -194,9 +194,12 @@ artifact, and binaryen moved devDependencies → dependencies (it ships, 13 MB a
 wasm). Guest wasm now compiles and runs end-to-end in the extension. Tier-2 scenario 22;
 contract table in engine-build.md § Host-root asset contract.
 
-Open issues in issues/ (guest-JS wedge, rcap dynamic budget, viewer URL-scheme allowlist,
-encoded viewer URL breaks the sweep, host-present ceiling at large framebuffers, engine links
-WebGL imports, CLoop `join` returned a non-string). Next work: [roadmap.md](roadmap.md).
+Open issues in issues/ (guest-JS wedge, rcap dynamic budget, host-present ceiling at large
+framebuffers, engine links WebGL imports, CLoop `join` returned a non-string). The two viewer
+`?url=` issues (encoding vs sweep, scheme allowlist) were folded into
+plans/viewer-url-contract.md — which also records a CONFIRMED bridge hole: navigationPolicy is
+consulted before the scheme guard, so a guest top-level `file:` navigation reaches
+`location.replace` natively. Next work: [roadmap.md](roadmap.md).
 
 ## Key decisions
 

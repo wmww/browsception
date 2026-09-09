@@ -117,8 +117,8 @@ result appended here (keep the question, add `**Answer (date):**`).
 
 12. **Chrome: does injected COOP/COEP via DNR make a real page crossOriginIsolated?** Only matters
     for a hypothetical Chrome mode B. Low priority.
-13. **Firefox port plan.** Single-thread build performance reality check; StreamFilter mode B
-    prototype (also the FF threads unlock — bug 1673477 tracking).
+13. **Firefox port plan.** Superseded by plans/one-engine-both-browsers.md (worker-hosted
+    non-pthread link on both browsers; mode B dropped). Probe results land here.
 14. **Kitesurf open-sourcing** (Cloudflare, promised 2026-08): if it lands embeddable, evaluate as
     a lightweight second engine (Blitz+Stylo+Boa, no video/WebGL — but tiny vs WebKit).
 15. **WebSocket bridging** for nested-page WS (host WebSocket from extension origin). Post-MVP.

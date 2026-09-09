@@ -10,7 +10,8 @@ plans/mvp.md plus loose ends carried out of Phases 1–2.
 3. Popups/window.open → new viewer tabs; dialogs (alert/confirm/prompt/auth) as viewer modals.
 4. Audio via AudioWorklet ring buffer.
 5. Session restore, history, list import/export polish.
-6. Firefox port: single-thread build first; then StreamFilter mode B (real URL + FF threads).
+6. Firefox port: one non-pthread engine link hosted in a Worker on both browsers, DNR on
+   Firefox too, mode B dropped — plans/one-engine-both-browsers.md.
 7. Perf: dirty rects, scroll fast-path, engine tile cache tuning, startup snapshotting.
 8. **Host-side tiled compositing in the shim** (from the firefox-wasm comparison, prior-art.md):
    engine paints tiles a bit larger than the viewport, the shim owns the scroll offset and

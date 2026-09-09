@@ -19,7 +19,7 @@
 
 import { NET_ERR, NET_WINDOW_BYTES } from '../abi/abi.mjs';
 import { evaluateRequest, CAPS } from './guard.mjs';
-import { setCookiesOf } from './redirect-capture.mjs';
+import { isRedirectEntry, setCookiesOf } from './redirect-capture.mjs';
 import { BRIDGE_RULE, baseSessionRules, perRequestHeaderRule } from '../ext/bridge-rules.mjs';
 
 // Fetch-forbidden request headers the engine may legitimately send; these
@@ -126,6 +126,13 @@ export class Bridge {
     if (st.main && kind !== NET_ERR.CANCELLED) this.onMainLoadFailed?.(st.url, kind, message);
   }
 
+  // The engine drives redirects: report the 3xx and let it issue the hop.
+  #redirect(id, req, entry) {
+    const headers = { status: entry.status, url: req.url, headers: entry.headers };
+    this.engine.netRedirect(id, entry.status, JSON.stringify(headers));
+    this.#finish(id);
+  }
+
   #finish(id) {
     const st = this.#inflight.get(id);
     if (!st) return;
@@ -228,21 +235,27 @@ export class Bridge {
       // the capture disambiguates (a 3xx was observed iff it was a redirect).
       const entry = await this.capture.take(req.url);
       st.took = true;
-      if (entry && entry.status >= 300 && entry.status < 400) {
-        const headers = { status: entry.status, url: req.url, headers: entry.headers };
-        this.engine.netRedirect(id, entry.status, JSON.stringify(headers));
-        this.#finish(id);
-        return;
-      }
+      if (isRedirectEntry(entry)) return this.#redirect(id, req, entry);
       return this.#fail(id, NET_ERR.NETWORK, String(err?.message ?? err));
     }
-    if (!this.#inflight.has(id)) return;
+    if (!this.#inflight.has(id)) return void res.body?.cancel().catch(() => {});
+
+    const entry = await this.capture.take(req.url);
+    st.took = true;
+    if (!this.#inflight.has(id)) return void res.body?.cancel().catch(() => {});
+    // Firefox follows a stack-synthesized redirect (HSTS upgrade) inside the
+    // same fetch, redirect:'error' notwithstanding, so the response in hand is
+    // the TARGET's (redirect-capture.mjs header). Hand the engine the hop
+    // instead and let it re-issue the target as its own request: the jar,
+    // the origin and mixed-content decisions must see the URL actually loaded.
+    if (isRedirectEntry(entry)) {
+      res.body?.cancel().catch(() => {});
+      return this.#redirect(id, req, entry);
+    }
 
     // Merge captured Set-Cookie (invisible to fetch) into the header list.
     // Bodies arrive decoded — strip encoding/length headers per the ABI.
     const stripped = new Set(['set-cookie', 'content-encoding', 'content-length', 'transfer-encoding']);
-    const entry = await this.capture.take(req.url);
-    st.took = true;
     const headers = [...res.headers.entries()].filter(([k]) => !stripped.has(k));
     if (entry) for (const v of setCookiesOf(entry)) headers.push(['set-cookie', v]);
     this.engine.netResponse(

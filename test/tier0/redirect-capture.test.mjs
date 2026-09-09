@@ -4,7 +4,7 @@
 // all, and missing it left the bridge reporting a bare network failure.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { RedirectCapture, setCookiesOf } from '../../src/shim/redirect-capture.mjs';
+import { RedirectCapture, isRedirectEntry, setCookiesOf } from '../../src/shim/redirect-capture.mjs';
 
 const ORIGIN = 'chrome-extension://abcd';
 const URL_A = 'https://app.example/a';
@@ -217,4 +217,58 @@ test('stop() unregisters both listeners and drops queued entries', async () => {
   capture.stop();
   assert.equal(chrome.listenerCount(), 0);
   assert.equal(await capture.take(URL_A, 10), null);
+});
+
+// Firefox reports repeated headers as ONE value joined with "\n" (verified
+// 2026-09-09, Firefox 155: google.com's 8 Set-Cookie lines arrived as a single
+// string). The engine rejects any header value carrying a newline, so a page
+// that set two cookies failed with "Response contained invalid HTTP headers".
+test('firefox: newline-joined repeated headers are split back into one entry per line', async () => {
+  const { chrome, capture } = started({ firefox: true });
+  chrome.fire('onHeadersReceived', {
+    requestId: '1', url: URL_A, statusCode: 200,
+    responseHeaders: hdrs({ 'Set-Cookie': 'a=1; Path=/\nb=2; Path=/; HttpOnly\n', 'X-Empty': '' }),
+  });
+  const entry = await capture.take(URL_A, 10);
+  assert.deepEqual(setCookiesOf(entry), ['a=1; Path=/', 'b=2; Path=/; HttpOnly']);
+  assert.deepEqual(entry.headers.filter(([k]) => k === 'x-empty'), [['x-empty', '']], 'empty values survive');
+  assert.ok(entry.headers.every(([, v]) => !v.includes('\n')));
+});
+
+// Firefox's HSTS upgrade (verified 2026-09-09, Firefox 155): onBeforeRedirect
+// fires with statusCode 0, then the SAME request continues to the https
+// target inside the same fetch — redirect:'error' does not stop it. The
+// bridge must see a redirect entry (the 307 Chrome reports for the same
+// thing), and nothing from the continuation, which the engine never asked
+// for: it re-issues the target itself.
+test('firefox: an HSTS upgrade is a 307 entry; the continued request\'s events are dropped', async () => {
+  const { chrome, capture } = started({ firefox: true });
+  chrome.fire('onBeforeRedirect', {
+    requestId: '1', url: 'http://wikipedia.org/', statusCode: 0, responseHeaders: [],
+    redirectUrl: 'https://wikipedia.org/',
+  });
+  chrome.fire('onHeadersReceived', {
+    requestId: '1', url: 'https://wikipedia.org/', statusCode: 301,
+    responseHeaders: hdrs({ 'Set-Cookie': 'target=1', Location: 'https://www.wikipedia.org/' }),
+  });
+  const entry = await capture.take('http://wikipedia.org/', 10);
+  assert.equal(entry.status, 307);
+  assert.deepEqual(entry.headers, [['location', 'https://wikipedia.org/']]);
+  assert.ok(isRedirectEntry(entry));
+  assert.equal(await capture.take('https://wikipedia.org/', 10), null, 'continuation not queued');
+  assert.equal(capture.pending(), 0);
+  // The engine's own request for the target gets its own entry.
+  chrome.fire('onHeadersReceived', {
+    requestId: '2', url: 'https://wikipedia.org/', statusCode: 301,
+    responseHeaders: hdrs({ 'Set-Cookie': 'target=2', Location: 'https://www.wikipedia.org/' }),
+  });
+  const own = await capture.take('https://wikipedia.org/', 10);
+  assert.deepEqual(setCookiesOf(own), ['target=2']);
+});
+
+test('isRedirectEntry: 3xx with a Location only', () => {
+  assert.ok(isRedirectEntry({ status: 302, headers: [['location', '/x']] }));
+  assert.ok(!isRedirectEntry({ status: 302, headers: [] }));
+  assert.ok(!isRedirectEntry({ status: 200, headers: [['location', '/x']] }));
+  assert.ok(!isRedirectEntry(null));
 });

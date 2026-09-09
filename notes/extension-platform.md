@@ -43,8 +43,22 @@ from **one source tree on both browsers**; the divergence budget is manifest gen
 - webRequest from an extension page: `onHeadersReceived` with `['responseHeaders']` shows
   Set-Cookie including HttpOnly (no `'extraHeaders'` — Firefox rejects the string; Chrome needs
   it); `details.initiator` is undefined, `originUrl` names the page; **`onBeforeRedirect` never
-  fires for a `redirect:'error'` fetch**, so the 3xx is taken from `onHeadersReceived`
-  (redirect-capture.mjs handles all three by feature detection).
+  fires for a server 3xx under `redirect:'error'`**, so that 3xx is taken from
+  `onHeadersReceived`. Three more shapes, all found on real sites the day after the port landed
+  (redirect-capture.mjs feature-detects every one; networking.md § redirect capture):
+  - **repeated headers arrive as one value joined with `\n`** — google.com's 8 `Set-Cookie`
+    lines came as a single string. The engine refuses any header value with a newline
+    ("Response contained invalid HTTP headers"), so the capture splits per line.
+  - **an HSTS upgrade is `onBeforeRedirect` with `statusCode: 0`, and the same request then
+    carries on to the https target inside the same fetch**, `redirect:'error'` notwithstanding
+    (Chrome: a 307 "Internal Redirect" and the fetch rejects). Dynamic HSTS (from a
+    `Strict-Transport-Security` seen earlier in the profile) does this; the built-in preload
+    list did **not** upgrade extension fetches in a fresh profile (`http://wikipedia.org/` and
+    `http://github.com/` went out plain). The bridge reports the hop as a 307 and drops the
+    continuation.
+  - **a DNR `redirect` rule on an xmlhttprequest bridge fetch fires no event at all** (only
+    `onErrorOccurred NS_BINDING_ABORTED`), so it is a bare network failure. Accepted: none of
+    our rules redirect anything but `main_frame`; only a foreign extension's rule could.
 - Manifest: `key`, COOP/COEP keys only draw "unexpected property" warnings; dropped from the
   Firefox manifest anyway. CSP `'wasm-unsafe-eval'` allows wasm on the page and in workers.
 - Blocking `webRequest.onBeforeRequest` and StreamFilter (a stay-on-origin "mode B") exist on
@@ -53,9 +67,16 @@ from **one source tree on both browsers**; the divergence budget is manifest gen
   release builds, so `test/harness/firefox.mjs` drives system Firefox headless over a hand-rolled
   WebDriver BiDi client (`webExtension.install {type:'path'}` = temporary install;
   `--remote-allow-system-access` is mandatory for moz-extension pages). Fixture mapping: prefs
-  `network.dns.localDomains` + `network.socket.forcePort` ("443=<port>;80=<port>"), TLS via the
-  BiDi `acceptInsecureCerts` capability. BiDi `log.entryAdded` is silent for moz-extension pages
-  (`page.hookConsole()` instead).
+  `network.dns.localDomains` + `network.socket.forcePort` ("443=<port>;80=<port>" — note this
+  forces **every** port-80/443 connection to the fixture ports, so the harness profile cannot
+  reach the real internet; pass `profilePrefs` clearing both to browse live sites). TLS: the
+  fixture CA is imported into the profile's NSS db with `certutil` (`ff.trustsFixtureCert`), on
+  top of the BiDi `acceptInsecureCerts` capability — an override silences the error but Firefox
+  then ignores `Strict-Transport-Security`, and mozilla::pkix refuses both a self-signed CA:TRUE
+  leaf and a `*.bstest` wildcard (one label after the `*`), hence the CA+leaf pair naming every
+  host (test/fixtures/hosts.mjs). BiDi `log.entryAdded` is silent for moz-extension pages
+  (`page.hookConsole()` instead). Firefox does not start inside a sandboxed agent shell (no
+  BiDi banner, no exit): run harness scripts unsandboxed.
 
 ## The address-bar constraint (permanent)
 

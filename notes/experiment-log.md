@@ -604,3 +604,42 @@ engine worker, no transfer, no main-thread upload — is now a local change
 coherence) retired because the worker copies the band out synchronously.
 **Decision**: ship the plain link on both browsers; the proxy link stays an `EXCLUDE_FROM_ALL`
 target. The 2560 regression goes on the existing host-present issue.
+
+## 2026-09-09 — Firefox: `http://google.com/` "network error", Chrome fine
+
+**Hypothesis**: a redirect the capture misses on Firefox (the day-old port had handled only the
+server-3xx-from-`onHeadersReceived` shape).
+
+**What ran**: `tools/probe-firefox.mjs`-style probes from an extension page (fresh headless
+profile, port forcing cleared so the real internet is reachable), logging every webRequest event
+for `fetch(url, {redirect:'error', credentials:'omit', cache:'no-store'})`; then the real
+`dist/firefox` extension driven to `viewer.html?url=http://google.com/`.
+
+**Findings** (Firefox 155.0.1):
+- Fresh profile: `http://google.com/` → 301 captured fine → `http://www.google.com/` → 302 →
+  `https://www.google.com/?gws_rd=ssl` → 200 → **"the engine refused it (Response contained
+  invalid HTTP headers)"**. webRequest delivered Google's 8 `Set-Cookie` lines as ONE value with 7
+  `\n`s; the engine's `containsInvalidHTTPHeaders` trips on any newline. Any multi-cookie site.
+- After a `Strict-Transport-Security` has been seen for a host (the user's profile has one for
+  `www.google.com`): `http://host/` → `onBeforeRedirect {statusCode: 0, redirectUrl: https://…}`
+  → the SAME requestId continues to https → its `onHeadersReceived` under the https key → the
+  fetch **resolves** (github) or rejects if that hop redirects (wikipedia). The bridge took the
+  status-0 entry as "not a redirect": exactly the reported strip, `couldn't load http://… —
+  network error (NetworkError when attempting to fetch resource.)`, reproduced verbatim through
+  the real extension on `http://wikipedia.org/`.
+- The built-in HSTS preload list did not upgrade extension fetches (`http://wikipedia.org/`,
+  `http://github.com/` went out plain in a fresh profile); dynamic HSTS did.
+- A DNR `redirect` rule on an xmlhttprequest fetch: no `onBeforeRedirect`, no headers, only
+  `onErrorOccurred NS_BINDING_ABORTED`. Unfixable from the outside; we never redirect our own
+  bridge traffic.
+- Harness: `network.socket.forcePort` sends every port-80/443 connection to the fixture ports
+  (live sites hang there); Firefox does not start inside the sandboxed agent shell at all.
+  Firefox ignored the fixture's STS header behind `acceptInsecureCerts`: pkix rejects a CA:TRUE
+  self-signed leaf as an end entity and a `*.bstest` wildcard (one label after the `*`), so the
+  fixture cert became a CA + leaf naming every host, the CA imported with `certutil`.
+
+**Decision**: capture splits `\n`-joined values; a status-0 `onBeforeRedirect` becomes a 307
+entry, its requestId's later events dropped; the bridge reports a redirect entry as the hop even
+when the fetch resolved (cancelling the body). Google loads on Firefox
+(`https://www.google.com/?gws_rd=ssl`, title "Google"). Tier-0 66, tier-1 34, Firefox tier-2
+9/9 (two new), Chrome tier-1 bridge unchanged.

@@ -258,6 +258,17 @@ non-shared memory in a worker, WebGL2 presenter all work. Tier-2: 29 Chrome scen
 7-scenario Firefox subset green from one tree (testing.md); bench A/B in experiment-log.md.
 Scenario 21 retired (tearing is structurally impossible now).
 
+*Firefox on real sites* (2026-09-09, later) — `http://google.com/` failed on Firefox with a bare
+"network error" while Chrome was fine. Two Firefox-only network-stack shapes, neither reachable
+by the fixture-only tier-2 subset: webRequest joins repeated `Set-Cookie` into one `\n`-joined
+value (the engine refuses the response), and a dynamic-HSTS upgrade is `onBeforeRedirect`
+status 0 with the fetch carrying on to https inside the same request (the bridge read status 0
+as "not a redirect"). Fixed in redirect-capture.mjs + bridge.mjs (307 hop, continuation
+dropped, body cancelled); tier-0 `bridge.test.mjs` (stubbed fetch) and two Firefox tier-2
+scenarios, the HSTS one made possible by trusting the fixture CA for real in the Firefox profile
+(pkix refuses the old self-signed `*.bstest` leaf). Details: extension-platform.md § Firefox,
+networking.md § redirect capture, experiment-log.md.
+
 Open issues in issues/ (guest-JS wedge, rcap dynamic budget, host-present ceiling at large
 framebuffers, CLoop `join` returned a non-string). Next work: [roadmap.md](roadmap.md).
 

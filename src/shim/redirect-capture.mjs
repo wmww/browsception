@@ -18,8 +18,22 @@
 // Browser differences, all feature-detected here: `details.initiator`
 // (Chrome) vs `details.originUrl` (Firefox) name the requesting page;
 // 'extraHeaders' exists on Chrome only (Firefox rejects it, and shows
-// Set-Cookie without it); onBeforeRedirect never fires on Firefox under
-// redirect:'error'.
+// Set-Cookie without it); onBeforeRedirect never fires on Firefox for a
+// SERVER redirect under redirect:'error'. Two more Firefox shapes (verified
+// 2026-09-09, Firefox 155):
+//  - repeated headers arrive as ONE value joined with "\n" (every Set-Cookie
+//    of a response in a single string); the engine rejects a header value
+//    with a newline outright ("Response contained invalid HTTP headers"), so
+//    values are split back into one entry per line;
+//  - a stack-synthesized redirect (HSTS upgrade of http://host/ from a
+//    Strict-Transport-Security seen earlier) fires onBeforeRedirect with
+//    statusCode 0 and then the SAME request carries on to the target inside
+//    the same fetch, redirect:'error' notwithstanding. It is recorded as the
+//    307 Chrome reports for the same thing, and the continuation's events
+//    are dropped: the bridge reports the hop and the engine re-issues the
+//    target as its own request, so the jar and every origin decision see the
+//    URL that was really loaded (bridge.mjs takes the same entry whether the
+//    fetch then rejected or resolved).
 
 // Statuses fetch treats as a redirect (a 3xx without a parseable Location is
 // delivered as an ordinary response instead, and only onHeadersReceived fires).
@@ -46,6 +60,7 @@ export class RedirectCapture {
   #queues = new Map(); // key -> [{at, entry: {status, headers: [[k,v],...]}}]
   #waiters = new Map(); // key -> [resolve, ...]
   #redirects = new Map(); // requestId -> {at, entry} awaiting onBeforeRedirect (Chrome)
+  #continued = new Map(); // requestId -> at: synthesized redirect the browser followed itself (Firefox)
   #listeners = null;
   #lastSweep = 0;
 
@@ -57,8 +72,12 @@ export class RedirectCapture {
 
   /** @param {string} origin only requests initiated by this origin are kept */
   start(origin, chromeApi = globalThis.chrome) {
+    // Firefox joins repeated headers with "\n" (see header); one entry per line.
+    const lines = (v) => (v.includes('\n') ? v.split('\n').map((s) => s.trim()).filter(Boolean) : [v]);
     const headersOf = (details) =>
-      (details.responseHeaders ?? []).map((h) => [h.name.toLowerCase(), h.value ?? '']);
+      (details.responseHeaders ?? []).flatMap((h) =>
+        lines(String(h.value ?? '')).map((v) => [h.name.toLowerCase(), v]),
+      );
     const push = (url, entry) => {
       const key = keyOf(url);
       this.#sweep();
@@ -78,8 +97,9 @@ export class RedirectCapture {
     // Server redirects captured at onHeadersReceived, remembered per request
     // so Chrome's onBeforeRedirect can fix up the Location (see header).
     const redirects = this.#redirects;
+    const continued = this.#continued;
     const onHeadersReceived = (details) => {
-      if (!ours(details)) return;
+      if (!ours(details) || continued.has(details.requestId)) return;
       const headers = headersOf(details);
       const entry = { status: details.statusCode, headers };
       if (REDIRECT_STATUS.has(details.statusCode) && headers.some(([k]) => k === 'location'))
@@ -87,7 +107,7 @@ export class RedirectCapture {
       push(details.url, entry);
     };
     const onBeforeRedirect = (details) => {
-      if (!ours(details)) return;
+      if (!ours(details) || continued.has(details.requestId)) return;
       // redirectUrl is authoritative (absolute, post-DNR) and is the only
       // Location a stack-synthesized redirect has.
       const seen = redirects.get(details.requestId);
@@ -98,9 +118,12 @@ export class RedirectCapture {
         else seen.entry.headers.push(['location', details.redirectUrl]);
         return;
       }
+      // Stack-synthesized: Chrome says 307 "Internal Redirect", Firefox says 0
+      // and keeps going under the same requestId (see header).
       const headers = headersOf(details).filter(([k]) => k !== 'location');
       headers.push(['location', details.redirectUrl]);
-      push(details.url, { status: details.statusCode, headers });
+      continued.set(details.requestId, performance.now());
+      push(details.url, { status: details.statusCode || 307, headers });
     };
     const filter = { urls: ['http://*/*', 'https://*/*'], types: ['xmlhttprequest'] };
     // Chrome hides Set-Cookie unless 'extraHeaders' is asked for; Firefox
@@ -128,6 +151,7 @@ export class RedirectCapture {
     this.#queues.clear();
     this.#waiters.clear();
     this.#redirects.clear();
+    this.#continued.clear();
   }
 
   /**
@@ -190,10 +214,18 @@ export class RedirectCapture {
       else this.#queues.delete(key);
     }
     for (const [id, r] of this.#redirects) if (now - r.at >= this.maxAgeMs) this.#redirects.delete(id);
+    for (const [id, at] of this.#continued) if (now - at >= this.maxAgeMs) this.#continued.delete(id);
   }
 }
 
 // Pull every set-cookie value out of a captured header list.
 export function setCookiesOf(entry) {
   return entry.headers.filter(([k]) => k === 'set-cookie').map(([, v]) => v);
+}
+
+// A captured entry that describes a redirect the engine must follow itself.
+export function isRedirectEntry(entry) {
+  return (
+    !!entry && entry.status >= 300 && entry.status < 400 && entry.headers.some(([k]) => k === 'location')
+  );
 }

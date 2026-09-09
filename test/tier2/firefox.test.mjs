@@ -184,3 +184,50 @@ test('firefox: crash — engine abort -> crashed UI -> reload recovers', { skip,
   await until(page, 100, 100, [255, 0, 0], 120000, 'post-reload paint');
   await page.close();
 });
+
+// Bridge semantics only Firefox's network stack produces (tier-1 runs on
+// Chrome); both through the stub engine, both green on Chrome by construction.
+// 1. webRequest joins repeated headers with "\n": google.com's 8 Set-Cookie
+//    lines arrived as one value and the engine refused the response.
+// 2. An HSTS upgrade is onBeforeRedirect status 0 + the same fetch carrying on
+//    to https; the bridge must hand the engine a 307 hop, not the target body
+//    under the http URL — and never a bare network failure.
+async function stubPage() {
+  const page = await ff.newPage();
+  await page.goto(`${VIEWER_BASE}?stub=1`);
+  await page.waitForFunction('!!globalThis.__bs');
+  return page;
+}
+const request = (page, req) => page.evaluate((r) => __bs.request(r), req);
+
+test('firefox: repeated Set-Cookie reaches the engine one header per cookie', { skip, timeout: 120000 }, async () => {
+  const page = await stubPage();
+  const t = await request(page, { url: 'https://app.bstest/set-cookie?n=a&v=1&n=b&v=2' });
+  assert.equal(t.status, 200);
+  assert.deepEqual(t.headers.filter(([k]) => k === 'set-cookie').map(([, v]) => v), ['a=1; Path=/', 'b=2; Path=/']);
+  await page.close();
+});
+
+test('firefox: an HSTS upgrade reaches the engine as a 307 hop it re-issues itself', { skip, timeout: 120000 }, async () => {
+  if (!ff.trustsFixtureCert) {
+    console.log('  skipped: certutil/fixture cert unavailable, Firefox will not honour HSTS');
+    return;
+  }
+  const page = await stubPage();
+  const seed = await request(page, { url: 'https://other.bstest/hsts' });
+  assert.equal(seed.status, 200);
+  assert.equal(Object.fromEntries(seed.headers)['strict-transport-security'], 'max-age=300');
+  await oracleClear();
+  const t = await request(page, { url: 'http://other.bstest/final', main: 1 });
+  assert.deepEqual(t.events, ['redirect'], JSON.stringify(t));
+  assert.equal(t.redirect.status, 307);
+  assert.equal(Object.fromEntries(t.redirect.headers).location, 'https://other.bstest/final');
+  assert.equal(await page.evaluate(() => __bs.mainFailures.length), 0, 'not a load failure');
+  assert.deepEqual((await oracleRequests()).filter((r) => r.scheme === 'http'), [], 'nothing went out over http');
+  // The engine issues the hop as its own request and gets the page.
+  const hop = await request(page, { url: 'https://other.bstest/final', main: 1 });
+  assert.equal(hop.status, 200);
+  assert.ok(hop.bodyText.includes('REDIRECT-FINAL'));
+  assert.equal(await page.evaluate(() => __bs.capturePending()), 0, 'no orphaned capture entries');
+  await page.close();
+});

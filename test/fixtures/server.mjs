@@ -18,6 +18,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CHECKOUT, HTTP_PORT as DEFAULT_HTTP, HTTPS_PORT as DEFAULT_HTTPS } from '../harness/ports.mjs';
 import { ensureCert } from '../harness/cert.mjs';
+import { FIXTURE_SANS } from './hosts.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PAGES = join(HERE, 'pages');
@@ -86,14 +87,22 @@ function handle(req, res, scheme) {
     return send(res, 302, '', 'txt', { location: 'file:///etc/passwd' });
   if (path === '/set-cookie') {
     // /set-cookie?n=name&v=value&attrs=;Path=/;SameSite=None;Secure&then=/cookie-echo
-    const n = url.searchParams.get('n') ?? 'bs';
-    const v = url.searchParams.get('v') ?? 'test';
+    // Repeat n/v for several Set-Cookie headers (one header line each).
+    const ns = url.searchParams.getAll('n');
+    const vs = url.searchParams.getAll('v');
+    if (!ns.length) ns.push('bs');
     const attrs = url.searchParams.get('attrs') ?? '; Path=/';
     const then = url.searchParams.get('then');
-    const hdrs = { 'set-cookie': `${n}=${v}${attrs}` };
+    const hdrs = { 'set-cookie': ns.map((n, i) => `${n}=${vs[i] ?? 'test'}${attrs}`) };
     if (then) return send(res, 302, '', 'txt', { ...hdrs, location: then });
-    return send(res, 200, `<title>set-cookie</title>set ${n}`, 'html', hdrs);
+    return send(res, 200, `<title>set-cookie</title>set ${ns.join(',')}`, 'html', hdrs);
   }
+  // HSTS seed: a page whose (https) response carries Strict-Transport-Security,
+  // so the NEXT http:// load of this host is upgraded by the browser itself.
+  if (path === '/hsts')
+    return send(res, 200, '<title>hsts</title>HSTS-SEEDED', 'html', {
+      'strict-transport-security': `max-age=${url.searchParams.get('max-age') ?? 300}`,
+    });
   if (path === '/cookie-echo')
     return send(res, 200, JSON.stringify({ cookie: req.headers.cookie ?? null }), 'json', {
       'access-control-allow-origin': '*',
@@ -182,7 +191,7 @@ const bail = (what) => (e) => {
   console.error(`fixture server: ${what} — ${e.code === 'EADDRINUSE' ? `port already in use` : e.message}`);
   process.exit(1);
 };
-https.createServer(ensureCert({ dir: CA_DIR }), (q, s) => handle(q, s, 'https'))
+https.createServer(ensureCert({ dir: CA_DIR, sans: FIXTURE_SANS }), (q, s) => handle(q, s, 'https'))
   .on('error', bail(`https :${HTTPS_PORT}`)).listen(HTTPS_PORT);
 http.createServer((q, s) => handle(q, s, 'http'))
   .on('error', bail(`http :${HTTP_PORT}`))

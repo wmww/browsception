@@ -17,21 +17,35 @@
 // profilePrefs {'extensions.webextensions.uuids': JSON.stringify({[geckoId]: uuid})}
 // (Firefox honours a pre-seeded map) so static DNR rules can name the viewer.
 
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { HTTP_PORT, HTTPS_PORT } from './ports.mjs';
 
 export const FIREFOX_BIN = process.env.BS_FIREFOX ?? '/usr/bin/firefox';
+const FIXTURE_CERT = join(dirname(fileURLToPath(import.meta.url)), '../fixtures/ca/bstest-ca.crt');
 
-// Every fixture host the server answers for (test/fixtures/server.mjs), plus
-// the interception-matrix hosts the probe extension's static rules name.
-export const FIXTURE_HOSTS = [
-  'grid.bstest', 'input.bstest', 'app.bstest', 'scroll.bstest', 'scroll-sticky.bstest',
-  'hostile.bstest', 'final.bstest', 'plain-http.bstest', 'site-a.bstest', 'site-b.bstest',
-  'other.bstest', 'x.bstest',
-];
+// Import the fixture CA into the profile's NSS db as a trust anchor. The
+// BiDi session's acceptInsecureCerts only silences the cert error, and
+// Firefox ignores Strict-Transport-Security on a connection that needed an
+// override — so HSTS scenarios need real trust. Needs NSS's certutil (and the
+// cert, which the fixture server generates on first start); false otherwise,
+// and tests that depend on it skip.
+function trustFixtureCert(profile) {
+  if (!existsSync(FIXTURE_CERT)) return false;
+  try {
+    execFileSync('certutil', ['-N', '-d', `sql:${profile}`, '--empty-password'], { stdio: 'ignore' });
+    execFileSync('certutil', ['-A', '-d', `sql:${profile}`, '-n', 'bstest fixture', '-t', 'C,,', '-i', FIXTURE_CERT], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export { FIXTURE_HOSTS } from '../fixtures/hosts.mjs';
+import { FIXTURE_HOSTS } from '../fixtures/hosts.mjs';
 
 export function fixturePrefs(hosts = FIXTURE_HOSTS) {
   return {
@@ -146,6 +160,7 @@ export async function launchFirefox(opts = {}) {
   const { extensionDir, headless = true, profilePrefs = {}, hosts } = opts;
   const profile = mkdtempSync(join(tmpdir(), 'bs-ffprofile-'));
   writeFileSync(join(profile, 'user.js'), userJs({ ...BASE_PREFS, ...fixturePrefs(hosts), ...profilePrefs }));
+  const trustsFixtureCert = trustFixtureCert(profile);
 
   const args = [
     ...(headless ? ['--headless'] : []),
@@ -319,6 +334,7 @@ export async function launchFirefox(opts = {}) {
     profile,
     extensionId,
     extensionBaseUrl,
+    trustsFixtureCert,
     consoleLines: consoleAll,
     stderr: stderrLines,
     stdout: stdoutLines,

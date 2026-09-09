@@ -84,7 +84,11 @@ Tier-2 scenario 12 asserts both halves (crashed UI *and* a named stack).
 - **Firefox**: `test/harness/firefox.mjs` — system Firefox headless over WebDriver BiDi (no
   dependency; Playwright can't install Firefox extensions), extension from `dist/firefox/`
   (`tools/pack-firefox.mjs`), fixtures via `network.dns.localDomains` +
-  `network.socket.forcePort` prefs. Its `page` API is deliberately Playwright-shaped
+  `network.socket.forcePort` prefs (every port-80/443 connection — no live internet from a
+  harness profile unless `profilePrefs` clears both), the fixture CA trusted for real via
+  `certutil` (`ff.trustsFixtureCert`; HSTS scenarios skip without it; hosts named one by one in
+  the leaf SAN, test/fixtures/hosts.mjs — extension-platform.md § Firefox). Firefox will not
+  start inside a sandboxed agent shell: run it unsandboxed. Its `page` API is deliberately Playwright-shaped
   (`goto`/`evaluate(fn, jsonArg)`/`waitForFunction(exprString)`/`url()`), but `evaluate` round-trips
   through JSON and console capture needs `page.hookConsole()` on extension pages
   (extension-platform.md § Firefox).
@@ -202,13 +206,18 @@ whole machine, end to end:
     engine intact. That last one is the only cover for the bridge's native-handoff gate reaching
     `location.replace` — see security.md § Sandbox→host sinks for which schemes get how far.
 
-24. **Firefox subset** (`test/tier2/firefox.test.mjs`, ~35 s, skips without `/usr/bin/firefox`):
+24. **Firefox subset** (`test/tier2/firefox.test.mjs`, ~40 s, skips without `/usr/bin/firefox`):
     fresh-install interception through the runtime-installed dynamic catch-all (oracle sees no
     target bytes), boot + render in the worker-hosted engine (and `crossOriginIsolated === false`,
     the design premise), the app.bstest execute battery (bridge, cookie round-trip via
     onHeadersReceived capture, pushState mirror, redirect chain), blacklist/whitelist reconcile,
     native handoff, scheme gates, crash → reload. Same source tree as Chrome; only the manifest
-    differs.
+    differs. Plus two stub-engine bridge cases for what only Firefox's network stack produces
+    (tier 1 runs on Chrome): repeated `Set-Cookie` arriving as one newline-joined value, and an
+    HSTS upgrade (`/hsts` seeds it over a genuinely trusted connection) reaching the engine as a
+    307 hop rather than a network failure or a 200 under the http URL. Both were google.com
+    failures the day the port landed; a live-site check is
+    `viewer.html?url=http://google.com/` in a harness profile with the port forcing cleared.
 
 That's ~30 scenarios total. Growth policy: a new test requires a new *class* of failure it would
 catch (or a regression that escaped); prefer extending an existing scenario's probes over adding

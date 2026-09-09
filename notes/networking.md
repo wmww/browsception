@@ -116,18 +116,30 @@ engine didn't send those headers; per-request DNR session rule (priority 2, exac
 carries engine-sent Cookie/Referer/Origin and beats the base strips; webRequest capture matches on
 `initiator` only (extension-page fetches carry the tab's id, so never filter on tabId).
 
-Redirect capture takes 3xx entries from **`onBeforeRedirect`**, not `onHeadersReceived`: some
-redirects are synthesized by the network stack and receive no response headers at all (HSTS
-upgrade — `http://wikipedia.org/`, `http://github.com/`, any preloaded host — and DNR redirect
-rules). `redirect:'error'` still aborts on those, so listening only to `onHeadersReceived` reported
-every such load as a bare network failure and the viewer sat on the boot page. `onBeforeRedirect`
-carries the same `responseHeaders` (hop `Set-Cookie` included) for server redirects plus the
-resolved `redirectUrl`, which we hand the engine as `Location`; `onHeadersReceived` skips
-redirect-status responses that have a `Location` so each fetch still enqueues exactly one entry (a
-3xx *without* `Location` is an ordinary response to fetch, and is captured there). Accepted delta:
-a redirect Chromium refuses outright (`net::ERR_UNSAFE_REDIRECT`, e.g. `Location: data:…`) fires
-`onHeadersReceived` but never `onBeforeRedirect`, so it now reaches the engine as a network failure
-instead of as a 3xx — the load fails either way.
+Redirect capture, per browser (redirect-capture.mjs feature-detects; verified 2026-09-09):
+
+- **Chrome**: 3xx entries come from **`onBeforeRedirect`**, not `onHeadersReceived`. Some
+  redirects are synthesized by the network stack and receive no response headers at all (HSTS
+  upgrade of a preloaded or previously-seen host, DNR redirect rules) — `redirect:'error'` still
+  aborts on those, and listening only to `onHeadersReceived` reported every such load as a bare
+  network failure. `onBeforeRedirect` carries the same `responseHeaders` (hop `Set-Cookie`
+  included) for server redirects plus the resolved `redirectUrl`, handed to the engine as
+  `Location`; `onHeadersReceived` remembers a 3xx-with-`Location` per requestId so the two
+  events yield one entry. Accepted delta: a redirect Chromium refuses outright
+  (`net::ERR_UNSAFE_REDIRECT`, e.g. `Location: data:…`) fires `onHeadersReceived` but never
+  `onBeforeRedirect`, so it reaches the engine as a network failure — the load fails either way.
+- **Firefox**: `onBeforeRedirect` never fires for a server 3xx under `redirect:'error'`, so the
+  entry is complete from `onHeadersReceived` alone. A stack-synthesized redirect (dynamic HSTS)
+  is `onBeforeRedirect` with `statusCode: 0` **and the same request continues to the target
+  inside the same fetch** — the capture records it as the 307 Chrome reports, marks the
+  requestId `continued` and drops the continuation's events; the bridge treats a redirect entry
+  the same whether the fetch then rejected or *resolved* (in which case it cancels the target's
+  body). The engine re-issues the target as its own request, so the jar and every origin /
+  mixed-content decision see the URL actually loaded (a 200 attributed to the http URL would
+  not). Repeated headers arrive as one `\n`-joined value and are split per line: the engine
+  refuses a header value with a newline, which is how every multi-cookie site failed on
+  Firefox. A DNR redirect on a bridge fetch fires nothing there (extension-platform.md).
+- Both: `isRedirectEntry()` (3xx + `Location`) is the one predicate the bridge uses.
 
 Two hygiene rules fall out of the same design, both tier-0 tested:
 

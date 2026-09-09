@@ -54,14 +54,16 @@ staged engine). Incremental engine rebuilds after embedder changes are ~2–3 mi
 The engine is a hard fork of [**WebkitWasm**](https://github.com/theogbob/WebkitWasm) by
 **theogbob** — the port that first got WebKit building and running under Emscripten, and the
 foundation this project stands on (imported at `825c260`; provenance and what we've rewritten
-since in [`engine/WebkitWasm/LICENSING.md`](engine/WebkitWasm/LICENSING.md)). Related:
+since in [`engine/WebkitWasm/LICENSING.md`](engine/WebkitWasm/LICENSING.md)). Thanks to
+theogbob for BSD-licensing it on request. Related:
 [HeyPuter/firefox-wasm](https://github.com/HeyPuter/firefox-wasm), a sister port of Gecko.
 
 Built on [WebKit](https://webkit.org) (LGPL-2.1/BSD), Skia, and Emscripten.
 
 ## License
 
-Not yet settled: upstream WebkitWasm published no license
-([theogbob/WebkitWasm#1](https://github.com/theogbob/WebkitWasm/issues/1)), so
-engine-derived files are ambiguously licensed and this repo is not redistributable until
-that resolves — details in [`engine/WebkitWasm/LICENSING.md`](engine/WebkitWasm/LICENSING.md).
+[MIT](LICENSE), except `engine/WebkitWasm/`, which is a fork of upstream's BSD-2-Clause code
+(notice retained in [`engine/WebkitWasm/LICENSE`](engine/WebkitWasm/LICENSE)) and whose WebKit
+patch inherits WebKit's LGPL-2.1/BSD terms. Shipping a *built* extension additionally carries
+LGPL-2.1's relink obligation for the statically linked WebCore — see
+[`engine/WebkitWasm/LICENSING.md`](engine/WebkitWasm/LICENSING.md).

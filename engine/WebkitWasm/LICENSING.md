@@ -1,9 +1,8 @@
-# Licensing notes
+# Licensing notes (engine/WebkitWasm)
 
-## Provenance / license status of this directory (browsception)
+## Provenance
 
-This directory is a squashed hard-fork import of
-[theogbob/WebkitWasm](https://github.com/theogbob/WebkitWasm):
+Squashed hard-fork import of [theogbob/WebkitWasm](https://github.com/theogbob/WebkitWasm):
 
 - Upstream base: `825c260c03bb2bd84f10fd1ebcda63660d9200ec` (upstream `main`).
 - Imported 2026-08-12 from our fork branch head `af6f559fa3bd334c89df03ef191714db57fbe932`
@@ -13,33 +12,33 @@ This directory is a squashed hard-fork import of
   `bibFrame`), history/back-forward, input, crash & heartbeat recovery, plus pruning of
   upstream docs/spikes/gates at import time.
 
-**Upstream never published a LICENSE**, so webkitwasm-derived files here (the embedder
-skeleton, build scripts, `web/` harness, and the WebKit patch's upstream-authored hunks)
-are **ambiguously licensed** until the author clarifies — tracked in
-[theogbob/WebkitWasm#1](https://github.com/theogbob/WebkitWasm/issues/1). Revisit this
-file when that resolves. Do not redistribute this directory publicly before then.
+## Status: settled
 
-The rest of this file is upstream's original licensing analysis, kept as the base; it
-predates the fork (e.g. its `docs/` references) but the component analysis still holds.
+Upstream published a **BSD-2-Clause** grant on 2026-08-18
+([`68c6185`](https://github.com/theogbob/WebkitWasm/commit/68c61854), replacing their
+`LICENSING.md`, in response to
+[theogbob/WebkitWasm#1](https://github.com/theogbob/WebkitWasm/issues/1) — never answered
+in-thread). It is a grant by the sole copyright holder on that repo's original code, so it
+covers what we imported at `825c260` even though it landed after. Retained verbatim as
+[`LICENSE`](LICENSE) in this directory; BSD-2 requires that notice to travel with source and
+binary redistributions of these files. Do not delete it.
 
----
+Who owns what here:
 
-This is a research prototype. Licensing isn't finalized — this file lays out the
-situation so it can be settled before the repo goes fully public. (For a private
-repo with invited collaborators it's lower-stakes, but read this first.)
+- **Upstream-authored, still recognizable** (embedder skeleton, `tools/bootstrap.sh` +
+  build scripts, `web/` harness, upstream hunks of the WebKit patch) — BSD-2-Clause,
+  © theogbob.
+- **Our additions and rewrites** (everything in the list above; the whole `bib_*` ABI) —
+  MIT, root [`LICENSE`](../../LICENSE). We don't track a per-file split: assume both notices
+  apply to this directory as a whole.
+- **`src/patches/webkit-emscripten.patch`** — a diff against WebKit source, so a derivative
+  of WebKit that inherits each modified file's license (**LGPL-2.1** for WebCore,
+  **BSD-2-Clause** for JSC/WTF/bmalloc). Not ours to relicense.
 
-## What this repo actually contains
+## Fetched, never redistributed by us
 
-- **Original work** (ours): `src/embedder/`, `web/`, `tools/`, `docs/`. You
-  choose the license for these.
-- **`src/patches/webkit-emscripten.patch`** — a diff against WebKit source. It
-  is a **derivative of WebKit** and inherits the license of each file it modifies.
-- It does **not** contain WebKit, Skia, ICU, OpenSSL, etc. Those are
-  fetched from upstream by `tools/bootstrap.sh` and never committed here.
-  (libcurl and nghttp2 are no longer fetched at all — the engine has no
-  in-wasm network transport.)
-
-## Upstream licenses (fetched, not redistributed by us)
+`tools/bootstrap.sh` pulls these into gitignored `third_party/`; none are committed, and
+`dist/` is gitignored too.
 
 | Component | License |
 |---|---|
@@ -51,16 +50,15 @@ repo with invited collaborators it's lower-stakes, but read this first.)
 | zlib, libpng, libjpeg-turbo, libwebp, freetype, harfbuzz, libxml2, sqlite, brotli, libpsl, fontconfig | individual permissive licenses |
 | Binaryen (npm `binaryen`, exact-pinned; dev harness only — `web/browser.html`'s guest-wasm wasm2js shim, served from `node_modules`, never shipped in the extension) | Apache-2.0 |
 
-All permissive and mutually compatible. The one with copyleft reach is **WebCore
-(LGPL-2.1)** — the embedder statically links it.
+All permissive and mutually compatible with MIT. The one with copyleft reach is **WebCore
+(LGPL-2.1)**, which the embedder links statically.
 
-## The thing to decide before going fully public
+## The remaining obligation: shipping a built extension
 
-The embedder statically links LGPL-2.1 WebCore. LGPL static linking obliges you
-to let recipients relink against a modified WebCore (e.g. ship the embedder
-object files, or document the build well enough to rebuild — which `bootstrap.sh`
-largely already does). The patch hunks themselves remain LGPL/BSD.
-
-Until the upstream question above is settled and a `LICENSE` exists, default
-copyright applies (all rights reserved) — fine for a private repo, **not** for
-public distribution.
+Source distribution (this repo as it stands) is unencumbered — no WebKit here, just the patch.
+The moment we ship `embedder.wasm` to anyone (extension store, release zip), LGPL-2.1 §6
+attaches: recipients must be able to relink the embedder against a modified WebCore. Satisfy it
+by publishing, alongside the binary, the WebKit pin + `webkit-emscripten.patch` +
+`bootstrap.sh`/`build-engine.sh` (which is enough to rebuild) and this notice. That is close to
+what we already have; the gap is that a truly fresh clone bootstrapping from nothing is
+believed-but-unverified (roadmap).

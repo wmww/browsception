@@ -28,9 +28,9 @@ upstream CI covers `PORT=Emscripten` or CLoop-on-wasm, so every WebKit merge win
 break us. Budget for periodic rebase pain; pin to WebKit release tags, not main.
 
 *Fork status: absorbed.* engine/WebkitWasm is a squashed hard-fork import (2026-08-12, upstream
-base `825c260`, upstream dormant) — sources are tracked in this repo, no inner git. License
-clarification pending: theogbob/WebkitWasm#1 (see engine/WebkitWasm/LICENSING.md). Upstream's
-known issue at fork time: no video support. Sister project (gecko port): HeyPuter/firefox-wasm.
+base `825c260`, upstream dormant) — sources are tracked in this repo, no inner git. Licensing
+is settled: upstream is BSD-2-Clause since 2026-08-18, we are MIT (engine/WebkitWasm/LICENSING.md).
+Upstream's known issue at fork time: no video support. Sister project (gecko port): HeyPuter/firefox-wasm.
 
 ## What we changed relative to upstream WebkitWasm (1–3 landed; 4's font/ICU subsetting is roadmap)
 

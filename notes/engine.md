@@ -65,7 +65,7 @@ Upstream's known issue at fork time: no video support. Sister project (gecko por
     (src/ext/engine-worker.js) on Chrome and Firefox alike; the dev harness and node runner host
     it on their own thread. Tier-0 `engine-imports.test.mjs` asserts the glue has no SAB.
   - `BibEmbedderProxy` → `bin/proxy/embedder.{js,wasm}`: the old `-sPROXY_TO_PTHREAD` link,
-    `EXCLUDE_FROM_ALL`, built only by `tools/build-engine.sh --proxy`, refused by stage-engine
+    `EXCLUDE_FROM_ALL`, built only by `scripts/build-engine.sh --proxy`, refused by stage-engine
     for the extension (meta.json `"link": "proxy"`). Kept for a future Chrome-only real-threads
     experiment; nothing tests it by default.
   - `BIB_LINK_PROXY` (compile definition on the 5 embedder TUs only) is main.cpp's switch —
@@ -88,7 +88,7 @@ Upstream's known issue at fork time: no video support. Sister project (gecko por
   ~10x). Ordinary pages fine; heavy SPAs sluggish. This is the accepted floor.
 - No JIT-in-wasm, ever (attack-surface decision, not a feasibility one — runtime wasm-module
   generation would reintroduce codegen surface and require instantiate rights).
-- **Measured 2026-08-14** (`tools/js-speed-probe.mjs`, same bodies/protocol on both engines,
+- **Measured 2026-08-14** (`scripts/js-speed-probe.mjs`, same bodies/protocol on both engines,
   same machine): ours is **10–40x V8 on tight loops** (property access 36–41x, calls 27x, int
   arith 70x) and only **1.5–3x on builtin-dominated work** (string join/split 1.5x, JSON 3x).
   So the cost is bytecode dispatch, not the C++ runtime.

@@ -8,7 +8,7 @@ infrastructure: the fixture server, the dev-build test hook, and the launch reci
 
 ### Fixture server
 Everything a test loads from disk lives under `test/fixtures/` — the pages, the CA, and
-`probe-ext/` (the probe extension three tier-1 suites load; `tools/gen-ext.mjs` also reads the
+`probe-ext/` (the probe extension three tier-1 suites load; `scripts/gen-ext.mjs` also reads the
 shared dev key from it, so the real extension keeps its pinned id).
 
 A local HTTP(S) server (`test/fixtures/`) serving hand-written pages designed for assertion, on
@@ -35,7 +35,7 @@ Fixture pages are assertion-friendly by construction:
   Its `#filelink` and the `/redir-file` route (302 → `file:///etc/passwd`) are driven by the
   scheme-gate scenario, not by the page's own pass.
 
-Bench fixtures are separate on purpose: `tools/bench/fixtures/` on `*.bsbench`, served by the
+Bench fixtures are separate on purpose: `scripts/bench/fixtures/` on `*.bsbench`, served by the
 bench suite's own server on its own port lane, **append-only** because saved results reference
 them by hash (notes/perf-measurement.md § Bench suite). Test fixtures stay free to change.
 
@@ -83,7 +83,7 @@ Tier-2 scenario 12 asserts both halves (crashed UI *and* a named stack).
   first composite (fork-era finding; harness artifact, not an engine bug).
 - **Firefox**: `test/harness/firefox.mjs` — system Firefox headless over WebDriver BiDi (no
   dependency; Playwright can't install Firefox extensions), extension from `dist/firefox/`
-  (`tools/pack-firefox.mjs`), fixtures via `network.dns.localDomains` +
+  (`scripts/pack-firefox.mjs`), fixtures via `network.dns.localDomains` +
   `network.socket.forcePort` prefs (every port-80/443 connection — no live internet from a
   harness profile unless `profilePrefs` clears both), the fixture CA trusted for real via
   `certutil` (`ff.trustsFixtureCert`; HSTS scenarios skip without it; hosts named one by one in

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Bench fixture server: serves tools/bench/fixtures over http+https on this
+// Bench fixture server: serves scripts/bench/fixtures over http+https on this
 // checkout's bench port lane (test/harness/ports.mjs +10/+11).
 //
 // Separate from the test fixture server on purpose. The bench suite is
@@ -8,7 +8,7 @@
 // directory is being measured, and a bench run must not disturb, or be
 // disturbed by, a tier-1/2 run's oracle.
 //
-// Usage: node tools/bench/lib/server.mjs [--http PORT] [--https PORT]
+// Usage: node scripts/bench/lib/server.mjs [--http PORT] [--https PORT]
 
 import http from 'node:http';
 import https from 'node:https';

@@ -6,7 +6,7 @@ distilled conclusions get promoted into the other notes in the same change.
 Historical record — entries are not rewritten. Paths have since moved:
 `spikes/probe-ext/` → `test/fixtures/probe-ext/`, `spikes/blit/` → deleted
 (numbers in open-questions #10, code in `src/ext/blit.mjs`),
-`experiments/*.mjs` → `tools/`.
+`experiments/*.mjs` → `scripts/`.
 
 ---
 
@@ -120,13 +120,13 @@ erb fix let the incremental build finish: NINJA OK, embedder.wasm 103 MB. Verifi
 with system Chromium headless: hello-demo gate PASS (exactBlue=20000, redGlyph=1962,
 ticks alive), then https://example.com rendered through the engine over Wisp
 (screenshot engine/logs/example-com.png; crossOriginIsolated true). Reproducible
-build script: tools/build-engine.sh (5 fixes). Distilled → notes/engine-build.md;
+build script: scripts/build-engine.sh (5 fixes). Distilled → notes/engine-build.md;
 open-questions #3 answered. WebCore compile itself ≈45 min wall at BIB_JOBS=12 —
 much better than feared. Phase 0 exit gate: all five spikes done, tiers 0–1 green.
 
 ## 2026-08-10 — 1.5 leak check: 50 fixture navigations, heap flat
 
-tools/smoke-leak.mjs: 50 engine navigations cycling grid/input/app.bstest
+scripts/smoke-leak.mjs: 50 engine navigations cycling grid/input/app.bstest
 through the bridge (fixture-only). Reserved wasm heap (HEAPU8.length) stayed
 at the initial 256 MB from boot through nav 50 — zero growth, so cumulative
 leakage over 50 navs is bounded by the boot headroom. Caveat: reserved-heap
@@ -137,7 +137,7 @@ second-half growth <256 MB).
 
 ## 2026-08-10 — Phase-1 exit gate: 10-min real-site browse
 
-tools/smoke-browse.mjs (real sites, sparing): Wikipedia (search by typing →
+scripts/smoke-browse.mjs (real sites, sparing): Wikipedia (search by typing →
 article → follow link), HN (front → comments), MDN (article → doc link),
 TodoMVC ES6 (add 2 todos by typing, toggle by click) + mixed filler to the
 10-minute mark, all input host-injected through the canvas.
@@ -156,7 +156,7 @@ preflights fail loudly in-engine (harmless, blocklist candidates).
 
 2.6 flipped the shipping default: DEFAULT_STATE.mode = 'whitelist' and the
 static catch-all is enabled in the manifest (fresh install intercepts with
-zero stored state, SW not required). tools/smoke-mvp.mjs (real sites,
+zero stored state, SW not required). scripts/smoke-mvp.mjs (real sites,
 sparing) on a fresh profile: example.com omnibox-style nav → viewer,
 nested commit + title→tab-title + pixel probe (#eee) all ok;
 en.wikipedia.org sandboxed concurrently; whitelist edit swept the open
@@ -295,7 +295,7 @@ reversal, dominant-axis change, or a guest `preventDefault()` (`EventHandling::D
 `peekPixels` instead of `SkCanvas::writePixels`.
 
 **A/B** — same session, staging the pre-change artifact and the new one alternately
-(`tools/scroll-speed-probe.mjs`, `scroll.bstest`, dpr 1). Note the 5.6 Mpx rows are *sampled*
+(`scripts/scroll-speed-probe.mjs`, `scroll.bstest`, dpr 1). Note the 5.6 Mpx rows are *sampled*
 runs (the sampler costs a full-frame readback per sample — it perturbs both sides equally and is
 what exposes the backlog):
 
@@ -336,7 +336,7 @@ better" true and Gecko-for-PBL a live option. **Result: false on measurement —
 **Method.** Eleven small bodies (property mono/poly, call, int/float arith, dense array, alloc,
 string scan/build, JSON round-trip, Octane Richards), best-of-2 (Richards best-of-3), each shipped
 as ONE eval and timed by the host wall clock around that eval, guest-reported `Date.now()` printed
-alongside. Ours: `tools/js-speed-probe.mjs` (dev harness `__bib.eval`, engine
+alongside. Ours: `scripts/js-speed-probe.mjs` (dev harness `__bib.eval`, engine
 `20260814-083049-d1ff7e9-main`). Theirs: the public demo (developer.puter.com/labs/firefox-wasm/)
 driven via its `window.geckoEvalChrome` hook, defaults = GPU on / **wasm JIT off** → PBL; their
 eval buffer is 8190 B and each eval gets a fresh sandbox (no state persists), so every body had to
@@ -372,7 +372,7 @@ matters.
 
 **Decisions.** (1) The perceived smoothness of firefox-wasm is NOT JS — it is compositing/APZ/GPU
 and host WebCodecs (prior-art.md). (2) "Adopt Gecko for JS speed" is off the table until someone
-measures a real page; the interesting AOT target was always weval, not PBL. (3) `tools/
+measures a real page; the interesting AOT target was always weval, not PBL. (3) `scripts/
 js-speed-probe.mjs` kept as the repeatable half.
 
 **Fallout:** the engine links emscripten's full GL library (WebGL context creation + GL calls are
@@ -384,7 +384,7 @@ issues/cloop-join-returned-nonstring.md.
 
 ## 2026-08-14 — Bench suite bring-up: is it repeatable, and does it see a planted regression?
 
-**Setup**: `tools/bench/run.mjs` (new), headless Chromium 151, engine
+**Setup**: `scripts/bench/run.mjs` (new), headless Chromium 151, engine
 `20260815-024910-d1ff7e9-dirty-wt_exGITbYkRGPnAr4G`, 1600x900 unless noted, 3 reps x 4 s
 windows, osprey (Ryzen AI 9 HX 370, 24 threads). Numbers are per-machine and live in the
 main checkout's gitignored `bench/`; this entry keeps the ones the questions below turn on.
@@ -445,7 +445,7 @@ for a follow-up, not a subtraction.
 containers self-relayout to identical geometry and each issues a full self-repaint.
 
 **What ran**: caller-tagged instrumentation on `RenderElement::repaintAfterLayoutIfNeeded` plus a
-`repaintUsingContainer` rect log, probed with `tools/scroll-speed-probe.mjs` on
+`repaintUsingContainer` rect log, probed with `scripts/scroll-speed-probe.mjs` on
 `en.wikipedia.org/wiki/Solar_eclipse_of_August_12,_2026`, 1600x860, 60 px/frame.
 
 Findings, in the order they fell out:
@@ -573,7 +573,7 @@ the engine was single-threaded in practice anyway and the copy count is unchange
 
 **Setup**: same tree, two links from `embedder.cmake` (`20260909-212732-…-proxy` = old viewer +
 proxy artifact, staged into a `git archive HEAD src` copy; `20260909-213513-…` = plain link +
-worker-hosted viewer). `node tools/bench/run.mjs --ext <old> --save proxy-link`, then
+worker-hosted viewer). `node scripts/bench/run.mjs --ext <old> --save proxy-link`, then
 `--save plain-link --compare proxy-link`; 3 reps × 4 s, headless Chromium 152, machine load ~1.3–2.5.
 (`host present ms/s` reads 0 on the new path — the present happens inside the link's message
 handler and is not separable; not a win.)
@@ -610,7 +610,7 @@ target. The 2560 regression goes on the existing host-present issue.
 **Hypothesis**: a redirect the capture misses on Firefox (the day-old port had handled only the
 server-3xx-from-`onHeadersReceived` shape).
 
-**What ran**: `tools/probe-firefox.mjs`-style probes from an extension page (fresh headless
+**What ran**: `scripts/probe-firefox.mjs`-style probes from an extension page (fresh headless
 profile, port forcing cleared so the real internet is reachable), logging every webRequest event
 for `fetch(url, {redirect:'error', credentials:'omit', cache:'no-store'})`; then the real
 `dist/firefox` extension driven to `viewer.html?url=http://google.com/`.

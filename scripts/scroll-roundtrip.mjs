@@ -3,7 +3,7 @@
 // -> screenshot. Byte-identical == no smear left behind. Expect exact at
 // fractional dpr (settle repaint); at dpr 1/2 a handful of header text-AA
 // specks remain (pre-existing partial-repaint noise floor, 2026-08-11).
-// Usage: node tools/scroll-roundtrip.mjs [url] [dpr]
+// Usage: node scripts/scroll-roundtrip.mjs [url] [dpr]
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { launch, extensionIdFromManifest } from '../test/harness/launch.mjs';

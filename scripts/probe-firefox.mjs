@@ -3,7 +3,7 @@
 // item 0) against the system Firefox, headless, via test/harness/firefox.mjs.
 // Needs the fixture server running: node test/fixtures/server.mjs
 //
-//   node tools/probe-firefox.mjs [--only 1,3] [--verbose]
+//   node scripts/probe-firefox.mjs [--only 1,3] [--verbose]
 //
 // Prints one row per probe (PASS/FAIL + observation) and, with --verbose,
 // the raw detail JSON. Nothing here is a regression test; it is a lab bench.

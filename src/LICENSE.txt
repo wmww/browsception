@@ -5,7 +5,7 @@ This package contains a WebKit build (embedder.wasm) that statically links
 WebCore under the LGPL-2.1. To exercise your LGPL relink rights, rebuild it
 from the repo above: engine/WebkitWasm/src/patches/webkit-emscripten.patch
 applied to the pinned WebKit, via engine/WebkitWasm/tools/bootstrap.sh and
-tools/build-engine.sh. Component-by-component terms are in
+scripts/build-engine.sh. Component-by-component terms are in
 engine/WebkitWasm/LICENSING.md.
 
 ================================================================================

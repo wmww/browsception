@@ -1,5 +1,5 @@
 // Background script (2.2) — Chrome: MV3 service worker; Firefox: the event
-// page ext/background.html loads this same module (tools/lib/manifest.mjs).
+// page ext/background.html loads this same module (scripts/lib/manifest.mjs).
 // Owns activation/mode/list state (storage.sync) and applies it declaratively
 // to DNR. Interception itself never depends on this script being awake — the
 // rules persist (static ruleset toggle + dynamic rules); it only reconciles

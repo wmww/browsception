@@ -1,4 +1,4 @@
-// Probe surface for the Firefox phase-0 probes; tools/probe-firefox.mjs drives
+// Probe surface for the Firefox phase-0 probes; scripts/probe-firefox.mjs drives
 // these via the BiDi harness. Everything returns plain JSON.
 
 function interceptedUrl() {

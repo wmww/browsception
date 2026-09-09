@@ -40,6 +40,6 @@ export function engineSrcHash(root = checkoutRoot) {
   return h.digest('hex').slice(0, 16);
 }
 
-// CLI: node tools/lib/engine-src-hash.mjs [checkout-root]  -> prints the hash
+// CLI: node scripts/lib/engine-src-hash.mjs [checkout-root]  -> prints the hash
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1])
   console.log(engineSrcHash(process.argv[2] || checkoutRoot));

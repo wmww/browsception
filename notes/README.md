@@ -28,7 +28,7 @@ surface for speed (no WebGPU for the nested engine, no nested-wasm-runs-natively
 | [bridge-probe.md](bridge-probe.md) | Spike 0.2 results: verified platform behaviors the bridge rests on + redirect/cookie design decisions |
 | [engine-build.md](engine-build.md) | Reproducible engine build (pins, fixes, sizes, divergences, build traps); incremental-iteration recipe |
 | [engine-internals.md](engine-internals.md) | Hard limits of the wasm engine, WebKit-internals gotchas that re-bite on rebases, perf constraints |
-| [perf-measurement.md](perf-measurement.md) | How to get trustworthy engine perf numbers: BIBPERF counters, pixel-encoded page state, exact input rates, the traps that faked results, and the **bench suite** (`tools/bench/run.mjs`: scenario matrix, saved results + delta tables, the contract that keeps it runnable against old commits) |
+| [perf-measurement.md](perf-measurement.md) | How to get trustworthy engine perf numbers: BIBPERF counters, pixel-encoded page state, exact input rates, the traps that faked results, and the **bench suite** (`scripts/bench/run.mjs`: scenario matrix, saved results + delta tables, the contract that keeps it runnable against old commits) |
 | [rendering-input.md](rendering-input.md) | Blit paths, input forwarding, IME, find-in-page, clipboard, audio, popups |
 | [security.md](security.md) | Threat model, trust boundaries, what we must enforce ourselves |
 | [testing.md](testing.md) | Automated test tiers (unit/bridge/full-integration), fixture+oracle design, agent iteration loop |
@@ -42,7 +42,7 @@ surface for speed (no WebGPU for the nested engine, no nested-wasm-runs-natively
 **MVP complete** (2026-08-10, all gates passed). The MVP plan is retired; its surviving content
 lives in [roadmap.md](roadmap.md). Phase summaries:
 
-- **Phase 0 spikes**: engine build reproduced (engine-build.md, `tools/build-engine.sh`); bridge
+- **Phase 0 spikes**: engine build reproduced (engine-build.md, `scripts/build-engine.sh`); bridge
   design verified — engine-driven redirects, webRequest Set-Cookie capture (bridge-probe.md);
   interception matrix + blit path + test harness stood up (testing.md).
 - **Phase 1 engine⇄shim**: versioned ABI (`src/abi/bib_abi.h` + abi.mjs mirror); engine fork
@@ -60,13 +60,13 @@ lives in [roadmap.md](roadmap.md). Phase summaries:
   guard-rail invariants green (hostile.bstest full pass, no top-level target docs); **2.6
   whitelist-by-default** — `DEFAULT_STATE.mode='whitelist'`, static catch-all enabled in the
   manifest so a fresh install intercepts before the SW runs (ui.md § shipping default). Exit
-  gate: tools/smoke-mvp.mjs real-site pass — sandboxed example.com/wikipedia, whitelist→native
+  gate: scripts/smoke-mvp.mjs real-site pass — sandboxed example.com/wikipedia, whitelist→native
   sweep (experiment-log.md 2026-08-10).
 
 Tests: `npm test` = tiers 0–1, pure headless, per-commit. `npm run test:tier2` = 29 Chrome
 scenarios (incl. 6 HiDPI at dpr 2/1.5) + a 7-scenario Firefox subset (`test/tier2/firefox.test.mjs`,
 system Firefox over BiDi) against the staged engine artifact (~2 min; restage with
-tools/stage-engine.mjs after engine rebuilds — it also stages the extension's host-root assets;
+scripts/stage-engine.mjs after engine rebuilds — it also stages the extension's host-root assets;
 src/engine/, src/vendor/ and the two injection payloads are gitignored). Engine iteration is
 genuinely incremental (~90 s for embedder-only changes; engine-build.md fix 6) and works from any
 worktree branch (worktrees.md § Engine work).
@@ -78,7 +78,7 @@ Load-bearing implementation facts:
   target; a percent-encoded absolute http(s) target is tolerated on read (old tabs/bookmarks) and
   canonicalized back to raw on rewrite. Viewer, sweep and popup all read it through that module,
   and every host-world sink is gated by its `isHttpUrl` (security.md § Sandbox→host sinks).
-- src/manifest.json + src/rules/ are **generated** by tools/gen-ext.mjs (pinned key/id; CSP needs
+- src/manifest.json + src/rules/ are **generated** by scripts/gen-ext.mjs (pinned key/id; CSP needs
   `'wasm-unsafe-eval'`). The manifest's catch-all `enabled: true` must agree with DEFAULT_STATE.
 - The engine runs in a dedicated Worker (`src/ext/engine-worker.js`, classic script: it
   `importScripts` the plain-link `embedder.js`); the viewer talks to it only through
@@ -132,7 +132,7 @@ dependency served at `/vendor` by the dev server and staged into `src/vendor/` f
 (no vendored blob); `engine-pre.js` moved to
 `src/embedder/`, so `engine/WebkitWasm/web/` is harness-only and everything under `src/` is a
 build input; the probe extension is a test fixture (`test/fixtures/probe-ext/`); `spikes/` and
-`experiments/` are gone (blit numbers → open-questions #10, probes → `tools/`, lab notebook →
+`experiments/` are gone (blit numbers → open-questions #10, probes → `scripts/`, lab notebook →
 [experiment-log.md](experiment-log.md)).
 
 *Startup race pinned down and the sweep fixed* (2026-08-14) — the "does the first navigation beat
@@ -209,7 +209,7 @@ its guest-injection payloads and the wasm2js translator from **origin-absolute h
 them: in the extension all three 404'd, so every viewer load logged three worker warnings (the
 errors the user sees in chrome://extensions) and guest pages ran with no `WebAssembly` and no
 `Audio`/`HTMLMediaElement` at all — a top-level `new Audio()` probe collapses a whole script
-bundle. `tools/stage-engine.mjs` now stages all three into the extension root alongside the engine
+bundle. `scripts/stage-engine.mjs` now stages all three into the extension root alongside the engine
 artifact, and binaryen moved devDependencies → dependencies (it ships, 13 MB against a 100 MB
 wasm). Guest wasm now compiles and runs end-to-end in the extension. Tier-2 scenario 22;
 contract table in engine-build.md § Host-root asset contract.
@@ -241,7 +241,7 @@ correctly, so tier-1 asserts on the settled URL now (security.md § reconcile ga
 link and every SharedArrayBuffer dependency are gone. The object tree still compiles `-pthread`;
 `embedder.cmake` now links two targets from it — the shipping **plain link** (`-no-pthread`,
 `-sENVIRONMENT=worker,web,node`) and the proxy link as an `EXCLUDE_FROM_ALL` target for a future
-Chrome-only experiment (`tools/build-engine.sh --proxy`; `meta.json` carries `"link"`, stage-engine
+Chrome-only experiment (`scripts/build-engine.sh --proxy`; `meta.json` carries `"link"`, stage-engine
 refuses proxy artifacts). The viewer hosts the plain link in a dedicated Worker
 (`engine-worker.js`) and drives it through `EngineLink` messages: input/control as export calls,
 frames as one transferred band buffer per present (the worker's `bibFrame` copies the band out
@@ -249,7 +249,7 @@ synchronously and returns `true` to own `_bib_present_done`, so one-frame-in-fli
 backpressure follows the real present across the hop), network bytes transferred in and copied
 into the heap by the worker — same copy count as the shared heap had. The bridge and the
 tier-1 stub became a bytes/strings interface (`heap.mjs` deleted). Firefox then needed only
-manifest generation (`tools/lib/manifest.mjs`, `tools/pack-firefox.mjs` → `dist/firefox/`) plus
+manifest generation (`scripts/lib/manifest.mjs`, `scripts/pack-firefox.mjs` → `dist/firefox/`) plus
 three feature-detected differences: the catch-all is a **dynamic** rule there (per-profile UUID),
 `onHeadersReceived` alone delivers the 3xx (no `onBeforeRedirect` under `redirect:'error'`), and
 `originUrl`/no-`extraHeaders` in the capture. Probed 2026-09-09 on Firefox 155 (open-questions #13):

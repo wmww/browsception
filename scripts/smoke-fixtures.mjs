@@ -5,7 +5,7 @@
 // the fixture server serves *.bstest, the dev server's /__bibproxy resolves
 // those hosts to it, and the engine loads them through the fetch bridge.
 // Graduates into test/tier2/ once the extension hosts the engine (2.1).
-// Usage: node tools/smoke-fixtures.mjs [--headed]
+// Usage: node scripts/smoke-fixtures.mjs [--headed]
 
 import { chromium } from 'playwright-core';
 import { spawn } from 'node:child_process';

@@ -94,7 +94,7 @@ the event is untrusted. Two knobs separate the two candidate cost models:
   logical row at 1.4 Mpx. Small strips are dominated by the fixed cost (a 60 px strip is 1/5 the
   time of a full frame, not 1/14).
 
-## Bench suite (`tools/bench/run.mjs`)
+## Bench suite (`scripts/bench/run.mjs`)
 
 The repeatable instrument built on everything above: same measurement protocol, fixed workloads,
 saved results, delta tables. **Report-only** — nothing here gates anything, results are
@@ -102,14 +102,14 @@ per-machine and never committed. Free-form questions still belong in the probes 
 answers "did this change make things better or worse, and where".
 
 ```sh
-node tools/bench/run.mjs --save baseline           # headline matrix, 3 reps, ~4 min
-#   ... change the engine, rebuild, node tools/stage-engine.mjs ...
-node tools/bench/run.mjs --save after --compare baseline
-node tools/bench/run.mjs --only article-scroll --reps 5 --secs 6
-node tools/bench/run.mjs --diagnostic              # + the localization tier
-node tools/bench/run.mjs --viewer-params 'rcap=5'  # any viewer/engine param
-node tools/bench/run.mjs --list        # saved runs
-node tools/bench/run.mjs --diff a b    # compare two saved runs, run nothing
+node scripts/bench/run.mjs --save baseline           # headline matrix, 3 reps, ~4 min
+#   ... change the engine, rebuild, node scripts/stage-engine.mjs ...
+node scripts/bench/run.mjs --save after --compare baseline
+node scripts/bench/run.mjs --only article-scroll --reps 5 --secs 6
+node scripts/bench/run.mjs --diagnostic              # + the localization tier
+node scripts/bench/run.mjs --viewer-params 'rcap=5'  # any viewer/engine param
+node scripts/bench/run.mjs --list        # saved runs
+node scripts/bench/run.mjs --diff a b    # compare two saved runs, run nothing
 ```
 
 Results land in the **main checkout's** `bench/<name>.json` (gitignored, shared by every
@@ -197,7 +197,7 @@ fixtures are served by the bench checkout's own server on its own port lane
 its oracle. Missing hooks or fields are **feature-detected**: the metric records as absent and
 the run completes.
 
-**Fixtures under `tools/bench/fixtures/` are append-only.** Changing one silently invalidates
+**Fixtures under `scripts/bench/fixtures/` are append-only.** Changing one silently invalidates
 every saved result that used it; a changed workload gets a **new scenario id**. Each record
 stores a hash of every fixture file it used and `--compare` warns when they differ.
 
@@ -205,9 +205,9 @@ stores a hash of every fixture file it used and `--compare` warns when they diff
 
 ```sh
 git worktree add /tmp/bs-old <sha>
-cd /tmp/bs-old && node tools/stage-engine.mjs            # or --from <stamp> to pin a snapshot
+cd /tmp/bs-old && node scripts/stage-engine.mjs            # or --from <stamp> to pin a snapshot
 cd -    # back to the bench checkout
-node tools/bench/run.mjs --ext /tmp/bs-old/src --save old --compare baseline
+node scripts/bench/run.mjs --ext /tmp/bs-old/src --save old --compare baseline
 ```
 
 The old engine pairs with its contemporaneous extension JS automatically, which matters because
@@ -215,7 +215,7 @@ perf is engine + host JS together. Retro depth is bounded by **artifact availabi
 the runner: snapshots get pruned (newest 12) and old builds are not reproducible through the
 drifting shared build tree, so a notable stamp worth keeping should be copied into the
 pruning-exempt `engine/artifacts/keep/` before it ages out (`cp -a
-engine/artifacts/<stamp> engine/artifacts/keep/`, then `node tools/stage-engine.mjs --from
+engine/artifacts/<stamp> engine/artifacts/keep/`, then `node scripts/stage-engine.mjs --from
 keep/<stamp>`).
 
 ### Protocol details the runner already handles
@@ -237,14 +237,14 @@ Everything in § Traps, plus:
 
 | Script | What it measures |
 |---|---|
-| `tools/scroll-speed-probe.mjs` | scroll fps / engine busy / wheel+blit breakdown vs scroll speed, framebuffer size, event rate (`--sweep --stride --epf --size --dpr --nosample --url`) |
-| `tools/perf-scroll-probe.mjs` | original dpr-focused scroll probe (2026-08-11 dpr!=1 fix) |
-| `tools/scroll-roundtrip.mjs` | pixel-exactness of the scroll blit vs a full repaint |
+| `scripts/scroll-speed-probe.mjs` | scroll fps / engine busy / wheel+blit breakdown vs scroll speed, framebuffer size, event rate (`--sweep --stride --epf --size --dpr --nosample --url`) |
+| `scripts/perf-scroll-probe.mjs` | original dpr-focused scroll probe (2026-08-11 dpr!=1 fix) |
+| `scripts/scroll-roundtrip.mjs` | pixel-exactness of the scroll blit vs a full repaint |
 
 The probes stay free-form exploration tools (sweeps, one-off questions); the bench suite above
 is the repeatable one. Both share the same measurement rules — the suite just codifies them.
 
-## JS speed (`tools/js-speed-probe.mjs`)
+## JS speed (`scripts/js-speed-probe.mjs`)
 
 Ten small bodies (property mono/poly, call, int/float arith, dense array, alloc, string scan/build,
 JSON) run in the engine and in the host page, each as ONE eval, timed by the host wall clock around

@@ -37,7 +37,7 @@ test('engine glue imports no GL/WebGL/WebGPU entry point', { skip }, () => {
 test('engine glue is the plain link: no shared memory, no pthread runtime', { skip }, () => {
   const src = readFileSync(glue, 'utf8');
   for (const needle of ['SharedArrayBuffer', 'ENVIRONMENT_IS_PTHREAD', 'PROXY_TO_PTHREAD', 'PThread.init'])
-    assert.ok(!src.includes(needle), `proxy-link artifact staged (glue mentions ${needle}) — bash tools/build-engine.sh, then node tools/stage-engine.mjs`);
+    assert.ok(!src.includes(needle), `proxy-link artifact staged (glue mentions ${needle}) — bash scripts/build-engine.sh, then node scripts/stage-engine.mjs`);
   if (existsSync(meta)) {
     const m = JSON.parse(readFileSync(meta, 'utf8'));
     assert.notEqual(m.link, 'proxy', `staged meta says link=proxy (${m.stamp})`);

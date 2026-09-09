@@ -2,7 +2,7 @@
 // Phase-1 exit-gate runner: browse the four target sites in the dev harness
 // with real mouse+keyboard input for >= 10 minutes total, without a crash or
 // wedge. REAL SITES — manual/agent smoke only (notes/testing.md), never CI,
-// run sparingly. Usage: node tools/smoke-browse.mjs [--headed] [--minutes N]
+// run sparingly. Usage: node scripts/smoke-browse.mjs [--headed] [--minutes N]
 //
 // Input targeting is DOM-informed but event-real: element coordinates come
 // from guest getBoundingClientRect via __bib.eval, and the interaction is

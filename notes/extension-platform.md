@@ -1,9 +1,9 @@
 # Extension platform capabilities & constraints
 
-Verified 2026-08 (Chrome) and 2026-09-09 (Firefox 155, `tools/probe-firefox.mjs`). Bottom line:
+Verified 2026-08 (Chrome) and 2026-09-09 (Firefox 155, `scripts/probe-firefox.mjs`). Bottom line:
 **the whole design is buildable as a pure extension** — no browser or OS modification — and runs
 from **one source tree on both browsers**; the divergence budget is manifest generation
-(tools/lib/manifest.mjs) plus three feature-detected API differences listed under § Firefox.
+(scripts/lib/manifest.mjs) plus three feature-detected API differences listed under § Firefox.
 
 ## Navigation interception
 

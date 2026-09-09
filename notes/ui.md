@@ -156,7 +156,7 @@ back/forward list (src/ext/viewer.mjs).
 
 Whitelist mode is the default: `DEFAULT_STATE` in src/ext/state.mjs is
 `{active: true, mode: 'whitelist'}` with empty lists, and the static catch-all ships **enabled in
-the manifest** (tools/gen-ext.mjs) so a fresh install intercepts before the SW ever runs — the two
+the manifest** (scripts/gen-ext.mjs) so a fresh install intercepts before the SW ever runs — the two
 must stay in agreement. The SW disables the catch-all for blacklist/inactive states and that
 toggle persists. Test suites that need native fixture traffic pin their own posture explicitly
 (tier-1 bridge suite: blacklist+empty; tier-2: fixture-domain blacklist).

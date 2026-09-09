@@ -20,6 +20,6 @@ Layout:
 - `web/` — harness-only host-page files: the `browser.html` dev harness + `bib-net.js`
   page glue, served as-is (nothing here is a build input).
 
-Build via `bash tools/build-engine.sh` **from the repo root** (wraps bootstrap + build +
+Build via `bash scripts/build-engine.sh` **from the repo root** (wraps bootstrap + build +
 artifact snapshotting; see `notes/engine-build.md`). Build state lives only in the main
 checkout — never edit or build engine sources from a worktree (`notes/worktrees.md`).

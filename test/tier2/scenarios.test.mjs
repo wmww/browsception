@@ -1,7 +1,7 @@
 // Tier 2 — full integration: headless Chromium + the real extension + the
 // real wasm engine + fixture server (notes/testing.md scenarios; graduated
-// from tools/smoke-fixtures.mjs at 2.1). Needs staged engine artifacts
-// (tools/stage-engine.mjs); run via `npm run test:tier2` (per-merge/nightly,
+// from scripts/smoke-fixtures.mjs at 2.1). Needs staged engine artifacts
+// (scripts/stage-engine.mjs); run via `npm run test:tier2` (per-merge/nightly,
 // not per-commit).
 //
 // Scenarios here: 7 render, 8 execute, 9 input, 10 navigation chrome, 11
@@ -838,7 +838,7 @@ test('startup: warm boot to interactive under 15 s', { timeout: 300000 }, async 
 // translator from origin-absolute paths (/wasm-polyfill.js, /media-stub.js,
 // /vendor/binaryen/index.js). The dev harness serves those from web/ and the
 // /vendor node_modules mount; the extension only has them because
-// tools/stage-engine.mjs copies them into the extension root. It didn't, and
+// scripts/stage-engine.mjs copies them into the extension root. It didn't, and
 // the miss was silent to every test — three worker console warnings, guest
 // pages with no WebAssembly and no Audio (a top-level `new Audio()` collapses
 // whole script bundles). Assert the guest-visible end state, not the files.

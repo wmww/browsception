@@ -44,7 +44,7 @@ if (!existsSync(join(checkoutRoot, 'node_modules'))) {
 // was rebuilt since. stdio is inherited even in --quiet mode: it only speaks when
 // it stages, and a source/artifact mismatch warning must not be swallowed.
 {
-  const r = spawnSync('node', [join(checkoutRoot, 'tools/stage-engine.mjs'), '--if-stale'],
+  const r = spawnSync('node', [join(checkoutRoot, 'scripts/stage-engine.mjs'), '--if-stale'],
     { cwd: checkoutRoot, stdio: 'inherit' });
   if (r.status !== 0)
     console.warn('src/engine: not staged (no engine artifacts?) — tier2/smokes unavailable, tiers 0-1 fine');

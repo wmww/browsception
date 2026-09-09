@@ -9,7 +9,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # WebkitWasm tree that owns the 12 GB build state, BIB_SRC is the checkout
 # whose src/embedder gets compiled into the embedder.
 # Both default to this script's own tree, so standalone use is unchanged;
-# tools/build-engine.sh sets them when building a worktree's sources against
+# scripts/build-engine.sh sets them when building a worktree's sources against
 # the main checkout's build tree (notes/worktrees.md).
 TREE="${BIB_TREE:-$ROOT}"
 SRC="${BIB_SRC:-$ROOT}"

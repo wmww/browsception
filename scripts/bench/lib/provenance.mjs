@@ -1,6 +1,6 @@
 // Who produced these numbers: engine artifact, extension under test, runner,
 // machine. A measurement record without this is worthless a week later — an
-// A/B once measured a neighbour's engine (tools/stage-engine.mjs header).
+// A/B once measured a neighbour's engine (scripts/stage-engine.mjs header).
 
 import { readFileSync, existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';

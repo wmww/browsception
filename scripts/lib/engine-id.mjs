@@ -13,7 +13,7 @@ export function stagedEngineIdentity(engineDir) {
     const m = JSON.parse(readFileSync(join(engineDir, '.staged-meta.json'), 'utf8'));
     return `engine: ${m.stamp}${m.pinned ? ' [PINNED]' : ''} (source_hash ${m.source_hashes?.[0] ?? '?'})`;
   } catch {
-    return 'engine: unknown provenance — restage with node tools/stage-engine.mjs';
+    return 'engine: unknown provenance — restage with node scripts/stage-engine.mjs';
   }
 }
 

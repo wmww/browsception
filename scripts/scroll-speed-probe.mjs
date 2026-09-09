@@ -10,7 +10,7 @@
 // 120px section a colour-coded left border (r = idx&255, g = idx>>8), so
 // __bs.probe(4,4) decodes to a scroll offset without asking the guest page.
 //
-// Usage: node tools/scroll-speed-probe.mjs [--dpr 1] [--url URL]
+// Usage: node scripts/scroll-speed-probe.mjs [--dpr 1] [--url URL]
 //        [--secs 4] [--sweep "px/frame,..."] [--epf N] [--headed]
 import { spawn } from 'node:child_process';
 import { join, dirname } from 'node:path';

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Assembles the Firefox extension directory: dist/firefox/ = every file under
 // src/ (hardlinked — the 100 MB engine costs nothing) except Chrome's
-// manifest and static rules, plus the Firefox manifest (tools/lib/manifest.mjs).
+// manifest and static rules, plus the Firefox manifest (scripts/lib/manifest.mjs).
 // One source tree, two manifests; nothing else differs.
 //
 // Idempotent and cheap (re-links only what changed), so the Firefox harness
@@ -47,7 +47,7 @@ function linkTree(from, to) {
 
 export function packFirefox() {
   if (!existsSync(join(SRC, 'engine/embedder.wasm')))
-    throw new Error(`no engine staged at ${join(SRC, 'engine')} — run: node tools/stage-engine.mjs`);
+    throw new Error(`no engine staged at ${join(SRC, 'engine')} — run: node scripts/stage-engine.mjs`);
   linkTree(SRC, FIREFOX_DIST);
   writeFileSync(join(FIREFOX_DIST, 'manifest.json'), JSON.stringify(firefoxManifest(), null, 1) + '\n');
   return FIREFOX_DIST;

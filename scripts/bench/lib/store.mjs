@@ -21,7 +21,7 @@ export function saveRun(name, record) {
 
 export function loadRun(name) {
   const path = file(name);
-  if (!existsSync(path)) throw new Error(`no saved run at ${path} — see: node tools/bench/run.mjs --list`);
+  if (!existsSync(path)) throw new Error(`no saved run at ${path} — see: node scripts/bench/run.mjs --list`);
   return JSON.parse(readFileSync(path, 'utf8'));
 }
 

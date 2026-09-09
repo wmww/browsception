@@ -8,11 +8,11 @@ tier was deleted 2026-08-13 — the engine's only transport is now the host-fetc
 
 ## How to build
 
-`tools/build-engine.sh` — wraps the engine's idempotent scripts (`engine/WebkitWasm/tools/`)
+`scripts/build-engine.sh` — wraps the engine's idempotent scripts (`engine/WebkitWasm/tools/`)
 with the five fixes a fresh checkout needs (below). Output:
 `engine/WebkitWasm/build/webcore/bin/embedder.{js,wasm}`, snapshotted into
 `engine/artifacts/<stamp>/` (newest 12 kept; meta.json stamped with `source_hash` — the hash of
-the engine sources built, `tools/lib/engine-src-hash.mjs` — plus the invoking checkout, branch,
+the engine sources built, `scripts/lib/engine-src-hash.mjs` — plus the invoking checkout, branch,
 sha, dirty, pthread) for staging. Worktree-safe: it compiles **the invoking checkout's**
 `engine/WebkitWasm/src/` against the main checkout's shared build tree
 (`BIB_TREE`/`BIB_SRC` split in build-webcore.sh + export-webkit-patches.sh), resolves that tree
@@ -23,7 +23,7 @@ edits); when another checkout's patch is loaded there it takes the tree over aut
 losslessly (the previous owner's live edits are captured into that owner's patch file first).
 See notes/worktrees.md § Engine work.
 
-Dev harness (headless drivers: `tools/smoke-{browse,bridge,leak,fixtures}.mjs`):
+Dev harness (headless drivers: `scripts/smoke-{browse,bridge,leak,fixtures}.mjs`):
 ```sh
 cd engine/WebkitWasm
 PORT=8090 node tools/dev-server.mjs web --mount /engine=build/webcore/bin
@@ -45,14 +45,14 @@ and fetches three files by **origin-absolute** path, so every host must serve th
 | `/vendor/binaryen/index.js` | npm `binaryen` (13 MB, ESM, self-contained) | the polyfill loads but every guest module gets a CompileError |
 
 The dev harness satisfies this with its mounts (root `web/`, `/vendor` → `node_modules`); the
-extension's root is `src/`, and `tools/stage-engine.mjs` stages all three there (gitignored, like
+extension's root is `src/`, and `scripts/stage-engine.mjs` stages all three there (gitignored, like
 `src/engine/`). Binaryen is therefore a real `dependencies` entry, not a devDependency — it ships.
 A miss is only three worker `console.warn`s, which is how it went unnoticed until 2026-08-15;
 tier-2 scenario 22 now asserts the guest-visible end state.
 
 **`web/` is not a build input**: `browser.html` + page glue + the two guest-injection payloads
 above, all served as-is. Everything the embedder compiles or links — including `engine-pre.js`
-(`--pre-js`) — lives under `src/`, which is exactly what `tools/lib/engine-src-hash.mjs` hashes.
+(`--pre-js`) — lives under `src/`, which is exactly what `scripts/lib/engine-src-hash.mjs` hashes.
 (That split is right: the injection payloads are fetched at runtime, so editing one must *not*
 invalidate the engine artifact — restage instead of rebuild.)
 
@@ -79,7 +79,7 @@ PrivateHeaders/` and included by most of WebCore. Editing either costs ~876 TUs 
 not the ~90 s embedder loop. Same for `NetworkStorageSession.h`, `CertificateInfo.h`,
 `AuthenticationChallenge.h`.
 
-## Five fixes a fresh clone needs (all encoded in tools/build-engine.sh)
+## Five fixes a fresh clone needs (all encoded in scripts/build-engine.sh)
 
 1. **brotli ordering**: bootstrap runs webcore-deps → ssl-tier, but freetype
    (webcore-deps) now `FT_REQUIRE_BROTLI=ON` while brotli is built by ssl-tier.
@@ -150,12 +150,12 @@ in engine/WebkitWasm/LICENSING.md — upstream base `825c260`, our pre-import he
 `af6f559`, no inner git anymore). The host-fetch bridge is the only transport — the curl/wisp
 tier was deleted from the code, the link and the dep tier on 2026-08-13; dev harness =
 web/browser.html + web/bib-net.js + dev-server `/__bibproxy`.
-Rebuilds: `tools/build-engine.sh` (embedder-only changes are a ~1.5 min compile+relink, from
+Rebuilds: `scripts/build-engine.sh` (embedder-only changes are a ~1.5 min compile+relink, from
 any checkout — engine work belongs on the branch that needs it; worktrees.md).
-Milestone smoke: `node tools/smoke-bridge.mjs` (real sites — not CI); its cookie case rides
+Milestone smoke: `node scripts/smoke-bridge.mjs` (real sites — not CI); its cookie case rides
 dev-server `/cookie-test/redirect-set` → 302 + `Set-Cookie` → `/cookie-test/echo`, which echoes
 the `Cookie` it received (green 2026-08-13). All smokes run THIS checkout's harness and engine
-(`tools/lib/dev-harness.mjs`; worktrees.md § Smokes). Build RAM is mild on this box: 12 jobs
+(`scripts/lib/dev-harness.mjs`; worktrees.md § Smokes). Build RAM is mild on this box: 12 jobs
 fine; unified TUs ~1.2 GB clang RSS each.
 
 ## Build traps & pin rationale (distilled from fork docs at import)

@@ -1,5 +1,5 @@
 node_modules/
-# Staged into the extension root by tools/stage-engine.mjs: the engine
+# Staged into the extension root by scripts/stage-engine.mjs: the engine
 # artifact plus the three files its worker pre-js fetches from the host root
 # (guest wasm shim, media stubs, binaryen).
 src/engine/
@@ -29,5 +29,5 @@ engine/.webkit-patch.owner
 .claude/worktrees/
 
 # Bench results are per-machine lab output, never committed. Root-anchored:
-# a bare `bench/` would also swallow the suite's own source in tools/bench/.
+# a bare `bench/` would also swallow the suite's own source in scripts/bench/.
 /bench/

@@ -8,7 +8,7 @@
 // (2026-08-14), so numbers from the two are directly comparable: keep the
 // bodies and the best-of-2 protocol identical if you change anything.
 //
-// Usage: node tools/js-speed-probe.mjs
+// Usage: node scripts/js-speed-probe.mjs
 import { chromium } from 'playwright-core';
 import { startDevServer, waitForServers } from './lib/dev-harness.mjs';
 import { PORT_BASE } from '../test/harness/ports.mjs';

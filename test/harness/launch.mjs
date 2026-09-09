@@ -27,16 +27,16 @@ export const RESOLVER_RULES = `MAP plain-http.bstest 127.0.0.1:${HTTP_PORT}, MAP
 
 export const CHROMIUM_BIN = process.env.BS_CHROMIUM ?? '/usr/bin/chromium';
 
-// The engine wasm is gitignored and staged per checkout (tools/stage-engine.mjs,
-// run for you by tools/wt-setup.mjs). Without it every engine-backed scenario
+// The engine wasm is gitignored and staged per checkout (scripts/stage-engine.mjs,
+// run for you by scripts/wt-setup.mjs). Without it every engine-backed scenario
 // dies on a boot timeout with no hint — fail here instead. Prints which engine
 // this run will attribute its results to (once per process).
-import { stagedEngineIdentity, engineBuildInProgress } from '../../tools/lib/engine-id.mjs';
+import { stagedEngineIdentity, engineBuildInProgress } from '../../scripts/lib/engine-id.mjs';
 let saidEngine = false;
 export function requireStagedEngine(extensionDir) {
   if (!existsSync(join(extensionDir, 'engine/embedder.wasm')))
     throw new Error(
-      `no engine staged at ${join(extensionDir, 'engine')} — run: node tools/wt-setup.mjs`,
+      `no engine staged at ${join(extensionDir, 'engine')} — run: node scripts/wt-setup.mjs`,
     );
   // Host-root assets the engine worker's pre-js fetches (engine-build.md
   // § Host-root asset contract). Missing ones only warn worker-side, so
@@ -45,7 +45,7 @@ export function requireStagedEngine(extensionDir) {
     .filter((f) => !existsSync(join(extensionDir, f)));
   if (missing.length)
     throw new Error(
-      `extension root is missing ${missing.join(', ')} — run: node tools/stage-engine.mjs`,
+      `extension root is missing ${missing.join(', ')} — run: node scripts/stage-engine.mjs`,
     );
   if (saidEngine) return;
   saidEngine = true;
@@ -66,7 +66,7 @@ export async function launch(opts = {}) {
   const userDataDir = mkdtempSync(join(tmpdir(), 'bs-profile-'));
   const allArgs = [
     // Extra rules first: a caller's specific MAP must win if Chromium
-    // first-matches (the bench server owns its own domain — tools/bench).
+    // first-matches (the bench server owns its own domain — scripts/bench).
     `--host-resolver-rules=${[extraResolverRules, RESOLVER_RULES].filter(Boolean).join(', ')}`,
     '--ignore-certificate-errors',
     '--no-first-run',

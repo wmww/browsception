@@ -8,7 +8,7 @@ worktree, and never copy the 12 GB `engine/` tree. One branch can carry a whole 
 ## Setup (once per fresh worktree, idempotent, ~2 s)
 
 ```sh
-node tools/wt-setup.mjs     # also auto-runs via npm pretest/pretest:tier2 hooks
+node scripts/wt-setup.mjs     # also auto-runs via npm pretest/pretest:tier2 hooks
 ```
 
 The user's worktree helpers also run executables from `.wt-hooks/` (cwd = the worktree):
@@ -21,19 +21,19 @@ and the CMake cache all tolerate a vanished checkout).
 
 - `node_modules` → `cp -al` hardlink-clone from the main checkout (falls back to `npm ci` if the
   lockfile differs).
-- `src/engine/` → hardlinked from the engine snapshot matching this checkout (`tools/stage-engine.mjs`).
+- `src/engine/` → hardlinked from the engine snapshot matching this checkout (`scripts/stage-engine.mjs`).
 - Nothing else needed: `test/fixtures/ca` self-generates; `src/manifest.json` is committed.
 
 ## Shared vs per-checkout
 
 | Resource | Where | Sharing |
 |---|---|---|
-| engine build state (`engine/WebkitWasm/{third_party,build}`, ~12 GB, gitignored) | main checkout only | singleton; resolved via git common dir (`tools/lib/paths.mjs`), build serialized by `engine/.build.lock` (flock; owner in `.build.owner`). Any checkout can *build its own sources* against it (below) |
+| engine build state (`engine/WebkitWasm/{third_party,build}`, ~12 GB, gitignored) | main checkout only | singleton; resolved via git common dir (`scripts/lib/paths.mjs`), build serialized by `engine/.build.lock` (flock; owner in `.build.owner`). Any checkout can *build its own sources* against it (below) |
 | `third_party/WebKit` working tree | main checkout | singleton with **one** patch loaded at a time; which one is recorded in `engine/.webkit-patch.applied` (+ `.owner`). A build from a checkout whose tracked patch differs takes the tree over automatically and losslessly (§ WebKit-tree changes) |
 | `engine/artifacts/<stamp>/` | main checkout | immutable snapshots of `embedder.{js,wasm}` + bib-build-config.js + meta.json (`source_hash` = hash of the sources built, plus checkout/branch/sha/dirty and `link`: `plain` — the shipping no-SAB link — or `proxy`, from `build-engine.sh --proxy`, stamp suffixed `-proxy`, refused by stage-engine without `--allow-proxy`), newest 12 kept, `latest` symlink. `engine/artifacts/keep/<stamp>/` is **pruning-exempt** (retention globs `artifacts/2*`): `cp -a` a notable build there and it stays runnable — `--list` shows keeps, `--from keep/<stamp>` stages one. That is the depth limit on retro-benchmarking (notes/perf-measurement.md § Retro-running) |
 | `src/engine/` | per checkout | hardlinks into a snapshot (~0 disk; Chrome can't reliably follow symlinks, hardlinks are fine). Pruning a snapshot never breaks staged copies — hardlinks keep inodes alive, and `.staged-meta.json` lets stage-engine keep a still-matching staged copy whose snapshot was pruned instead of downgrading to `latest` |
 | `node_modules` | per checkout | hardlink-clone of main's; the dev server mounts it at `/vendor` for the harness, and `stage-engine` hardlinks `binaryen/index.js` into `src/vendor/` for the extension (engine-build.md § Host-root asset contract) |
-| smoke harness (dev-server, `web/`, staged engine) | per checkout | ordinary tracked source, not build state — `tools/lib/dev-harness.mjs` serves **this** checkout's copy; only the build tree behind `stage-engine` is shared |
+| smoke harness (dev-server, `web/`, staged engine) | per checkout | ordinary tracked source, not build state — `scripts/lib/dev-harness.mjs` serves **this** checkout's copy; only the build tree behind `stage-engine` is shared |
 | test/dev-server ports | per checkout | derived block of 16 from checkout-path hash (`test/harness/ports.mjs`, base 21000–28999, override `BS_PORT_BASE`). Fixture pages that need live ports use `__HTTP_PORT__`/`__HTTPS_PORT__` placeholders substituted by server.mjs |
 
 Port isolation matters: with a fixed port, one worktree's harness would silently talk to another
@@ -41,7 +41,7 @@ worktree's fixture server (health check passes, oracle cross-contaminates).
 
 ## Smokes and harness servers
 
-`tools/smoke-*.mjs` run entirely out of **this** checkout via `tools/lib/dev-harness.mjs`:
+`scripts/smoke-*.mjs` run entirely out of **this** checkout via `scripts/lib/dev-harness.mjs`:
 its `engine/WebkitWasm/tools/dev-server.mjs`, its `web/` harness, and `/engine` mounted from
 its `src/engine` (the hash-matched hardlink snapshot; `startDevServer` re-stages `--if-stale`
 first). Nothing is served out of the main checkout's live `build/webcore/bin` — that holds
@@ -68,7 +68,7 @@ don't interact at all.
 ## Engine (C++) work
 
 Edit `engine/WebkitWasm/src/` **on your own branch in your own worktree** and build from
-there: `bash tools/build-engine.sh` compiles *this checkout's* sources against the main
+there: `bash scripts/build-engine.sh` compiles *this checkout's* sources against the main
 checkout's shared build tree. A coupled engine+JS change is one branch, one review, testable in
 place.
 
@@ -79,12 +79,12 @@ our `src/`. Repointing it reconfigures and rebuilds the 5 embedder TUs + link on
 Measured: **~1.5 min** for a build from a worktree, 7 ninja edges (3 when switching back,
 since both checkouts' objects stay in the graph).
 
-1. `bash tools/build-engine.sh` — from any checkout; takes the lock, waits with a message if
+1. `bash scripts/build-engine.sh` — from any checkout; takes the lock, waits with a message if
    another build is running. Flags: `--sync-webkit` (below), `--force` (skip the fast path),
    `--snapshot-only`, `--proxy` (the unshipped `-sPROXY_TO_PTHREAD` link; engine.md § Build shape).
    - **Fast path**: if a snapshot's `source_hash` already matches this checkout's engine sources,
      it prints it and exits (~0.7 s). A fresh JS-only worktree costs nothing out of the gate.
-2. `node tools/stage-engine.mjs` in your checkout picks the newest snapshot whose `source_hash`
+2. `node scripts/stage-engine.mjs` in your checkout picks the newest snapshot whose `source_hash`
    matches it. No matching snapshot but the already-staged copy was hash-matched to these same
    sources (`src/engine/.staged-meta.json`) → it keeps the staged copy (its snapshot was pruned
    by other checkouts' builds; the bits are still right). Otherwise it stages `latest` with a
@@ -99,7 +99,7 @@ since both checkouts' objects stay in the graph).
    - `--from <stamp>` pins explicitly (`--from mine` = newest built from this checkout); pinning
      another checkout's artifact is allowed — that's the A/B case — but warns by name. A pin is
      **sticky**: the pretest `--if-stale` re-run keeps it (with a reminder line) instead of
-     silently swapping engines mid-experiment; a plain `node tools/stage-engine.mjs` unpins.
+     silently swapping engines mid-experiment; a plain `node scripts/stage-engine.mjs` unpins.
 3. **Dep tier / bootstrap edits are main-checkout work**: `tools/bootstrap.sh` and
    `tools/build-deps/*` always run from main and only touch `third_party/`.
 
@@ -122,7 +122,7 @@ loaded.
   WebKit branches just pay the ~1.5 min switch per direction, serialized by the build lock.
 - If nothing needs building (fast path hit), a foreign patch is just noted and the tree is left
   alone. Corollary: **before live-editing `third_party/WebKit`, own the tree** — run
-  `bash tools/build-engine.sh --sync-webkit` (same lossless takeover, forced now). Editing a
+  `bash scripts/build-engine.sh --sync-webkit` (same lossless takeover, forced now). Editing a
   tree you don't own risks your edits being captured into the owner's patch instead of yours.
 - Treat the patch file as the source of truth and the tree as a cache: if your live edits
   disappear from the tree (someone took it over), they're in your patch file; your next build

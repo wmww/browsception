@@ -182,7 +182,7 @@ async function bootEngine() {
     // Observe every presented frame: cb({band, fbW, fbH, stride, x, y, w, h}),
     // band = the dirty rows [y, y+h) as a Uint8Array, valid only during the
     // call (the buffer goes back to the worker after). The bench suite's
-    // pixel watcher lives on this (tools/bench/lib/page.mjs).
+    // pixel watcher lives on this (scripts/bench/lib/page.mjs).
     onFrame(cb) {
       frameObservers.push(cb);
     },
@@ -567,7 +567,7 @@ async function bootEngine() {
       bs.metrics.engineFetchMs = Math.round(performance.now() - t0);
     },
     onBootFailed(message) {
-      bootEl.textContent = 'engine artifacts missing — run tools/stage-engine.mjs';
+      bootEl.textContent = 'engine artifacts missing — run scripts/stage-engine.mjs';
       setStatus(`no engine (${message})`);
       bs.dead = true;
     },

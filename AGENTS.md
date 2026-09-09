@@ -5,7 +5,7 @@ Browsception is a browser extension for running browser tabs within a sub-browse
 The `notes/` directory contains your persistent notes about the project state. Create/edit/rename/split/delete notes as needed (without being asked) to keep them correct and maximally useful to you. Keep notes concise, remove parts or whole notes that are unimportant or obvious. Keep `notes/README.md` up to date with an index of what is where.
 
 ## Worktrees
-Ephemeral worktrees under `.worktrees/` are cheap: `npm test` self-bootstraps a fresh one (or run `node tools/wt-setup.mjs` first). Never copy or cold-build the engine per-worktree — `tools/build-engine.sh` compiles your checkout's engine sources against the main checkout's shared build tree, so a coupled engine+JS change lives on one branch. Read `notes/worktrees.md` before touching `engine/`.
+Ephemeral worktrees under `.worktrees/` are cheap: `npm test` self-bootstraps a fresh one (or run `node scripts/wt-setup.mjs` first). Never copy or cold-build the engine per-worktree — `scripts/build-engine.sh` compiles your checkout's engine sources against the main checkout's shared build tree, so a coupled engine+JS change lives on one branch. Read `notes/worktrees.md` before touching `engine/`.
 
 ## Issues
 Issues live in `issues/`. Do not solve them unless asked or the fix falls out of current work. Create/update issues for nontrivial problems discovered during other work. Delete confirmed-solved issues (move still-useful context into notes first).

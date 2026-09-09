@@ -1,4 +1,4 @@
-// Shared dev-harness launcher for tools/smoke-*.mjs.
+// Shared dev-harness launcher for scripts/smoke-*.mjs.
 //
 // Everything comes from THIS checkout: the dev server, the web/ harness, and
 // the engine staged into src/engine (a hardlinked snapshot whose source_hash
@@ -20,12 +20,12 @@ export function startDevServer({ port, env = {} }) {
   // Silent no-op when what's staged is already right; warns loudly when no
   // artifact matches these engine sources — exactly what you want to see
   // before a smoke run attributes someone else's engine to your branch.
-  spawnSync('node', [join(checkoutRoot, 'tools/stage-engine.mjs'), '--if-stale'], {
+  spawnSync('node', [join(checkoutRoot, 'scripts/stage-engine.mjs'), '--if-stale'], {
     cwd: checkoutRoot,
     stdio: 'inherit',
   });
   if (!existsSync(join(ENGINE, 'embedder.wasm')))
-    throw new Error(`no engine staged at ${ENGINE} — run: bash tools/build-engine.sh`);
+    throw new Error(`no engine staged at ${ENGINE} — run: bash scripts/build-engine.sh`);
   console.log(stagedEngineIdentity(ENGINE));
   const busy = engineBuildInProgress();
   if (busy) console.warn(`WARNING: engine build running [${busy}] — timing numbers will be noisy`);

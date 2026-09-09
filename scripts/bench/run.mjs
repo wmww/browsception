@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 // Engine performance benchmark runner (report-only lab instrument).
 //
-//   node tools/bench/run.mjs [--ext <dir>] [--save <name>] [--compare <name>]
+//   node scripts/bench/run.mjs [--ext <dir>] [--save <name>] [--compare <name>]
 //        [--only a,b] [--diagnostic] [--size WxH] [--secs N] [--reps N]
 //        [--viewer-params 'rcap=5'] [--url <URL>] [--headed]
-//   node tools/bench/run.mjs --list
-//   node tools/bench/run.mjs --diff <before> <after>
+//   node scripts/bench/run.mjs --list
+//   node scripts/bench/run.mjs --diff <before> <after>
 //
 // Results are per-machine and never committed; they land in the MAIN
 // checkout's bench/ so every worktree shares one pool.

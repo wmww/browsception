@@ -83,9 +83,9 @@ boot-size, grow, shrink, and post-resize input.
   scrolls (ChromeClient::scroll delta is IntSize), so floats never reach the blit. Note WebCore
   skips invisible fixed layers in scrollContentsFastPath (NotCompositedForNoVisibleContent), so
   an opacity:0 100vw/100vh fixed overlay doesn't force slow scrolling. Probes:
-  `tools/perf-scroll-probe.mjs` (BIBPERF/BIBSCROLL via `?perflog=1`),
-  `tools/scroll-speed-probe.mjs` (speed / framebuffer / event-rate sweeps),
-  `tools/scroll-roundtrip.mjs` (pixel-exactness); see notes/perf-measurement.md.
+  `scripts/perf-scroll-probe.mjs` (BIBPERF/BIBSCROLL via `?perflog=1`),
+  `scripts/scroll-speed-probe.mjs` (speed / framebuffer / event-rate sweeps),
+  `scripts/scroll-roundtrip.mjs` (pixel-exactness); see notes/perf-measurement.md.
   loginasroot.net @1600x860: 2-5ms strip repaints / ~12% busy at any dpr (was ~100ms/98% at dpr≠1).
   Shadow-heavy full paints remain ~3x a text page (~100ms vs ~30ms per 1.4Mpx) — matters for
   load/resize/settle only; Skia blur caching is the lead if it ever hurts.
@@ -162,7 +162,7 @@ boot-size, grow, shrink, and post-resize input.
   `selfNeedsLayout()` ⇒ `RequiresFullRepaint::Yes`) — so the page still paints 1.38 Mpx/frame
   (full viewport). WebKit keeps that conservatism for reflowed inline text (RenderText has no
   repaint pass of its own); refinement for block-level-children containers in progress.
-- Measured (fixture, plain text, dpr 1, `tools/scroll-speed-probe.mjs`, before → after, same
+- Measured (fixture, plain text, dpr 1, `scripts/scroll-speed-probe.mjs`, before → after, same
   session): **5.6 Mpx** at 3600 px/s: 2 → 18 fps, wheel 968 → 111 ms/s, blit 913 → 90 ms/s, queue
   74 → 2, and the tail — how long the page keeps scrolling after input stops — 1.7 s → 0.16 s. At
   14400 px/s: 0.5 → 12 fps, tail 4.5 s → 0.3 s. **1.4 Mpx** was never backlogged, so it shows the

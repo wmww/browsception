@@ -2,7 +2,7 @@
 // Stages engine artifacts into THIS checkout's src/engine/ (gitignored) —
 // Chrome needs them inside the unpacked-extension root (src/). Rerun after
 // engine rebuilds. Works from worktrees: engine/ is resolved through the
-// main checkout (tools/lib/paths.mjs).
+// main checkout (scripts/lib/paths.mjs).
 //
 // Modes:
 //   (default)                newest snapshot whose meta.json source_hash matches
@@ -80,7 +80,7 @@ const snapshots = () => {
 // notable build stays runnable — the depth limit on retro-benchmarking is
 // artifact availability, not the bench runner (notes/perf-measurement.md).
 // Copy one there with:  cp -a engine/artifacts/<stamp> engine/artifacts/keep/
-// and stage it with:    node tools/stage-engine.mjs --from keep/<stamp>
+// and stage it with:    node scripts/stage-engine.mjs --from keep/<stamp>
 const KEEP = join(ARTIFACTS, 'keep');
 const kept = () => {
   try {
@@ -133,7 +133,7 @@ function stageOnce() {
   // sweep must not have its artifact swapped back mid-experiment by npm test.
   if (ifStale && readJson(STAGED_META).pinned
       && ['embedder.js', 'embedder.wasm'].every((f) => existsSync(join(OUT, f)))) {
-    console.log(`engine PINNED to ${readJson(STAGED_META).stamp} — 'node tools/stage-engine.mjs' to unpin`);
+    console.log(`engine PINNED to ${readJson(STAGED_META).stamp} — 'node scripts/stage-engine.mjs' to unpin`);
     return;
   }
 
@@ -155,7 +155,7 @@ function stageOnce() {
         ` (branch ${m.branch ?? '?'}, source_hash ${m.source_hash ?? '?'})`);
     if (existsSync(join(src, 'meta.json')) && !stageable(src)) {
       console.error(`${basename(src)} is a proxy-link (SAB/pthread) artifact — the extension cannot host it.` +
-        ` Build the plain link (bash tools/build-engine.sh) or pass --allow-proxy for the dev harness.`);
+        ` Build the plain link (bash scripts/build-engine.sh) or pass --allow-proxy for the dev harness.`);
       process.exit(1);
     }
   } else {
@@ -178,14 +178,14 @@ function stageOnce() {
         `WARNING: no engine artifact matches this checkout's engine sources (${hash}).\n` +
         `         Staging ${basename(src)}, built from ${m.checkout ?? '?'}` +
         ` (branch ${m.branch ?? '?'}, sha ${m.sha ?? '?'}${m.dirty ? '-dirty' : ''}, source_hash ${m.source_hash ?? '?'}).\n` +
-        `         If this checkout changes engine/WebkitWasm, build it: bash tools/build-engine.sh`);
+        `         If this checkout changes engine/WebkitWasm, build it: bash scripts/build-engine.sh`);
     } else {
       src = join(engineRoot, 'WebkitWasm/build/webcore/bin');
       mode = 'copy';
     }
   }
   if (!existsSync(join(src, 'embedder.wasm'))) {
-    console.error(`no engine artifacts at ${src} — build with tools/build-engine.sh first`);
+    console.error(`no engine artifacts at ${src} — build with scripts/build-engine.sh first`);
     process.exit(1);
   }
 
@@ -228,7 +228,7 @@ function stageOnce() {
       copyFileSync(join(src, CONFIG), d);
     } else {
       const link = mode === 'link' ? linkOf(src) : 'plain';
-      writeFileSync(d, `// Synthesized by tools/stage-engine.mjs from ${basename(src)}.\n` +
+      writeFileSync(d, `// Synthesized by scripts/stage-engine.mjs from ${basename(src)}.\n` +
         `globalThis.BIB_BUILD_CONFIG = { link: ${JSON.stringify(link)} };\n` +
         `globalThis.BIB_PTHREAD_BUILD = ${link === 'proxy'};\n`);
     }
@@ -266,7 +266,7 @@ const HOST_ASSETS = [
   { from: join(checkoutRoot, 'engine/WebkitWasm/web/wasm-polyfill.js'), to: join(SRC, 'wasm-polyfill.js'), copy: true },
   { from: join(checkoutRoot, 'engine/WebkitWasm/web/media-stub.js'), to: join(SRC, 'media-stub.js'), copy: true },
   // 13 MB npm dep, exact-pinned; hardlink it (node_modules itself is a
-  // hardlink clone of the main checkout's — tools/wt-setup.mjs).
+  // hardlink clone of the main checkout's — scripts/wt-setup.mjs).
   { from: 'node_modules/binaryen/index.js', to: join(SRC, 'vendor/binaryen/index.js'), fromRoots: [checkoutRoot, mainRoot] },
 ];
 

@@ -32,17 +32,17 @@ Two modes: **whitelist** (default — everything runs sandboxed except domains y
 | `src/` | The extension (unpacked root): viewer, service worker, popup/options, engine shim |
 | `src/abi/` | The C ⇄ JS ABI contract (`bib_abi.h` + mirrored `abi.mjs`) |
 | `engine/WebkitWasm/` | The engine: embedder C++, WebKit patch, build scripts, dev harness |
-| `tools/` | Engine build/staging, extension generation, real-site smoke tests |
+| `scripts/` | Engine build/staging, extension generation, real-site smoke tests |
 | `test/` | Tiered suites: tier 0–1 headless (no engine), tier 2 against the real engine |
 | `notes/` | Design docs and distilled project knowledge |
 
 ## Building & running
 
 ```sh
-bash tools/build-engine.sh     # one-time ~1.5 h: fetches pinned WebKit + emsdk,
-                               # builds ~12 GB of deps, then the engine (Linux host)
-node tools/stage-engine.mjs    # hardlink engine artifacts into src/engine/
-node tools/gen-ext.mjs         # generate manifest + DNR rulesets
+bash scripts/build-engine.sh     # one-time ~1.5 h: fetches pinned WebKit + emsdk,
+                                 # builds ~12 GB of deps, then the engine (Linux host)
+node scripts/stage-engine.mjs    # hardlink engine artifacts into src/engine/
+node scripts/gen-ext.mjs         # generate manifest + DNR rulesets
 # then load src/ as an unpacked extension (chrome://extensions, Developer mode)
 ```
 

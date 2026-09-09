@@ -269,7 +269,7 @@ if [ "$OWNED" = 1 ] && [ "$SNAPSHOT_ONLY" = 0 ]; then
   printf '%s %s\n' "$CHECKOUT_ROOT" "$(date -u +%FT%TZ)" > "$OWNER_F"
 fi
 
-SRC_HASH="$(node "$CHECKOUT_ROOT/tools/lib/engine-src-hash.mjs" "$CHECKOUT_ROOT")"
+SRC_HASH="$(node "$CHECKOUT_ROOT/scripts/lib/engine-src-hash.mjs" "$CHECKOUT_ROOT")"
 
 if [ "$SNAPSHOT_ONLY" = 1 ]; then
   # The bin/ output was produced by whichever checkout built last; stamping it
@@ -293,7 +293,7 @@ if [ -n "$MATCH" ] && [ "$FORCE" = 0 ]; then
   if [ "$OWNED" = 0 ] && [ "$WK_OK" = 1 ]; then
     echo "    (the shared WebKit tree holds another branch's patch; harmless — nothing was built.)"
   fi
-  echo "    stage into this checkout with: node tools/stage-engine.mjs"
+  echo "    stage into this checkout with: node scripts/stage-engine.mjs"
   echo "    (--force rebuilds anyway)"
   exit 0
 fi
@@ -402,7 +402,7 @@ CACHED="$(rg -m1 '^EMSCRIPTEN_EMBEDDER_CMAKE:' "$W/build/webcore/CMakeCache.txt"
 CACHED_ROOT="${CACHED%/engine/WebkitWasm/src/embedder/embedder.cmake}"
 if [ -n "$CACHED" ] && [ "$CACHED_ROOT" != "$CACHED" ] && [ "$CACHED_ROOT" != "$CHECKOUT_ROOT" ] \
    && [ -f "$CACHED_ROOT/engine/WebkitWasm/src/embedder/main.cpp" ] \
-   && [ "$SRC_HASH" = "$(node "$CHECKOUT_ROOT/tools/lib/engine-src-hash.mjs" "$CACHED_ROOT" 2>/dev/null || true)" ]; then
+   && [ "$SRC_HASH" = "$(node "$CHECKOUT_ROOT/scripts/lib/engine-src-hash.mjs" "$CACHED_ROOT" 2>/dev/null || true)" ]; then
   BUILD_SRC="$CACHED_ROOT/engine/WebkitWasm"
   echo "==> sources identical to the cached checkout ($CACHED_ROOT) — keeping the CMake cache"
 fi
@@ -424,4 +424,4 @@ printf '%s' "$PRE_NOW" > "$PRE_STAMP"
 ls -lh "$W/build/webcore/bin/$([ "$LINK" = proxy ] && echo proxy/)embedder.wasm"
 echo "OK — engine at $W/build/webcore/bin/ (sources: $BUILD_SRC)"
 snapshot
-echo "    stage into a checkout with: node tools/stage-engine.mjs"
+echo "    stage into a checkout with: node scripts/stage-engine.mjs"

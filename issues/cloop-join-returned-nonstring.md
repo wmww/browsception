@@ -6,7 +6,7 @@ run ~8 benchmarks: `parts.join('&')` on a 100k-element string array produced som
 
     TypeError: joined.split is not a function. (In 'joined.split('&')', 'joined.split' is 0)
 
-The identical body run on its own (tools/js-speed-probe.mjs, `string-build`) passes and returns the
+The identical body run on its own (scripts/js-speed-probe.mjs, `string-build`) passes and returns the
 right checksum, repeatedly. So: state-dependent, not deterministic.
 
 Suspects, in order: the known intermittent CLoop `Structure::materializePropertyTable` offset

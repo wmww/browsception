@@ -28,7 +28,7 @@ result appended here (keep the question, add `**Answer (date):**`).
 3. **WebkitWasm build reproduction.** Does the pthread branch build and run for us, today, on our
    hardware? (~11 GB tree; expect toolchain pinning pain.) Everything sequences after this.
    **Answer (2026-08-10): YES.** Fresh-clone build reproduced (five fixes needed, all
-   encoded in tools/build-engine.sh); demo gate PASS headless; example.com renders
+   encoded in scripts/build-engine.sh); demo gate PASS headless; example.com renders
    through the engine. 103 MB embedder.wasm, ~45 min WebCore build at 12 jobs. Full
    notes: notes/engine-build.md. The pthread branch is now upstream `main` (mvp.md's
    `wb1-pthread` reference was stale).
@@ -121,7 +121,7 @@ result appended here (keep the question, add `**Answer (date):**`).
     for a hypothetical Chrome mode B. Low priority.
 13. **Firefox port plan.** Superseded by plans/one-engine-both-browsers.md (worker-hosted
     non-pthread link on both browsers; mode B dropped). Probe results land here.
-    **Answer (2026-09-09, Firefox 155.0.1 headless, `tools/probe-firefox.mjs` + landed
+    **Answer (2026-09-09, Firefox 155.0.1 headless, `scripts/probe-firefox.mjs` + landed
     `test/tier2/firefox.test.mjs`):** every probe passed; the port shipped the same day.
     | Probe | Result |
     |---|---|

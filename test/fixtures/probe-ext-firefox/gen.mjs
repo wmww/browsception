@@ -3,7 +3,7 @@
 // extension (plans/one-engine-both-browsers.md phase 0), dogfooding
 // src/ext/dnr-rules.mjs. Firefox's moz-extension UUID is per-profile, so the
 // harness pins it via the extensions.webextensions.uuids pref (see
-// tools/probe-firefox.mjs); the static catch-all below bakes that UUID in.
+// scripts/probe-firefox.mjs); the static catch-all below bakes that UUID in.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';

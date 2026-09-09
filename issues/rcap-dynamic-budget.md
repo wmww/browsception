@@ -17,7 +17,7 @@ rendering update in `bib_tick`.
 
 ## Measured 2026-08-14 (bench suite, engine 20260815-024910-d1ff7e9)
 
-`node tools/bench/run.mjs --viewer-params 'rcap=N'` vs baseline, 1600x900, 3 reps:
+`node scripts/bench/run.mjs --viewer-params 'rcap=N'` vs baseline, 1600x900, 3 reps:
 
 | workload | baseline | `rcap=5` | `rcap=1` |
 |---|---|---|---|

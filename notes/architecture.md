@@ -93,7 +93,7 @@ One: the **extension-page viewer** — DNR redirects every intercepted `main_fra
 `viewer.html?url=…` (raw target), on Chrome and Firefox alike. The URL bar shows the extension
 URL with our in-page URL bar underneath (extension-platform.md § address-bar constraint); the
 viewer origin is the extension origin (strong isolation); the bridge fetches directly from the
-page. The only per-browser divergence is manifest generation (tools/lib/manifest.mjs).
+page. The only per-browser divergence is manifest generation (scripts/lib/manifest.mjs).
 
 *Rejected (2026-09-09)*: a "mode B" stay-on-origin viewer (Firefox StreamFilter rewriting the
 response body, real URL in the bar). It cost isolation — the viewer would run in the target

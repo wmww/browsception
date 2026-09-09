@@ -3,7 +3,7 @@
 // the wasm heap after each. The reserved heap (HEAPU8.length) only ever
 // grows, so the leak signal is growth that never flattens — a per-navigation
 // leak of any size shows as steady late-run growth. Bounds are generous
-// tripwires, not perf targets. Usage: node tools/smoke-leak.mjs [--navs N]
+// tripwires, not perf targets. Usage: node scripts/smoke-leak.mjs [--navs N]
 //
 // Deterministic + fixture-only, same server setup as smoke-fixtures.mjs.
 

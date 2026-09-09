@@ -2,7 +2,7 @@
 // Generates src/manifest.json (+ static rulesets) for the Chrome extension,
 // dogfooding src/ext/dnr-rules.mjs. Rerun after changing rules or the key.
 // The unpacked extension root is src/. The Firefox manifest comes from the
-// same source (tools/lib/manifest.mjs) via tools/pack-firefox.mjs.
+// same source (scripts/lib/manifest.mjs) via scripts/pack-firefox.mjs.
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';

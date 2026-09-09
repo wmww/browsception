@@ -22,7 +22,7 @@ get_filename_component(BIB_EMBEDDER_DIR "${EMSCRIPTEN_EMBEDDER_CMAKE}" DIRECTORY
 #   BibEmbedderProxy  (proxy/embedder.js/.wasm)  the -sPROXY_TO_PTHREAD link,
 #                     kept buildable for a Chrome-only real-threads experiment.
 #                     EXCLUDE_FROM_ALL: built only by name
-#                     (tools/build-engine.sh --proxy), never staged by default.
+#                     (scripts/build-engine.sh --proxy), never staged by default.
 # BIB_LINK_PROXY (compile definition, embedder TUs only) is how main.cpp
 # tells the two apart — __EMSCRIPTEN_PTHREADS__ is set for BOTH since the
 # compile flags are shared.
@@ -89,7 +89,7 @@ target_link_options(BibEmbedderProxy PRIVATE
     "SHELL:-sPTHREAD_POOL_SIZE=4"
 )
 
-# Stamp the link mode next to each artifact: tools/stage-engine.mjs refuses a
+# Stamp the link mode next to each artifact: scripts/stage-engine.mjs refuses a
 # proxy artifact for the extension, and the dev harness (web/browser.html)
 # reads BIB_PTHREAD_BUILD to decide whether the page or the engine worker
 # pumps. Emitted into the bin dir so the dev server's /engine mount serves it.
@@ -105,7 +105,7 @@ target_link_options(${target} PRIVATE
     # Worker-scope Module hooks (pump, wasm2js, injection text): in the plain
     # link the host worker's scope IS the engine's scope; in the proxy link the
     # engine pthread's worker Module inherits nothing from the page (W-B0).
-    # NOTE: cmake does not track pre-js edits — tools/build-engine.sh stamps
+    # NOTE: cmake does not track pre-js edits — scripts/build-engine.sh stamps
     # its hash and touches main.cpp to force a relink.
     "SHELL:--pre-js ${BIB_EMBEDDER_DIR}/engine-pre.js"
     "SHELL:-sSTACK_SIZE=8MB"

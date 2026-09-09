@@ -3,7 +3,7 @@
 // boot + render, interception via the runtime-installed catch-all, a
 // whitelist/blacklist reconcile, native handoff, scheme gates, crash reload.
 // Drives headless system Firefox over WebDriver BiDi (test/harness/firefox.mjs)
-// with the extension packed by tools/pack-firefox.mjs (dist/firefox/, the
+// with the extension packed by scripts/pack-firefox.mjs (dist/firefox/, the
 // Firefox manifest over hardlinks into src/). Skips when Firefox is absent.
 
 import test from 'node:test';
@@ -12,7 +12,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { launchFirefox, FIREFOX_BIN, oracleClear, oracleRequests } from '../harness/firefox.mjs';
 import { waitForFixtureServer, requireStagedEngine } from '../harness/launch.mjs';
-import { packFirefox } from '../../tools/pack-firefox.mjs';
+import { packFirefox } from '../../scripts/pack-firefox.mjs';
 
 const skip = existsSync(FIREFOX_BIN) ? false : `no Firefox at ${FIREFOX_BIN} (BS_FIREFOX)`;
 const BOOT_TIMEOUT = 120000;

@@ -8,7 +8,7 @@
 //   3. whitelisting a domain sweeps its open viewer tab native and makes
 //      fresh navigations native, while unlisted tabs stay sandboxed.
 // REAL SITES — manual/agent smoke only (notes/testing.md), never CI, run
-// sparingly. Usage: node tools/smoke-mvp.mjs [--headed]
+// sparingly. Usage: node scripts/smoke-mvp.mjs [--headed]
 
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';

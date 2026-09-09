@@ -59,5 +59,5 @@ Never: printing, DRM, nested GPU/JIT.
 - Every shim import added gets a line in security.md's capability accounting.
 - Test growth policy: a new automated test must catch a new *class* of failure; prefer adding
   probes to existing scenarios over adding scenarios.
-- Real-site smokes (tools/smoke-browse.mjs, tools/smoke-mvp.mjs) are manual/agent-run and
+- Real-site smokes (scripts/smoke-browse.mjs, scripts/smoke-mvp.mjs) are manual/agent-run and
   sparing, never CI (testing.md guardrails).

@@ -2,7 +2,7 @@
 // and options. storage.sync holds only explicitly-set keys; readers overlay
 // defaults. Shipped default: active, whitelist mode (sandbox-by-default;
 // empty whitelist → every http(s) site runs nested). Must agree with the
-// manifest's static-ruleset enabled flag (tools/gen-ext.mjs) so a fresh
+// manifest's static-ruleset enabled flag (scripts/gen-ext.mjs) so a fresh
 // install intercepts before the SW ever runs.
 
 export const DEFAULT_STATE = {

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // 1.2b milestone check: the engine loads real sites through the host-fetch
 // bridge — the engine's only transport — in the dev harness page, with redirects
-// and cookies working. Usage: node tools/smoke-bridge.mjs [--headed]
+// and cookies working. Usage: node scripts/smoke-bridge.mjs [--headed]
 //
 // Not CI (touches real websites — see notes/testing.md); run manually or as
 // the sparing real-site smoke at the end of an engine work session.

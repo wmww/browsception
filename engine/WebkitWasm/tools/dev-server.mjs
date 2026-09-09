@@ -218,7 +218,7 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    // Cookie-on-redirect probe for tools/smoke-bridge.mjs: leg 1 sets a
+    // Cookie-on-redirect probe for scripts/smoke-bridge.mjs: leg 1 sets a
     // cookie on a 302, leg 2 echoes what came back. Proves the engine's jar
     // stores a Set-Cookie from a redirect hop and re-attaches it on the next
     // one (the bridge follows redirects engine-side, so both legs are

@@ -3,8 +3,6 @@
  "name": "browsception",
  "version": "0.1.0",
  "description": "Runs websites inside a nested wasm browser engine.",
- "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA24VU/NsX7uu6nhVS5WZS1PrCvDl/P2ZNkZ/xs2XHsGIcSVnNA5GvN+edj7W7WttQZV6tispKHPS9urfL/OX6QE4oJHpvrit6Tha7JDxnyrT6MNS61K6OkIK+3jFoCpZ8k1lmdaywkl0UXwiQXg+cgXAFhrOJk9tAAH5a12ZP1QTlu/kAZ1evqwsE/qYYbD0VKZdpxrwFQbPs4yXpemECXYOrNrKC3va9NTK8XHFVN8THKsuIs5z0BzPMi+cvyCJHOiyjyWcJDhJtYg/NgImismUrQA5V2idloceAA/NT06Y/fKvCGqwPL8lQNlvqQXGVCt9qXXAoDjksB67tZ695fQIDAQAB",
- "minimum_chrome_version": "124",
  "permissions": [
   "declarativeNetRequest",
   "webRequest",
@@ -14,10 +12,6 @@
  "host_permissions": [
   "<all_urls>"
  ],
- "background": {
-  "service_worker": "ext/sw.mjs",
-  "type": "module"
- },
  "action": {
   "default_popup": "ext/popup.html",
   "default_title": "browsception"
@@ -36,6 +30,15 @@
    ]
   }
  ],
+ "content_security_policy": {
+  "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+ },
+ "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA24VU/NsX7uu6nhVS5WZS1PrCvDl/P2ZNkZ/xs2XHsGIcSVnNA5GvN+edj7W7WttQZV6tispKHPS9urfL/OX6QE4oJHpvrit6Tha7JDxnyrT6MNS61K6OkIK+3jFoCpZ8k1lmdaywkl0UXwiQXg+cgXAFhrOJk9tAAH5a12ZP1QTlu/kAZ1evqwsE/qYYbD0VKZdpxrwFQbPs4yXpemECXYOrNrKC3va9NTK8XHFVN8THKsuIs5z0BzPMi+cvyCJHOiyjyWcJDhJtYg/NgImismUrQA5V2idloceAA/NT06Y/fKvCGqwPL8lQNlvqQXGVCt9qXXAoDjksB67tZ695fQIDAQAB",
+ "minimum_chrome_version": "124",
+ "background": {
+  "service_worker": "ext/sw.mjs",
+  "type": "module"
+ },
  "declarative_net_request": {
   "rule_resources": [
    {
@@ -50,8 +53,5 @@
  },
  "cross_origin_embedder_policy": {
   "value": "require-corp"
- },
- "content_security_policy": {
-  "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
  }
 }

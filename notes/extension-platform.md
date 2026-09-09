@@ -1,8 +1,9 @@
 # Extension platform capabilities & constraints
 
-Verified 2026-08. Bottom line: **the whole design is buildable as a pure extension** — no browser
-or OS modification — and **Chrome MV3 is the better first target** (inverts the usual
-"Firefox is friendlier" assumption): DNR redirect + manifest COOP/COEP + threads all work there.
+Verified 2026-08 (Chrome) and 2026-09-09 (Firefox 155, `tools/probe-firefox.mjs`). Bottom line:
+**the whole design is buildable as a pure extension** — no browser or OS modification — and runs
+from **one source tree on both browsers**; the divergence budget is manifest generation
+(tools/lib/manifest.mjs) plus three feature-detected API differences listed under § Firefox.
 
 ## Navigation interception
 
@@ -23,14 +24,38 @@ or OS modification — and **Chrome MV3 is the better first target** (inverts th
 - Do **not** use `webNavigation.onBeforeNavigate` + `tabs.update`: it races (target bytes can start
   parsing) and violates the invariant.
 
-### Firefox (later)
-- **Blocking `webRequest.onBeforeRequest`** returning `{redirectUrl}` still exists in MV3 (Mozilla
-  kept it deliberately; it's how full uBlock Origin works). More ergonomic than DNR — original URL
-  readable directly from `details.url`. Requires a background page/event page configured to wake
-  on webRequest events.
-- **StreamFilter** (`webRequest.filterResponseData`) enables hosting mode B (stay-on-origin): swallow
-  the response body, substitute viewer HTML, and inject COOP/COEP via `onHeadersReceived`. Firefox
-  only. See architecture.md § hosting modes.
+### Firefox (same DNR path, verified 2026-09-09)
+- DNR `main_frame` redirect with our exact rule shapes (catch-all, per-entry redirect, allow at
+  priority 10, tab-scoped session allow, `updateEnabledRulesets`) works on Firefox 155 and hands
+  the viewer the **raw** target after `url=` (query + fragment intact). Two traps: a *relative*
+  `regexSubstitution` is accepted and silently never redirects; `redirect.extensionPath` cannot
+  carry `\0`.
+- The moz-extension **UUID is per profile**, so no static ruleset can name the viewer. The
+  background script installs the whitelist-mode catch-all as a **dynamic rule** there
+  (`desiredRuleState({staticCatchall: false})`, detected from the manifest); dynamic rules persist
+  per profile, and the sweep covers the first navigation exactly as for Chrome's startup race.
+  Tests pin the UUID via the `extensions.webextensions.uuids` pref.
+- No extension service workers: `background.page` (ext/background.html) loads the same
+  `sw.mjs` as an event page. `chrome.*` is promise-returning; `storage.session`, `tabs`, `action`,
+  `alarms` all present; `clients`/`self.registration` are not (sw.mjs uses neither).
+- `initiatorDomains` must be the UUID hostname (`new URL(chrome.runtime.getURL('/')).hostname`,
+  which is what the bridge already uses); the gecko id is rejected as "Invalid domain".
+- webRequest from an extension page: `onHeadersReceived` with `['responseHeaders']` shows
+  Set-Cookie including HttpOnly (no `'extraHeaders'` — Firefox rejects the string; Chrome needs
+  it); `details.initiator` is undefined, `originUrl` names the page; **`onBeforeRedirect` never
+  fires for a `redirect:'error'` fetch**, so the 3xx is taken from `onHeadersReceived`
+  (redirect-capture.mjs handles all three by feature detection).
+- Manifest: `key`, COOP/COEP keys only draw "unexpected property" warnings; dropped from the
+  Firefox manifest anyway. CSP `'wasm-unsafe-eval'` allows wasm on the page and in workers.
+- Blocking `webRequest.onBeforeRequest` and StreamFilter (a stay-on-origin "mode B") exist on
+  Firefox but are unused: mode B was rejected (architecture.md § Hosting mode).
+- Automation: Playwright cannot install Firefox extensions and unsigned xpis are refused on
+  release builds, so `test/harness/firefox.mjs` drives system Firefox headless over a hand-rolled
+  WebDriver BiDi client (`webExtension.install {type:'path'}` = temporary install;
+  `--remote-allow-system-access` is mandatory for moz-extension pages). Fixture mapping: prefs
+  `network.dns.localDomains` + `network.socket.forcePort` ("443=<port>;80=<port>"), TLS via the
+  BiDi `acceptInsecureCerts` capability. BiDi `log.entryAdded` is silent for moz-extension pages
+  (`page.hookConsole()` instead).
 
 ## The address-bar constraint (permanent)
 
@@ -40,7 +65,8 @@ unresolved). Consequences:
 - We draw our own URL bar inside the viewer. MVP-acceptable per project decision.
 - Extensions also cannot register as handlers for http/https, so DNR/webRequest redirect *is* the
   only interception mechanism, and it inherits this constraint.
-- Mode B (Firefox StreamFilter) is the only path to a real URL in the bar.
+- A stay-on-origin viewer (Firefox StreamFilter) would be the only path to a real URL in the
+  bar; rejected for its isolation cost (architecture.md).
 
 ## Cross-origin fetch (the enabler for serverless networking)
 
@@ -56,23 +82,20 @@ unresolved). Consequences:
   Scope these rules tightly (e.g. `initiatorDomains` = our extension, plus a marker header the shim
   attaches and a rule strips) so we never rewrite unrelated traffic.
 
-## SharedArrayBuffer / wasm threads
+## SharedArrayBuffer / wasm threads — not used
+
+Nothing in the design needs SAB anymore (2026-09-09): the engine is one thread in a dedicated
+Worker, frames and bytes cross by transfer. What the platform offers, for the record:
 
 | Context | Chrome | Firefox |
 |---|---|---|
-| Extension page | ✅ manifest keys `cross_origin_embedder_policy: require-corp` + `cross_origin_opener_policy: same-origin` (M93+) → `crossOriginIsolated === true` on extension pages & their workers | ❌ manifest keys parsed but **ignored**; moz-extension pages can't be isolated (Bugzilla **#1673477**, open; blocked on per-extension process isolation) |
-| Real https page with injected COOP/COEP headers (mode B) | untested (open question) | ✅ standard header path, fully implemented |
+| Extension page | ✅ manifest keys `cross_origin_embedder_policy: require-corp` + `cross_origin_opener_policy: same-origin` (M93+) → `crossOriginIsolated === true` on extension pages & their workers | ❌ manifest keys ignored; moz-extension pages can't be isolated (Bugzilla **#1673477**, open) — `crossOriginIsolated === false`, `SharedArrayBuffer` undefined (verified Firefox 155) |
 
-- Why the asymmetry: SAB requires cross-origin isolation, normally established from COOP/COEP
-  *HTTP response headers*. Extension pages aren't HTTP, so they need a dedicated manifest path —
-  which Chrome built and Firefox didn't. Mode B's viewer is a real https page, so Firefox's normal
-  header machinery applies.
-- Chrome caveats: the extension **service worker** is not fully isolated (fine — engine lives in
-  the tab); COEP `require-corp` constrains cross-origin *subresources of the viewer page itself*,
-  but our target-site bytes arrive as opaque fetch()+ArrayBuffer, not subresource loads, so this
-  doesn't bite.
-- Firefox extension-page fallback: single-threaded engine build (WebkitWasm's non-pthread branch
-  shape). Real perf ceiling; acceptable for a port, not for primary.
+- Chrome's manifest keeps the COOP/COEP keys (harmless; the viewer stays cross-origin isolated,
+  which is the platform's Spectre posture). Firefox's manifest drops them. Tier-1 `parity.test.mjs`
+  still checks Chrome's isolation as a headless-parity property, not as a dependency.
+- Non-shared `WebAssembly.Memory` grows to the full 4 GB in an extension worker on Firefox
+  (probed); `importScripts` and `import()` both work in moz-extension workers.
 
 ## Limits & storage
 

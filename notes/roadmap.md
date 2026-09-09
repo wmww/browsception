@@ -10,9 +10,13 @@ plans/mvp.md plus loose ends carried out of Phases 1–2.
 3. Popups/window.open → new viewer tabs; dialogs (alert/confirm/prompt/auth) as viewer modals.
 4. Audio via AudioWorklet ring buffer.
 5. Session restore, history, list import/export polish.
-6. Firefox port: one non-pthread engine link hosted in a Worker on both browsers, DNR on
-   Firefox too, mode B dropped — plans/one-engine-both-browsers.md.
-7. Perf: dirty rects, scroll fast-path, engine tile cache tuning, startup snapshotting.
+6. ~~Firefox port~~ landed 2026-09-09 (one worker-hosted no-SAB link on both browsers). Left:
+   a Firefox residual question — whether dynamic DNR rules apply at browser startup before the
+   event page runs (not probeable with a temporary install; the sweep covers it either way) —
+   and real-site smokes on Firefox (Chrome-only so far).
+7. Perf: dirty rects, scroll fast-path, engine tile cache tuning, startup snapshotting. The
+   large-framebuffer present ceiling's natural next step is now an OffscreenCanvas presenter
+   inside the engine worker (rendering-input.md option 2).
 8. **Host-side tiled compositing in the shim** (from the firefox-wasm comparison, prior-art.md):
    engine paints tiles a bit larger than the viewport, the shim owns the scroll offset and
    composites — APZ-like decoupling of scroll from content paint without giving the engine a GPU

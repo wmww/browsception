@@ -10,6 +10,7 @@ import {
   tabUrl,
   PRIORITY,
   CATCHALL_RULESET_ID,
+  CATCHALL_RULE_ID,
 } from '../../src/ext/dnr-rules.mjs';
 
 const VIEWER = 'chrome-extension://abcdefghijklmnop/viewer.html';
@@ -57,6 +58,29 @@ test('whitelist mode: catchall enabled + allow rule per entry', () => {
   assert.deepEqual(s.sessionRules, []);
   // allow must beat the catch-all
   assert.ok(PRIORITY.ALLOW > PRIORITY.CATCHALL);
+});
+
+// Firefox: no static ruleset can name the per-profile moz-extension UUID, so
+// the catch-all rides in the dynamic set — same rule, same id and priority.
+test('whitelist mode without a static catchall: the catch-all is a dynamic rule', () => {
+  const s = desiredRuleState(
+    { active: true, mode: 'whitelist', whitelist: ['trusted.com'] },
+    VIEWER,
+    { staticCatchall: false },
+  );
+  assert.deepEqual(s.enabledStaticRulesets, []);
+  assert.deepEqual(s.dynamicRules[0], catchallRules(VIEWER)[0]);
+  assert.equal(s.dynamicRules[0].id, CATCHALL_RULE_ID);
+  assert.equal(s.dynamicRules[1].id, 1000);
+  assert.equal(s.dynamicRules.length, 2);
+  // Inactive / blacklist mode carry no catch-all either way.
+  assert.deepEqual(
+    desiredRuleState({ active: true, mode: 'blacklist', blacklist: ['x.com'] }, VIEWER, { staticCatchall: false })
+      .dynamicRules.map((r) => r.id),
+    [2000],
+  );
+  // applyPlan then never touches the static ruleset.
+  assert.deepEqual(applyPlan([], s), [{ op: 'dynamic', rules: s.dynamicRules }]);
 });
 
 test('blacklist mode: no catchall, redirect rule per entry', () => {

@@ -1,17 +1,19 @@
-// Viewer: hosts the real wasm engine inside the extension page (2.1), or the
-// stub engine for tier-1 bridge tests (?stub=1).
+// Viewer: hosts the real wasm engine for one nested tab, or the stub engine
+// for tier-1 bridge tests (?stub=1).
 //
-// Real-engine mode is a port of the engine repo's dev harness scaffolding
-// (engine/WebkitWasm/web/browser.html) minus its dev-only paths: raster only
-// (no nested GPU — security.md), no media bridge, no guest-wasm
-// polyfill yet (guest wasm sees CompileError; fast-follow). Networking is the
-// real bridge (src/shim/bridge.mjs): guard list, DNR header rules, webRequest
+// The engine runs in a dedicated Worker (src/ext/engine-worker.js) and this
+// page talks to it through EngineLink (src/ext/engine-link.mjs): exports go
+// out as messages, frames/chrome signals/network requests come back as
+// messages. Nothing here touches the wasm heap. Raster only (no nested GPU —
+// security.md), no media bridge. Networking is the real bridge
+// (src/shim/bridge.mjs): guard list, DNR header rules, webRequest
 // Set-Cookie/redirect capture.
 
 import { ABI_VERSION, NET_ERR } from '../abi/abi.mjs';
 import { Bridge } from '../shim/bridge.mjs';
 import { RedirectCapture } from '../shim/redirect-capture.mjs';
-import { createStubModule } from '../shim/engine-stub.mjs';
+import { createStubEngine } from '../shim/engine-stub.mjs';
+import { EngineLink } from './engine-link.mjs';
 import { createPresenter } from './blit.mjs';
 import { shouldSandbox } from './dnr-rules.mjs';
 import { sliceTarget, viewerParams, viewerURLFor } from './viewer-url.mjs';
@@ -30,10 +32,10 @@ const canvas = document.getElementById('screen');
 let current = null;
 globalThis.__bsBoot = async (opts = {}) => {
   if (current) await current.bridge.dispose();
-  const module = createStubModule(opts.stub ?? {});
+  const engine = createStubEngine(opts.stub ?? {});
   const mainFailures = [];
   const natives = [];
-  const bridge = new Bridge(module, {
+  const bridge = new Bridge(engine, {
     capture: new RedirectCapture(),
     // opts.nativeAll: a policy that natives EVERYTHING, so a tier-1 test can
     // prove it is the bridge's http(s) precondition — not the policy — that
@@ -48,15 +50,14 @@ globalThis.__bsBoot = async (opts = {}) => {
     windowBytes: opts.windowBytes,
   });
   await bridge.init();
-  current = { module, bridge };
+  current = { engine, bridge };
   globalThis.__bs = {
     abiVersion: ABI_VERSION,
-    request: (req) => module.stub.request(req),
-    cancel: (id) => module.stub.cancel(id),
+    request: (req) => engine.stub.request(req),
+    cancel: (id) => engine.stub.cancel(id),
     mainFailures,
     natives,
     capturePending: () => bridge.capture.pending(),
-    liveAllocs: () => module.stub.liveAllocs(),
   };
   return true;
 };
@@ -141,7 +142,7 @@ async function bootEngine() {
         persistTimer = setTimeout(() => ((persistTimer = 0), persistWriteLoop()), 5000);
     }
   }
-  const bibPersist = (json) => {
+  const onPersist = (json) => {
     if (!persistOn) return;
     persistPending = json;
     if (persistTimer) return;
@@ -150,6 +151,8 @@ async function bootEngine() {
 
   // --- machine-readable state: the __bs dev/test hook (notes/testing.md) ---
   let readbackWaiters = [];
+  const frameObservers = [];
+  let link = null; // EngineLink, set below (null until the worker exists)
   const bs = (globalThis.__bs = {
     abiVersion: ABI_VERSION,
     ready: false,
@@ -172,11 +175,23 @@ async function bootEngine() {
       length: 0,
     },
     metrics: { bootMs: null, engineFetchMs: null },
-    workers: [],
+    // The worker link (dev/diagnostics). Export calls: __bs.link.call('bib_x', ...).
+    get link() {
+      return link;
+    },
+    // Observe every presented frame: cb({band, fbW, fbH, stride, x, y, w, h}),
+    // band = the dirty rows [y, y+h) as a Uint8Array, valid only during the
+    // call (the buffer goes back to the worker after). The bench suite's
+    // pixel watcher lives on this (tools/bench/lib/page.mjs).
+    onFrame(cb) {
+      frameObservers.push(cb);
+    },
     killEngine() {
-      for (const w of this.workers) {
-        try { w.terminate(); } catch {}
-      }
+      link?.terminate();
+      if (!this.dead) crashed('killed');
+    },
+    crash() {
+      link?.call('bib_crash');
     },
     // Async pixel probe from the engine's own framebuffer bytes (premul
     // Skia surface pixels — identical to unpremul at alpha 255, which the
@@ -186,7 +201,7 @@ async function bootEngine() {
       if (!this.ready || this.dead) return Promise.resolve(null);
       return new Promise((resolve) => {
         readbackWaiters.push(resolve);
-        Module._bib_request_readback();
+        link.requestReadback();
       });
     },
     probe(x, y) {
@@ -203,7 +218,7 @@ async function bootEngine() {
     lastFrame: null,
     probeSync(x, y) {
       if (!this.ready || this.dead) return null;
-      Module._bib_request_readback();
+      link.requestReadback();
       const frame = this.lastFrame;
       if (!frame) return null;
       x |= 0; y |= 0;
@@ -213,12 +228,12 @@ async function bootEngine() {
     },
     // Guest-JS eval (dev builds; results via the console forwarder).
     eval(code) {
-      return Module.ccall('bib_eval', 'number', ['string'], [code]);
+      return link?.call('bib_eval', String(code)) ?? false;
     },
     navigate(url) {
       const clean = normalizeEngineURL(url);
       if (!clean || this.dead) return false;
-      Module.ccall('bib_load_url', null, ['string'], [clean]);
+      link.call('bib_load_url', clean);
       return true;
     },
   });
@@ -233,12 +248,12 @@ async function bootEngine() {
   let vpApplied = null;
   let vpTimer = 0;
   const applyViewport = () => {
-    if (!bs.ready || bs.dead || vpW < 1 || vpH < 1 || !Module._bib_set_viewport) return;
+    if (!bs.ready || bs.dead || vpW < 1 || vpH < 1) return;
     const key = `${vpW}x${vpH}@${vpDpr}`;
     if (key === vpApplied) return;
     vpApplied = key;
     bs.viewport = { w: vpW, h: vpH, dpr: vpDpr };
-    Module._bib_set_viewport(vpW, vpH, vpDpr);
+    link.call('bib_set_viewport', vpW, vpH, vpDpr);
   };
   const noteCanvasSize = (entry) => {
     vpDpr = window.devicePixelRatio || 1;
@@ -332,7 +347,7 @@ async function bootEngine() {
     if (issuedFrom === here) return; // hop in flight — wait for the engine
     if (target.index >= 0 && target.index < bs.state.length) {
       issuedFrom = here;
-      Module._bib_go(target.index - here);
+      link.call('bib_go', target.index - here);
       return;
     }
     loadEntry(target.url); // not in this engine's list — cold-load it
@@ -352,7 +367,7 @@ async function bootEngine() {
     // The tab is already on this entry — mirror it so the engine's echo fixes
     // it up in place.
     mirror = { url, index: idx };
-    if (bs.dead || !window.Module) {
+    if (bs.dead || !link) {
       location.reload(); // no engine left: cold-boot this entry
       return;
     }
@@ -366,7 +381,7 @@ async function bootEngine() {
     drive();
   });
 
-  // --- input forwarding (port of the harness wiring) -----------------------
+  // --- input forwarding ----------------------------------------------------
   const mods = (e) =>
     (e.shiftKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.altKey ? 4 : 0) | (e.metaKey ? 8 : 0);
   // CSS px → framebuffer DEVICE px, the ABI's input unit (bib_abi.h
@@ -381,17 +396,18 @@ async function bootEngine() {
   let pendingMove = null;
   const flushPendingMove = () => {
     if (!pendingMove || bs.dead) return;
-    Module._bib_mouse_move(pendingMove[0], pendingMove[1], pendingMove[2]);
+    link.call('bib_mouse_move', pendingMove[0], pendingMove[1], pendingMove[2]);
     pendingMove = null;
   };
   // Wheel deltas coalesce per frame like mousemove: a smooth trackpad fires
   // hundreds of small (float) deltas per second, and each engine wheel event
   // is a scroll step whose blit cost scales with the viewport. One summed
-  // event per tick scrolls the same distance.
+  // event per tick scrolls the same distance. (The engine runs every call
+  // in arrival order on its one thread, so this is the only coalescing.)
   let pendingWheel = null; // [x, y, dx, dy, mods]
   const flushPendingWheel = () => {
     if (!pendingWheel || bs.dead) return;
-    Module._bib_wheel(...pendingWheel);
+    link.call('bib_wheel', ...pendingWheel);
     pendingWheel = null;
   };
   // Host-owned input: never forwarded, never preventDefault()ed, so the
@@ -411,14 +427,14 @@ async function bootEngine() {
       e.preventDefault();
       flushPendingMove();
       flushPendingWheel(); // scroll must land before the click's hit test
-      Module._bib_mouse_button(1, e.button, devX(e), devY(e), e.detail || 1, mods(e));
+      link.call('bib_mouse_button', 1, e.button, devX(e), devY(e), e.detail || 1, mods(e));
     });
     canvas.addEventListener('mouseup', (e) => {
       if (bs.dead || hostButton(e)) return;
       e.preventDefault();
       flushPendingMove();
       flushPendingWheel();
-      Module._bib_mouse_button(0, e.button, devX(e), devY(e), e.detail || 1, mods(e));
+      link.call('bib_mouse_button', 0, e.button, devX(e), devY(e), e.detail || 1, mods(e));
     });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     canvas.addEventListener(
@@ -444,12 +460,7 @@ async function bootEngine() {
     const sendKey = (type, e, text) =>
       bs.dead
         ? 0
-        : Module.ccall(
-            'bib_key',
-            'number',
-            ['number', 'string', 'string', 'string', 'number', 'number', 'number'],
-            [type, e.key, e.code, text, e.keyCode | 0, e.repeat ? 1 : 0, mods(e)],
-          );
+        : link.call('bib_key', type, e.key, e.code, text, e.keyCode | 0, e.repeat ? 1 : 0, mods(e));
     canvas.addEventListener('keydown', (e) => {
       // Ctrl/Cmd combos stay with the HOST browser (devtools, tab keys), as
       // do its history shortcuts (Alt+arrows, F5).
@@ -465,7 +476,7 @@ async function bootEngine() {
       sendKey(1, e, '');
     });
     const setFocus = (v) => {
-      if (!bs.dead && Module._bib_set_focus) Module._bib_set_focus(v);
+      if (!bs.dead) link.call('bib_set_focus', v);
     };
     canvas.addEventListener('focus', () => setFocus(1));
     canvas.addEventListener('blur', () => setFocus(0));
@@ -476,7 +487,7 @@ async function bootEngine() {
     if (bs.dead) return;
     flushPendingMove();
     flushPendingWheel();
-    Module._bib_tick();
+    link.call('bib_tick');
     bs.ticks++;
     requestAnimationFrame(tickLoop);
   }
@@ -488,57 +499,127 @@ async function bootEngine() {
     "<div style='color:#8891a0;font:14px system-ui;padding:24px'>booting…</div>" +
     '</body></html>';
 
-  // Keep this page out of the bfcache (a cached page retains the ~0.5-1 GB
-  // instance) and drop the Module root on pagehide so GC can reclaim it.
+  // Keep this page out of the bfcache (a cached page would keep the ~1 GB
+  // worker alive) and terminate the worker on pagehide so the instance is
+  // reclaimed promptly — Firefox reclaims dead wasm instances lazily, so a
+  // reload must drop the old worker explicitly before creating the next.
   window.addEventListener('unload', () => {});
   const flushPersistNow = () => {
-    try {
-      if (window.Module && Module._bib_persist_now && bs.ready && !bs.dead)
-        Module._bib_persist_now();
-    } catch {}
+    if (bs.ready && !bs.dead) link.call('bib_persist_now');
   };
   window.addEventListener('pagehide', () => {
     flushPersistNow();
-    window.Module = null;
+    bs.dead = true;
+    link?.terminate();
   });
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') flushPersistNow();
   });
 
-  window.Module = {
-    bibInteractive: true,
-    bibHTML: bootHTML,
-    // Guest wasm shim + injection text: unused on this (pthread) build — the
-    // engine thread reads its OWN Module, which engine-pre.js fills from
-    // /wasm-polyfill.js, /media-stub.js and /vendor/binaryen/index.js.
-    // tools/stage-engine.mjs puts all three in the extension root.
-    bibWasm2js: () => null,
-    bibWasmPolyfill: '',
-    bibNoBlock: params.get('noblock') === '1',
-    bibMedia: false,
-    // Page-side pump fallbacks (pthread builds pump via the worker pre-js).
-    bibWakeUp: () => {},
-    bibArmTimer: () => {},
-    // Raster frame push (heap is a SAB; fresh view every frame — a
-    // cross-thread grow leaves cached views stale). ptr is the engine's
-    // present SNAPSHOT: stable until this handler returns (ABI bibFrame /
-    // _bib_present_done), so the texSubImage2D read cannot tear against
-    // in-progress engine paints or scroll blits.
-    bibFrame(ptr, fbW, fbH, strideBytes, x, y, w, h) {
-      if (bs.dead) return;
-      presenter.present(new Uint8Array(Module.HEAPU8.buffer), ptr, fbW, fbH, strideBytes, y, h);
-      bs.fb = { w: fbW, h: fbH };
-      bs.frames++;
+  // --- crash UI ---------------------------------------------------------------
+  function crashed(reason) {
+    // One crash must not become a message storm: flag the corpse and stop
+    // every entry point (the tick loop checks bs.dead).
+    bs.dead = true;
+    link?.terminate();
+    bootEl.style.display = 'block';
+    bootEl.textContent = 'engine crashed — ';
+    const b = document.createElement('button');
+    b.textContent = 'reload';
+    b.addEventListener('click', () => location.reload());
+    bootEl.append(b);
+    setStatus('CRASHED: ' + reason);
+  }
+
+  // A failed top-level load leaves WHATEVER is committed on screen — the boot
+  // page on a first navigation, the previous page otherwise. Say so, with a
+  // retry; the next successful commit clears it. (No "open natively" button
+  // here on purpose: that escape hatch lives in the popup, ui.md.)
+  const NET_ERR_TEXT = {
+    [NET_ERR.GUARD]: 'blocked by the sandbox guard',
+    [NET_ERR.NETWORK]: 'network error',
+    [NET_ERR.TIMEOUT]: 'timed out',
+    [NET_ERR.TOO_LARGE]: 'response too large',
+    [NET_ERR.PROTOCOL]: 'protocol error',
+    [NET_ERR.ENGINE]: 'the engine refused it',
+  };
+  function showLoadError(url, kind, message) {
+    bootEl.textContent = `couldn't load ${url} — ${NET_ERR_TEXT[kind] ?? `error ${kind}`}`;
+    if (message) bootEl.textContent += ` (${message})`;
+    const retry = document.createElement('button');
+    retry.textContent = 'retry';
+    retry.addEventListener('click', () => bs.navigate(url));
+    bootEl.append(retry);
+    bootEl.style.display = 'block';
+    setStatus(`load failed: ${url}`);
+    noteCanvasSize(null); // the strip changed the layout
+  }
+  function clearLoadError() {
+    if (bootEl.style.display === 'none') return;
+    bootEl.style.display = 'none';
+    bootEl.textContent = '';
+    noteCanvasSize(null);
+  }
+
+  // --- engine hooks (messages from the worker) ------------------------------
+  const hooks = {
+    onLoaded() {
+      bs.metrics.engineFetchMs = Math.round(performance.now() - t0);
     },
-    bibReadbackReady(data, w, h) {
+    onBootFailed(message) {
+      bootEl.textContent = 'engine artifacts missing — run tools/stage-engine.mjs';
+      setStatus(`no engine (${message})`);
+      bs.dead = true;
+    },
+    onReady() {
+      bs.ready = true;
+      bs.metrics.bootMs = Math.round(performance.now() - t0);
+      bootEl.style.display = 'none';
+      setStatus(`engine live (${bs.metrics.bootMs} ms boot)`);
+      // Size the engine to the canvas now (boot default is 800x600); hiding
+      // the boot strip just changed the layout, so measure fresh.
+      noteCanvasSize(null);
+      clearTimeout(vpTimer);
+      applyViewport();
+      wireInput();
+      // Back/forward/reload are the HOST browser's (tab-history mirror
+      // above); the only chrome control left here is the URL bar.
+      urlbarEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && bs.navigate(urlbarEl.value)) canvas.focus();
+      });
+      canvas.focus();
+      requestAnimationFrame(tickLoop);
+      if (navigateURL) {
+        setStatus(`loading ${navigateURL}`);
+        link.call('bib_load_url', navigateURL);
+        document.title = navigateURL;
+      }
+    },
+    // A presented frame: the dirty band (full-width rows [y, y+h)), owned by
+    // us only until this returns — the link transfers it back to the worker,
+    // which is what lets the engine paint the next frame.
+    onFrame(f) {
+      if (bs.dead) return;
+      const band = new Uint8Array(f.buf, 0, f.h * f.stride);
+      presenter.present(band, f.fbW, f.fbH, f.y, f.h);
+      bs.fb = { w: f.fbW, h: f.fbH };
+      bs.frames++;
+      if (frameObservers.length) {
+        const view = { band, fbW: f.fbW, fbH: f.fbH, stride: f.stride, x: f.x, y: f.y, w: f.w, h: f.h };
+        for (const cb of frameObservers) {
+          try { cb(view); } catch (e) { console.warn('viewer: frame observer threw', e); }
+        }
+      }
+    },
+    onReadback(data, w, h) {
       const waiters = readbackWaiters;
       readbackWaiters = [];
       const frame = data ? { data, w, h } : null;
       if (frame) bs.lastFrame = frame;
       for (const resolve of waiters) resolve(frame);
     },
-    // 2.3 chrome signals — kind/json arrive as JS strings (ABI).
-    bibChrome(kind, json) {
+    // Chrome signals — kind/json arrive as JS strings (ABI).
+    onChrome(kind, json) {
       let data = {};
       try {
         data = JSON.parse(json);
@@ -572,87 +653,16 @@ async function bootEngine() {
         progressEl.style.opacity = (data.p ?? 0) >= 1 ? '0' : '1';
       }
     },
-    bibPersist,
-    bibSeedState: null, // filled before the engine script loads
-    preRun: [
-      function () {
-        Module.FS.mkdirTree('/var/cache/fontconfig');
-      },
-    ],
-    onEngineReady() {
-      bs.ready = true;
-      bs.metrics.bootMs = Math.round(performance.now() - t0);
-      bootEl.style.display = 'none';
-      setStatus(`engine live (${bs.metrics.bootMs} ms boot)`);
-      // Size the engine to the canvas now (boot default is 800x600); hiding
-      // the boot strip just changed the layout, so measure fresh.
-      noteCanvasSize(null);
-      clearTimeout(vpTimer);
-      applyViewport();
-      wireInput();
-      // Back/forward/reload are the HOST browser's (tab-history mirror
-      // above); the only chrome control left here is the URL bar.
-      urlbarEl.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && bs.navigate(urlbarEl.value)) canvas.focus();
-      });
-      canvas.focus();
-      requestAnimationFrame(tickLoop);
-      if (navigateURL) {
-        setStatus(`loading ${navigateURL}`);
-        Module.ccall('bib_load_url', null, ['string'], [navigateURL]);
-        document.title = navigateURL;
-      }
+    onPersist,
+    onLog(err, s) {
+      (err ? console.warn : console.log)('[engine] ' + s);
     },
-    print: (s) => console.log('[engine] ' + s),
-    printErr: (s) => console.warn('[engine] ' + s),
+    // The engine's own abort stack (named C++ frames) was logged by the
+    // worker's pre-js just before this arrives.
     onAbort(reason) {
-      // Named frames only if the HOST thread aborted; an engine-thread abort
-      // arrives here as a worker error, and its stack is logged worker-side by
-      // engine-pre.js ("engine abort stack"). Cheap to keep both — either
-      // thread can be the one that dies.
-      try { console.error('[engine] abort stack (host thread) ' + new Error().stack); } catch {}
-      // One crash must not become a RuntimeError storm: flag the corpse and
-      // stop every entry point (the tick loop checks bs.dead).
-      bs.dead = true;
-      bootEl.style.display = 'block';
-      bootEl.textContent = 'engine crashed — ';
-      const b = document.createElement('button');
-      b.textContent = 'reload';
-      b.addEventListener('click', () => location.reload());
-      bootEl.append(b);
-      setStatus('CRASHED: ' + reason);
+      if (!bs.dead) crashed(reason);
     },
   };
-
-  // A failed top-level load leaves WHATEVER is committed on screen — the boot
-  // page on a first navigation, the previous page otherwise. Say so, with a
-  // retry; the next successful commit clears it. (No "open natively" button
-  // here on purpose: that escape hatch lives in the popup, ui.md.)
-  const NET_ERR_TEXT = {
-    [NET_ERR.GUARD]: 'blocked by the sandbox guard',
-    [NET_ERR.NETWORK]: 'network error',
-    [NET_ERR.TIMEOUT]: 'timed out',
-    [NET_ERR.TOO_LARGE]: 'response too large',
-    [NET_ERR.PROTOCOL]: 'protocol error',
-    [NET_ERR.ENGINE]: 'the engine refused it',
-  };
-  function showLoadError(url, kind, message) {
-    bootEl.textContent = `couldn't load ${url} — ${NET_ERR_TEXT[kind] ?? `error ${kind}`}`;
-    if (message) bootEl.textContent += ` (${message})`;
-    const retry = document.createElement('button');
-    retry.textContent = 'retry';
-    retry.addEventListener('click', () => bs.navigate(url));
-    bootEl.append(retry);
-    bootEl.style.display = 'block';
-    setStatus(`load failed: ${url}`);
-    noteCanvasSize(null); // the strip changed the layout
-  }
-  function clearLoadError() {
-    if (bootEl.style.display === 'none') return;
-    bootEl.style.display = 'none';
-    bootEl.textContent = '';
-    noteCanvasSize(null);
-  }
 
   // 2.4 boundary policy: live activation/mode/list state decides whether a
   // top-level navigation stays nested or hands the REAL tab the URL.
@@ -660,8 +670,18 @@ async function bootEngine() {
   let firstMainSeen = false;
   onStateChanged((s) => (listState = s));
 
-  // The bridge installs bibNet* on Module; must exist before the engine runs.
-  const bridge = new Bridge(window.Module, {
+  // The worker's URL carries our params so the engine's diagnostics knobs
+  // (?perflog=1, ?rcap=N, ?dmglog=1, ?gclog=1 — read from location.search in
+  // main()) reach it.
+  link = new EngineLink({
+    workerUrl: chrome.runtime.getURL('ext/engine-worker.js') + (ownParams ? `?${ownParams}` : ''),
+    engineUrl: chrome.runtime.getURL('engine/embedder.js'),
+    hooks,
+  });
+
+  // The bridge takes the link's network events; it must exist before the
+  // engine boots and emits its first request.
+  const bridge = new Bridge(link, {
     capture: new RedirectCapture(),
     // Host UA: sites should serve the same content they'd serve this browser.
     userAgent: navigator.userAgent,
@@ -681,31 +701,12 @@ async function bootEngine() {
   });
   await bridge.init();
 
-  // Track engine-spawned workers for tests/diagnostics.
-  {
-    const Prev = window.Worker;
-    // `class extends` wires both prototype chains; assigning .prototype
-    // explicitly (harness-era line) throws under ESM strict mode.
-    window.Worker = class BIBTrackedWorker extends Prev {
-      constructor(url, options) {
-        super(url, options);
-        bs.workers.push(this);
-      }
-    };
-  }
-
-  Module.bibSeedState = await persistSeedReady;
   setStatus('fetching engine…');
-  const s = document.createElement('script');
-  s.src = chrome.runtime.getURL('engine/embedder.js');
-  s.onload = () => {
-    bs.metrics.engineFetchMs = Math.round(performance.now() - t0);
-  };
-  s.onerror = () => {
-    bootEl.textContent = 'engine artifacts missing — run tools/stage-engine.mjs';
-    setStatus('no engine');
-  };
-  document.body.appendChild(s);
+  link.boot({
+    html: bootHTML,
+    noBlock: params.get('noblock') === '1',
+    seedState: await persistSeedReady,
+  });
 }
 
 if (params.has('stub')) {

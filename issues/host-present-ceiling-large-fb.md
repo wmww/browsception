@@ -22,3 +22,11 @@ blit option 2).
 2026-08-15: the present now uploads from `g_presentPixels` (engine-thread snapshot, stable
 while in flight — rendering-input.md § present snapshot); ceiling unchanged (bench: host
 present ms/s flat). The stable buffer makes the worker-present option simpler if pursued.
+
+2026-09-09: the engine now lives in a dedicated Worker and the band arrives on the main thread
+as a transferred ArrayBuffer (engine-worker.js → engine-link.mjs), so the present is bounded
+by postMessage scheduling as well as upload. If this ceiling worsens, the fix is an
+OffscreenCanvas presenter inside the engine worker (rendering-input.md option 2): no transfer,
+no main-thread upload, and the worker already owns the pixels. A/B (experiment-log.md
+2026-09-09): article-scroll-2560 37.6 → 31.2 fps with the engine less busy (42 → 36%) —
+the regression is entirely on this ceiling; 1600x900 unchanged.

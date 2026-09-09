@@ -55,10 +55,11 @@ if [ ! -f "$FSROOT/fonts/DejaVuSans.ttf" ] \
   echo "FONT STAGING: OK ($CONFD_COUNT conf.d files)"
 fi
 
-# BIB_PTHREAD=0: single-threaded engine build for deployments that cannot
-# ship SharedArrayBuffer (no COOP/COEP header control — static/edge hosts).
-# Trade-off: the W-B1 win reverses — heavy pages peg the host tab again.
-# Default ON (the daily-driver mode).
+# BIB_PTHREAD: whether the TREE compiles -pthread. Stays 1: the shipping
+# (plain, no-SAB) link and the proxy link are both produced from a
+# -pthread-compiled tree — link mode is a per-target property in
+# src/embedder/embedder.cmake, not a compile flag. Flipping this is a full
+# recompile (~1.5-2h) for nothing.
 BIB_PTHREAD="${BIB_PTHREAD:-1}"
 WASM_FLAGS="-msimd128"
 BIB_PTHREAD_CMAKE=OFF
@@ -71,13 +72,11 @@ EMBEDDER_FLAGS=(
   -DEMSCRIPTEN_EMBEDDER_CMAKE="$SRC/src/embedder/embedder.cmake"
   -DBIB_FONTCONFIG_ETC_DIR="$FSROOT/etc-fonts"
   -DBIB_FONTS_DIR="$FSROOT/fonts"
-  # Threading mode (BIB_PTHREAD=0 -> single-threaded engine for hosts that
-  # cannot serve COOP/COEP, i.e. no SharedArrayBuffer). These live in the
-  # cache-sync list so flipping the env var RECONFIGURES the existing cache
-  # — pre-W-B1 the -pthread flags were only applied by hand, so a fresh
-  # checkout silently built a tree that could not link the pthread embedder.
-  # Flag change => ninja rebuilds the whole tree (~1.5-2h); use a separate
-  # build dir per mode if toggling often.
+  # Tree compile flags. These live in the cache-sync list so flipping the
+  # env var RECONFIGURES the existing cache — pre-W-B1 the -pthread flags
+  # were only applied by hand, so a fresh checkout silently built a tree
+  # that could not link the proxy embedder. Flag change => ninja rebuilds
+  # the whole tree (~1.5-2h).
   "-DCMAKE_C_FLAGS=$WASM_FLAGS"
   "-DCMAKE_CXX_FLAGS=$WASM_FLAGS"
   "-DBIB_PTHREAD=$BIB_PTHREAD_CMAKE"
@@ -127,7 +126,12 @@ fi
 # need ~1.2GB+ of clang RSS EACH — full nproc parallelism (~16) livelocks
 # the 12G/no-swap scope in reclaim (observed 2026-06-11: 28min wall, 3min
 # CPU per job, counter frozen). BIB_JOBS=6 fits comfortably.
-ninja -C "$BUILD" -k 50 ${BIB_JOBS:+-j "$BIB_JOBS"} WebCore BibEmbedder > "$TREE/build/webcore-ninja.log" 2>&1 || {
+# Link targets (embedder.cmake): BibEmbedder is the shipping plain link;
+# BIB_PROXY=1 builds the -sPROXY_TO_PTHREAD link instead (bin/proxy/,
+# EXCLUDE_FROM_ALL — never built by accident).
+TARGET=BibEmbedder
+[ "${BIB_PROXY:-0}" = 1 ] && TARGET=BibEmbedderProxy
+ninja -C "$BUILD" -k 50 ${BIB_JOBS:+-j "$BIB_JOBS"} WebCore "$TARGET" > "$TREE/build/webcore-ninja.log" 2>&1 || {
   echo "NINJA FAILED — unique errors:"
   rg -n 'error:' "$TREE/build/webcore-ninja.log" | sort -t: -k4 -u | head -25
   exit 1

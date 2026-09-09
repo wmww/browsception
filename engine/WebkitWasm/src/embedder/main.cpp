@@ -152,7 +152,7 @@ static WebCore::LocalFrameView* mainFrameView()
 // on the engine thread.
 static uint8_t* g_blitPixels;
 
-// What Module.bibFrame actually points the host at. bibPushFrameIfDirty
+// PROXY LINK ONLY: what Module.bibFrame points the host at. bibPushFrameIfDirty
 // copies the dirty band g_blitPixels -> g_presentPixels ON THE ENGINE THREAD
 // before posting, so the host's async texSubImage2D never reads rows the
 // engine is still mutating. Presenting g_blitPixels itself ("zero-copy",
@@ -163,13 +163,17 @@ static uint8_t* g_blitPixels;
 // Scroll-down walks top-down like the reader, so only scrolling UP produced
 // the clean duplicated band (2026-08-15, wikipedia). Same size as
 // g_blitPixels, same realloc sites.
+// PLAIN LINK: unused (nullptr). The bibFrame hook runs SYNCHRONOUSLY on this
+// thread and copies the band out before returning, so the live framebuffer
+// is handed over directly — nothing can mutate it during the call.
 static uint8_t* g_presentPixels;
 
 // One frame in flight: set before posting bibFrame, cleared by
-// bib_present_done() (run on the main thread right after the present).
-// While set, bibPushFrameIfDirty leaves damage/upload armed and skips the
-// paint — the guarantee that g_presentPixels is never written while the
-// host may be reading it.
+// bib_present_done() — called by the hook's wrapper right after the handler
+// returns, or (when the handler returns true, taking ownership) by the host
+// once the pixels are actually presented. While set, bibPushFrameIfDirty
+// leaves damage/upload armed and skips the paint: backpressure to the real
+// present, one frame in flight, damage coalescing meanwhile.
 static std::atomic<bool> g_presentInFlight { false };
 
 // Present buffers replaced by bib_set_viewport while a present may still be
@@ -633,31 +637,39 @@ static OptionSet<WebCore::PlatformEvent::Modifier> modifiersFromBits(int bits)
 }
 
 // ---------------------------------------------------------------------------
-// W-B1 cross-thread entry marshaling. Under -sPROXY_TO_PTHREAD, main() (and
-// all of WebCore/JSC) runs on a dedicated pthread, but the host page still
-// calls the bib_* exports from the BROWSER MAIN THREAD — a direct call there
-// would race the engine. Every export below self-proxies: called on the
-// wrong thread, it queues itself onto the engine thread via the emscripten
-// system proxying queue (processed whenever the engine pthread returns to
-// its event loop — which the event-driven pump guarantees) and returns.
-// High-frequency cadence entries (tick/pump) collapse bursts through an
-// atomic pending flag so a pegged engine never accumulates a task backlog.
+// Cross-thread entry marshaling — PROXY LINK (BIB_LINK_PROXY=1) only. Under
+// -sPROXY_TO_PTHREAD, main() (and all of WebCore/JSC) runs on a dedicated
+// pthread, but the host page calls the bib_* exports from the BROWSER MAIN
+// THREAD — a direct call there would race the engine. Every export below
+// self-proxies: called on the wrong thread, it queues itself onto the engine
+// thread via the emscripten system proxying queue (processed whenever the
+// engine pthread returns to its event loop — which the event-driven pump
+// guarantees) and returns. High-frequency cadence entries (tick/pump)
+// collapse bursts through an atomic pending flag so a pegged engine never
+// accumulates a task backlog.
+//
+// PLAIN LINK (the shipping one, BIB_LINK_PROXY=0): there is exactly one
+// thread — the host Worker's — so after main() every caller IS the engine
+// thread and every export runs direct. Before main() calls are dropped, same
+// as the proxy link's pre-ready drop. (__EMSCRIPTEN_PTHREADS__ is defined in
+// both links — the tree compiles -pthread — so it cannot be the switch.)
 
 static pthread_t g_engineThread;
 static std::atomic<bool> g_engineThreadReady { false };
 
 static bool bibOnEngineThread()
 {
+#if BIB_LINK_PROXY
     return g_engineThreadReady.load(std::memory_order_acquire)
         && pthread_equal(pthread_self(), g_engineThread);
+#else
+    return g_engineThreadReady.load(std::memory_order_acquire);
+#endif
 }
 
 // Queue a task onto the engine thread; drops silently pre-main() (matches
-// the !g_engine early-outs every entry point already has).
-// BIB_PTHREAD=OFF build: there is only one thread, so after main() runs
-// every caller IS the engine thread (bibOnEngineThread() true — emscripten
-// stubs pthread_self/pthread_equal) and this path is unreachable; before
-// main() it returns false, matching the pthread build's pre-ready drop.
+// the !g_engine early-outs every entry point already has). Plain link:
+// unreachable after main() (bibOnEngineThread() is true), false before it.
 //
 // Positional-input coalescing (§ Input forwarding): a queued wheel/mouse-move
 // task stays OPEN for merging until something else is posted behind it.
@@ -670,7 +682,7 @@ static void bibSealPendingInput(void (*posted)(void*));
 
 static bool bibProxyToEngine(void (*task)(void*), void* arg)
 {
-#ifdef __EMSCRIPTEN_PTHREADS__
+#if BIB_LINK_PROXY
     if (!g_engineThreadReady.load(std::memory_order_acquire))
         return false;
     bibSealPendingInput(task);
@@ -875,7 +887,11 @@ EMSCRIPTEN_KEEPALIVE void bib_set_viewport(int widthPx, int heightPx, double dpr
     // The surface wraps the framebuffer (see boot: paint lands in
     // g_blitPixels directly, no readback).
     uint8_t* pixels = static_cast<uint8_t*>(malloc(static_cast<size_t>(widthPx) * heightPx * 4));
+#if BIB_LINK_PROXY
     uint8_t* presentPixels = static_cast<uint8_t*>(malloc(static_cast<size_t>(widthPx) * heightPx * 4));
+#else
+    uint8_t* presentPixels = reinterpret_cast<uint8_t*>(1); // unused in the plain link
+#endif
     auto info = SkImageInfo::Make(widthPx, heightPx, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
     sk_sp<SkSurface> surface = pixels
         ? SkSurfaces::WrapPixels(info, pixels, static_cast<size_t>(widthPx) * 4)
@@ -884,16 +900,20 @@ EMSCRIPTEN_KEEPALIVE void bib_set_viewport(int widthPx, int heightPx, double dpr
         WTFLogAlways("BIB: bib_set_viewport %dx%d allocation failed — keeping %dx%d",
             widthPx, heightPx, g_fbWidth, g_fbHeight);
         free(pixels);
+#if BIB_LINK_PROXY
         free(presentPixels);
+#endif
         return;
     }
     free(g_blitPixels);
     g_blitPixels = pixels;
+#if BIB_LINK_PROXY
     // An in-flight present may still point the host at the OLD present
     // buffer; freeing it now would hand that upload freed heap. Retire it
     // instead — the push path frees retirees once nothing is in flight.
     g_retiredPresentPixels.push_back(g_presentPixels);
     g_presentPixels = presentPixels;
+#endif
     g_engine->surface = WTF::move(surface);
     g_fbWidth = widthPx;
     g_fbHeight = heightPx;
@@ -1190,9 +1210,14 @@ EMSCRIPTEN_KEEPALIVE const uint8_t* bib_render(int force)
     return g_blitPixels;
 }
 
-// Called on the MAIN thread by the bibFrame present EM_ASM (finally-block,
-// so a throwing host handler can't wedge the pipeline). Cheap enough to run
-// off-thread: one atomic store, exactly like _bib_wasm_free's precedent.
+// Clears the in-flight flag. Proxy link: called on the MAIN thread by the
+// bibFrame EM_ASM's finally-block (so a throwing host handler can't wedge the
+// pipeline) — one atomic store, exactly like _bib_wasm_free's precedent.
+// Plain link: the finally-block calls it too unless the handler returned
+// true, in which case the host calls it itself once the transferred band has
+// actually been presented (src/ext/engine-worker.js) — that is what makes the
+// one-frame-in-flight backpressure follow the REAL present across the
+// worker/main hop.
 EMSCRIPTEN_KEEPALIVE void bib_present_done()
 {
     g_presentInFlight.store(false, std::memory_order_release);
@@ -1239,21 +1264,34 @@ static void bibPushFrameIfDirty()
         hostHasBibFrame = MAIN_THREAD_EM_ASM_INT({ return Module.bibFrame ? 1 : 0; });
     }
     if (hostHasBibFrame) {
+#if BIB_LINK_PROXY
         // Snapshot the full-width dirty band (the presenter uploads full
         // rows; x/w only annotate). One contiguous memcpy — ~0.2ms/Mpx,
         // and only per PRESENTED frame thanks to the backpressure gate.
         const size_t stride = static_cast<size_t>(g_fbWidth) * 4;
         memcpy(g_presentPixels + y * stride, g_blitPixels + y * stride,
             static_cast<size_t>(h) * stride);
+        const uint8_t* presented = g_presentPixels;
+#else
+        // Plain link: the EM_ASM below runs synchronously on this thread, so
+        // the host copies the band straight out of the live framebuffer
+        // (into its transfer buffer) before we get control back. Same single
+        // copy as the proxy link's snapshot, one buffer fewer.
+        const uint8_t* presented = g_blitPixels;
+#endif
         g_presentInFlight.store(true, std::memory_order_release);
+        // A handler that returns true takes over bib_present_done (ABI):
+        // the worker host does, once the main thread has consumed the band.
         MAIN_THREAD_ASYNC_EM_ASM({
+            var deferred = false;
             try {
                 if (Module.bibFrame)
-                    Module.bibFrame($0, $1, $2, $3, $4, $5, $6, $7);
+                    deferred = Module.bibFrame($0, $1, $2, $3, $4, $5, $6, $7) === true;
             } finally {
-                _bib_present_done();
+                if (!deferred)
+                    _bib_present_done();
             }
-        }, g_presentPixels, g_fbWidth, g_fbHeight, g_fbWidth * 4, x, y, w, h);
+        }, presented, g_fbWidth, g_fbHeight, g_fbWidth * 4, x, y, w, h);
         return;
     }
     uint8_t* copy = static_cast<uint8_t*>(malloc(static_cast<size_t>(w) * h * 4));
@@ -1960,10 +1998,12 @@ int main()
     });
     printf("EMBEDDER: engine thread=%p browser-main=%d\n",
         reinterpret_cast<void*>(g_engineThread), emscripten_is_main_browser_thread());
-    // W-B1: all boot flags below live on the PAGE's Module — the engine
-    // pthread's worker Module does not inherit them (W-B0 finding).
-    // MAIN_THREAD_EM_ASM blocks this thread briefly while the main thread
-    // answers; safe at boot, before the page starts driving us.
+    // Boot flags below are read with MAIN_THREAD_EM_ASM. Proxy link: they
+    // live on the PAGE's Module (the engine pthread's worker Module inherits
+    // nothing — W-B0 finding) and each read blocks briefly on the main thread;
+    // safe at boot, before the page drives us. Plain link: MAIN_THREAD_* is a
+    // plain synchronous EM_ASM in the host's own scope (a Worker or the page),
+    // whose Module the host filled before loading embedder.js.
     //
     // ?perflog=1 on the host page: emit a per-second engine-thread phase
     // breakdown (BIBPERF/s). Read straight from the host URL so no
@@ -2222,7 +2262,11 @@ int main()
 
     auto info = SkImageInfo::Make(kWidth, kHeight, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
     g_blitPixels = static_cast<uint8_t*>(malloc(static_cast<size_t>(g_fbWidth) * g_fbHeight * 4));
+#if BIB_LINK_PROXY
     g_presentPixels = static_cast<uint8_t*>(malloc(static_cast<size_t>(g_fbWidth) * g_fbHeight * 4));
+#else
+    g_presentPixels = reinterpret_cast<uint8_t*>(1); // unused in the plain link
+#endif
     if (!g_blitPixels || !g_presentPixels) {
         printf("EMBEDDER: FAIL framebuffer alloc\n");
         exit(1); // EXIT_RUNTIME=0: explicit teardown (node gate path)

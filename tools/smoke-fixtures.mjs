@@ -194,10 +194,17 @@ async function evalProbe(page, js, expect, tries = 40) {
 }
 
 // --- 1.5 hang path: worker death (no abort signal) -> heartbeat Reload ----
+// Proxy-link artifacts only: the harness hosts the shipping plain link on
+// its own page, where there is no engine worker to kill (the extension's
+// worker-kill path is tier-2 scenario 12 via __bs.crash()).
 {
   const page = await bootPage('http://grid.bstest/', '&hbms=2000');
   await check('hang: heartbeat detects dead worker', async () => {
     await until(page, 100, 100, is([255, 0, 0]), 120000);
+    if (!(await page.evaluate(() => globalThis.BIB_PTHREAD_BUILD))) {
+      console.log('     (skipped: plain link, engine on the page — nothing to kill)');
+      return;
+    }
     await page.evaluate(() => window.__bib.killEngine());
     await page.waitForFunction(
       () => {

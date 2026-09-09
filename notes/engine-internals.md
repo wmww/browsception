@@ -158,5 +158,6 @@ re-bite on rebases or bound future features.
   memory growth detaches views — re-acquire after growth. Canvas `getImageData` is
   premultiplied-lossy — verify pixels from the engine's own bytes.
 - **Host RAM ≈ 1 GB per engine instance** (256 MB heap + compiled ~100 MB module). Firefox
-  reclaims dead wasm instances lazily (30–60 s+) → rapid reloads stack to 4+ GB; Chromium tears
-  down within a cycle. Relevant to reload/crash-recovery and the Firefox port.
+  reclaims dead wasm instances lazily (30–60 s+) → rapid reloads stacked to 4+ GB when the
+  instance lived on the page; the viewer now `terminate()`s the engine Worker on pagehide and on
+  crash, which drops the instance with the worker. Chromium tears down within a cycle anyway.

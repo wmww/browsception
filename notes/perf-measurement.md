@@ -179,9 +179,13 @@ visible decision**, not a side effect:
 1. **Viewer URL scheme**: `viewer.html?<our params>url=<RAW target>` — params before `url=`, the
    target never percent-encoded (the DNR `\0` contract, top of notes/README.md); `perflog=1`,
    `persist=0`, `rcap=N`.
-2. **Host API**: `__bs.ready`, `__bs.state.progress`, `__bs.probe/readback`, `__bs.fb`,
-   `Module.bibFrame` (wrappable, and the framebuffer pixel is readable from `ptr`/stride inside
-   it), `Module._bib_wheel`.
+2. **Host API**: `__bs.ready`, `__bs.state.progress`, `__bs.probe/readback`, `__bs.fb`, and one
+   of two frame/wheel hook generations, feature-detected by `lib/page.mjs`: `__bs.onFrame(cb)`
+   (band + geometry per presented frame; a watched pixel can only change in a frame whose band
+   covers it) + `__bs.link.call` (wrappable, every export call) — worker-hosted viewer,
+   2026-09-09 on; or the page-side `Module.bibFrame` (wrappable, framebuffer readable from
+   `ptr`/stride) + `Module._bib_wheel` of older artifacts. `presentMs` is 0 on the new path (the
+   present happens inside the link's handler, not separable from the page).
 3. **BIBPERF console-line format**, parsed defensively — every field optional.
 4. **Target = an unpacked extension directory with a staged engine.**
 

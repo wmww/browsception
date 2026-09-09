@@ -148,8 +148,9 @@ back/forward list (src/ext/viewer.mjs).
   far above any realistic list size.
 - Keep the catch-all in a **static** ruleset toggled via `updateEnabledRulesets` so whitelist-mode
   interception works even if the SW is cold; dynamic rules persist across SW restarts too.
-- Firefox (later): same semantics implemented in the blocking `onBeforeRequest` listener — an
-  in-listener decision function replaces the rule table (simpler, since it's imperative).
+- Firefox: identical rule table. Only the catch-all differs — it must be a **dynamic** rule
+  (the manifest can't name the per-profile UUID), added/removed in the same atomic dynamic swap
+  as the allow rules (`desiredRuleState({staticCatchall: false})`, extension-platform.md).
 
 ## Shipping default (landed 2.6, 2026-08-10)
 

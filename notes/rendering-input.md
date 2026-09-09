@@ -2,19 +2,24 @@
 
 ## Rendering path
 
-Engine paints via **Skia CPU raster** into a BGRA/RGBA framebuffer in shared memory (pthread
-build) or in the wasm heap (single-thread build). The viewer blits to a canvas.
+Engine paints via **Skia CPU raster** into an RGBA framebuffer in its own (non-shared) wasm
+heap, inside the engine Worker. Per presented frame the worker's `bibFrame` hook copies the
+full-width dirty band into one transferable `ArrayBuffer`, posts it to the viewer, and the viewer
+presents it and posts the buffer back (ping-pong of one; the engine's frame stays "in flight" —
+no repaint, damage coalescing — until the buffer returns, so backpressure follows the real
+present across the hop). One copy per frame, same as the old engine-thread snapshot.
 
 Blit options, fastest first:
-1. **WebGL `texSubImage2D` upload + fixed textured quad** — the plan of record. One static shader
-   pair compiled once from trusted shim code; per frame, upload the (dirty region of the)
-   framebuffer and draw. GPU handles scaling/DPR. Reuse the texture; consider double-buffering to
-   hide upload latency.
-2. **OffscreenCanvas in a worker** — pairs with the pthread build (render worker uploads straight
-   from SAB without bouncing through the main thread). Resize of OffscreenCanvas is heavy →
-   debounce resizes.
+1. **WebGL `texSubImage2D` upload of the band + fixed textured quad** — shipped
+   (src/ext/blit.mjs). One static shader pair compiled once from trusted shim code; per frame,
+   upload the dirty rows and draw. GPU handles scaling/DPR. Reuse the texture (immutable
+   `texStorage2D`, recreated on resize).
+2. **OffscreenCanvas inside the engine worker** — would drop the transfer + main-thread upload
+   entirely (the worker uploads straight from its heap); resize of OffscreenCanvas is heavy →
+   debounce. The obvious next step if the large-framebuffer present ceiling
+   (issues/host-present-ceiling-large-fb.md) needs to move; the worker host makes it a local change.
 3. **2D canvas `putImageData`** — simplest correct fallback; CPU-bound, marginal at 1080p60. Keep
-   as a debug/compat path.
+   as a debug/compat path (`?blit=2d`).
 
 Attack-surface note ("blit-only WebGL"): WebGL always uses shaders — blit-only means *we* author
 one trivial fixed shader; the nested site supplies only pixel *data*, never shader source or GL
@@ -84,7 +89,9 @@ boot-size, grow, shrink, and post-resize input.
   loginasroot.net @1600x860: 2-5ms strip repaints / ~12% busy at any dpr (was ~100ms/98% at dpr≠1).
   Shadow-heavy full paints remain ~3x a text page (~100ms vs ~30ms per 1.4Mpx) — matters for
   load/resize/settle only; Skia blur caching is the lead if it ever hurts.
-- **Positional input collapses below the viewer boundary too** (2026-08-14). *Never apply — and so
+- **Positional input collapses below the viewer boundary too — proxy link only** (2026-08-14; in
+  the shipping plain link every call runs direct and in order, so the viewer's per-rAF coalescing
+  above is the only merge; the ABI documents both). *Never apply — and so
   never render — a state the pending input already supersedes.* `bib_wheel`/`bib_mouse_move` no
   longer post one proxied task per event: while a task is still queued its argument pack stays
   **open** and later events merge into it (wheel sums deltas, move keeps the latest position).
@@ -107,7 +114,14 @@ boot-size, grow, shrink, and post-resize input.
   - Guest-visible semantics change under load only (fewer wheel events, larger deltas — what
     Chrome does with its rAF-aligned wheel batches). ABI documents it; tier-2 scenario 19 guards
     both invariants (distance conserved, nothing merged past a click).
-- **The present is a coherent snapshot + one frame in flight** (2026-08-15). `bibPushFrameIfDirty`
+- **One frame in flight, copied out synchronously** (2026-09-09, worker host). In the plain link
+  `bibFrame` runs synchronously on the engine's one thread with the LIVE framebuffer pointer; the
+  worker copies the band into its transfer buffer before returning and returns `true`, taking
+  over `_bib_present_done` — the engine paints no new frame until the viewer has presented and
+  the buffer has come back (damage stays armed and coalesces). Tearing is structurally
+  impossible (nothing runs while the hook copies), which is why tier-2 scenario 21 was retired.
+  The paragraph below is the proxy-link history that motivated the snapshot design.
+- **Proxy link: the present is a coherent snapshot + one frame in flight** (2026-08-15). `bibPushFrameIfDirty`
   memcpys the dirty band `g_blitPixels → g_presentPixels` on the ENGINE thread, posts `bibFrame`
   pointing at the snapshot, and skips painting until the main thread signals consumption
   (`_bib_present_done`, called in the EM_ASM's finally; damage stays armed and coalesces). Before this, `bibFrame` pointed at the live
@@ -195,7 +209,7 @@ boot-size, grow, shrink, and post-resize input.
   (document as limitation).
 - **Dialogs** (alert/confirm/prompt/beforeunload, HTTP auth): engine delegate → viewer-drawn modal
   (never native `window.alert` — it would look like the extension talking).
-- **Audio**: engine PCM → SAB ring buffer → `AudioWorklet` in the viewer. Post-MVP. Video: further
+- **Audio**: engine PCM → transferable chunks (no SAB) → `AudioWorklet` in the viewer. Post-MVP. Video: further
   out (decode via engine's software paths where feasible; no DRM/EME ever — Netflix-class sites are
   permanently out of scope).
 - **Printing**: out of scope (project decision).

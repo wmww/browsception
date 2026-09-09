@@ -1,7 +1,10 @@
-// Background service worker (2.2): owns activation/mode/list state
-// (storage.sync) and applies it declaratively to DNR. Interception itself
-// never depends on this worker being awake — the rules persist (static
-// ruleset toggle + dynamic rules); the SW only reconciles state changes.
+// Background script (2.2) — Chrome: MV3 service worker; Firefox: the event
+// page ext/background.html loads this same module (tools/lib/manifest.mjs).
+// Owns activation/mode/list state (storage.sync) and applies it declaratively
+// to DNR. Interception itself never depends on this script being awake — the
+// rules persist (static ruleset toggle + dynamic rules); it only reconciles
+// state changes. Nothing here may assume a service-worker global (no
+// `clients`, no `self.registration`).
 //
 // Also sweeps open tabs whose disposition no longer matches state: it applies
 // list edits to open tabs, and — the security-critical part — it is the ONLY
@@ -24,6 +27,12 @@ import { normalizeEntry } from './list-match.mjs';
 import { getState } from './state.mjs';
 
 const VIEWER = chrome.runtime.getURL('ext/viewer.html');
+// Chrome ships the whitelist-mode catch-all as a static ruleset (intercepts
+// before this script first runs); Firefox cannot (per-profile UUID), so there
+// it rides in the dynamic set — dnr-rules.mjs desiredRuleState.
+const STATIC_CATCHALL = !!chrome.runtime
+  .getManifest()
+  .declarative_net_request?.rule_resources?.some((r) => r.id === CATCHALL_RULESET_ID);
 
 // Serialized apply: a burst of storage changes must not interleave DNR calls.
 let applying = Promise.resolve();
@@ -34,7 +43,7 @@ function applyState() {
 
 async function doApply() {
   const state = await getState();
-  const desired = desiredRuleState(state, VIEWER);
+  const desired = desiredRuleState(state, VIEWER, { staticCatchall: STATIC_CATCHALL });
 
   // Step order matters — applyPlan owns it (a reconcile's mid-flight window
   // must never intercept less than both the old and the new state). Dynamic

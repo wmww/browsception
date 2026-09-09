@@ -13,6 +13,9 @@ import { entryMatches, isIpLiteral, listMatches } from './list-match.mjs';
 import { isHttpUrl, viewerTarget, viewerURLFor } from './viewer-url.mjs';
 
 export const CATCHALL_RULESET_ID = 'catchall';
+// The catch-all rule's id inside that ruleset, and — on browsers that cannot
+// ship it statically — inside the dynamic rule set.
+export const CATCHALL_RULE_ID = 1;
 
 export const PRIORITY = {
   CATCHALL: 1, // static whitelist-mode redirect-everything
@@ -41,15 +44,19 @@ export function entryRegex(entry) {
   return `^https?://${sub}${host}(?::\\d+)?(?:[/?#].*)?$`;
 }
 
-// The static catch-all ruleset (whitelist mode). Generated at build time into
-// rules/catchall.json; requires a pinned extension id (manifest "key") because
-// regexSubstitution needs an absolute URL.
+// The catch-all rule (whitelist mode: redirect every http(s) main_frame).
+// Chrome: generated at build time into the static ruleset rules/catchall.json
+// — regexSubstitution needs an absolute URL, hence the pinned extension id
+// (manifest "key") — so a fresh install intercepts before the SW ever runs.
+// Firefox: the moz-extension UUID is per profile, a relative substitution is
+// a silent no-op, and `extensionPath` cannot carry \0, so the same rule is
+// installed at runtime as a dynamic rule (desiredRuleState below).
 // \0 carries the raw matched URL un-encoded — viewer-url.mjs owns that
 // contract on both sides.
 export function catchallRules(viewerBase) {
   return [
     {
-      id: 1,
+      id: CATCHALL_RULE_ID,
       priority: PRIORITY.CATCHALL,
       action: {
         type: 'redirect',
@@ -157,8 +164,12 @@ export function applyPlan(enabledRulesets, desired) {
  *   escapeHatches?: {tabId: number, entry: string}[],
  * }} state
  * @param {string} viewerBase e.g. "chrome-extension://<id>/viewer.html"
+ * @param {{staticCatchall?: boolean}} [opts] staticCatchall=false (Firefox):
+ *   the manifest ships no catch-all ruleset, so whitelist mode carries the
+ *   catch-all as a dynamic rule (same id, same priority) — one atomic swap
+ *   installs it with the allow rules, so there is no reconcile gap at all.
  */
-export function desiredRuleState(state, viewerBase) {
+export function desiredRuleState(state, viewerBase, { staticCatchall = true } = {}) {
   const { active, mode, whitelist = [], blacklist = [], escapeHatches = [] } = state;
 
   if (!active) return { enabledStaticRulesets: [], dynamicRules: [], sessionRules: [] };
@@ -167,7 +178,8 @@ export function desiredRuleState(state, viewerBase) {
   const enabledStaticRulesets = [];
 
   if (mode === 'whitelist') {
-    enabledStaticRulesets.push(CATCHALL_RULESET_ID);
+    if (staticCatchall) enabledStaticRulesets.push(CATCHALL_RULESET_ID);
+    else dynamicRules.push(...catchallRules(viewerBase));
     whitelist.forEach((entry, i) => {
       dynamicRules.push({
         id: ID_BASE.allow + i,

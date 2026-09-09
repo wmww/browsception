@@ -9,7 +9,7 @@ Why:
 
 - **Security** — escaping two browser sandboxes is much harder than one, especially when the
   inner engine has no JIT, no GPU, and no access to the outer DOM.
-- **Compatibility** — one engine inside another (WebKit inside Chrome, later Firefox).
+- **Compatibility** — one engine inside another (WebKit inside Chrome and Firefox, from one build).
 - **Experiment** — because as far as we know this exact combination has never been shipped.
 
 ## How it works

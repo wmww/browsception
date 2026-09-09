@@ -1,11 +1,13 @@
 /*
- * W-B1 engine pre-js — emitted into embedder.js, so it runs in EVERY scope
- * the module loads in: the page, the node runner, and each pthread pool
- * worker. Everything here targets ONE scope: the engine pthread's worker.
- * Under -sPROXY_TO_PTHREAD the engine's EM_ASM blocks execute in that
- * worker scope, whose Module does NOT inherit the page Module's fields
- * (W-B0 spike, commit 2497a89) — so the hooks the engine reads at runtime
- * must be installed here:
+ * Engine pre-js — emitted into embedder.js, so it runs in EVERY scope the
+ * module loads in: the page, the node runner, and (proxy link) each pthread
+ * pool worker. Everything here targets ONE scope: the worker the engine
+ * runs in. Plain link (shipping): that is the host's dedicated Worker
+ * (src/ext/engine-worker.js), whose Module the host built before
+ * importScripts — the hooks below are ADDED to it. Proxy link: it is the
+ * engine pthread's worker, whose Module does NOT inherit the page Module's
+ * fields (W-B0 spike, commit 2497a89). Either way the engine's EM_ASM blocks
+ * read this scope's Module at runtime, so the hooks must be installed here:
  *   - bibWakeUp / bibArmTimer: the event-driven RunLoop pump, now
  *     worker-LOCAL (MessageChannel/setTimeout in this scope re-enter
  *     _bib_pump on this same thread — no cross-thread hop, simpler than
@@ -88,7 +90,11 @@
     // wins that race and silently eats the crash notification. Hence the
     // accessor: `.proxy` invites the bootstrap to overwrite us, and the setter
     // captures its stub instead (tier-2 scenario 12 is the tripwire).
-    var forwardOnAbort = null;
+    // Plain link: the host Worker set Module.onAbort BEFORE importScripts
+    // (the crashed-UI notification) — start by forwarding to it, or the
+    // accessor below would silently replace it.
+    var forwardOnAbort = (typeof Module.onAbort === "function" && !Module.onAbort.proxy)
+      ? Module.onAbort : null;
     var abortHook = function (what) {
       try {
         var out = (typeof err === "function") ? err : console.error;
@@ -175,15 +181,15 @@
     return true;
   }
 
-  // `var Module` hoists — at pre-js time (and even at microtask/timeout
-  // time) the pthread bootstrap may not have built Module yet: the worker
-  // assembles it while handling the 'load'/'run' messages, AFTER this
-  // script evaluates. The guaranteed install point is C: main() executes
-  // in THIS scope with Module fully alive and calls
-  // self.__bibInstallWorkerHooks() as its first statement (gate9 caught
-  // the early attempts silently missing — empty bibWasmPolyfill was
-  // cached for the session). The eager attempts below remain as a best
-  // effort so the hooks exist as early as possible.
+  // Plain link: Module is the host's object, alive now — the eager install
+  // below succeeds first try. Proxy link: `var Module` hoists — at pre-js
+  // time (and even at microtask/timeout time) the pthread bootstrap may not
+  // have built Module yet: the worker assembles it while handling the
+  // 'load'/'run' messages, AFTER this script evaluates. The guaranteed
+  // install point is C: main() executes in THIS scope with Module fully
+  // alive and calls self.__bibInstallWorkerHooks() as its first statement
+  // (gate9 caught the early attempts silently missing — empty
+  // bibWasmPolyfill was cached for the session).
   self.__bibInstallWorkerHooks = installHooks;
   if (!installHooks()) {
     Promise.resolve().then(installHooks);

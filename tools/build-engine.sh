@@ -9,9 +9,10 @@
 # WebCore objects, the ninja graph) stays shared: repointing sources rebuilds only
 # the 5 embedder TUs + link. See notes/worktrees.md.
 #
-# Produces: engine/WebkitWasm/build/webcore/bin/embedder.{js,wasm} (~103 MB)
-# and an immutable snapshot under engine/artifacts/<stamp>/ (kept: newest 5)
-# that stage-engine.mjs hardlinks into checkouts.
+# Produces: engine/WebkitWasm/build/webcore/bin/embedder.{js,wasm} (~103 MB;
+# the shipping plain link — bin/proxy/ with --proxy) and an immutable
+# snapshot under engine/artifacts/<stamp>/ (kept: newest 12) that
+# stage-engine.mjs hardlinks into checkouts.
 # Cost: ~9 GB WebKit clone (blobless) + ~3 GB deps/toolchain; ~12 GB total in
 # third_party/. Dep tier ~40 min, WebCore ~7.4k ninja targets (~40-60 min on
 # 24 threads at BIB_JOBS=12). Incremental embedder-only change: ~2-3 min;
@@ -29,6 +30,11 @@
 #   --sync-webkit    take over the shared WebKit tree NOW even if no build is
 #                    needed — run before live-editing third_party/WebKit
 #   --force          skip the "already built" fast path and run ninja anyway
+#   --proxy          build + snapshot the -sPROXY_TO_PTHREAD link
+#                    (bin/proxy/) instead of the shipping plain link.
+#                    Snapshot stamps end in -proxy and meta.json says
+#                    "link": "proxy"; stage-engine refuses them for the
+#                    extension unless told otherwise.
 set -euo pipefail
 
 # Engine sources are tracked in this repo, but the build state (third_party/,
@@ -44,12 +50,13 @@ W="$HERE/WebkitWasm"                 # shared BUILD TREE (third_party/, build/)
 SRC="$CHECKOUT_ROOT/engine/WebkitWasm" # SOURCES to compile (this checkout)
 JOBS="${BIB_JOBS:-12}"
 
-SNAPSHOT_ONLY=0; SYNC_WEBKIT=0; FORCE=0
+SNAPSHOT_ONLY=0; SYNC_WEBKIT=0; FORCE=0; LINK=plain
 for arg in "$@"; do
   case "$arg" in
     --snapshot-only) SNAPSHOT_ONLY=1 ;;
     --sync-webkit)   SYNC_WEBKIT=1 ;;
     --force)         FORCE=1 ;;
+    --proxy)         LINK=proxy ;;
     *) echo "unknown flag: $arg (see the header of $0)"; exit 2 ;;
   esac
 done
@@ -80,9 +87,13 @@ sha_of() { sha256sum "$1" 2>/dev/null | cut -d' ' -f1 || true; }
 # later relink can rewrite build output in place, snapshots never change.
 # meta.json identifies WHAT was built (source_hash) and from WHERE, so
 # stage-engine.mjs can match an artifact to a checkout.
+# The plain link lands in bin/, the proxy link in bin/proxy/ (same file
+# names: the glue hard-codes the .wasm it fetches); a snapshot always holds
+# embedder.{js,wasm} + bib-build-config.js, so consumers never care which.
 snapshot() {
   local BIN="$W/build/webcore/bin" SHA DIRTY STAMP DEST LATEST
-  [ -f "$BIN/embedder.wasm" ] || { echo "nothing to snapshot ($BIN)"; return 1; }
+  [ "$LINK" = proxy ] && BIN="$BIN/proxy"
+  [ -f "$BIN/embedder.wasm" ] || { echo "nothing to snapshot ($BIN/embedder.wasm)"; return 1; }
   LATEST="$HERE/artifacts/latest"
   # Dedupe on BOTH files — a pre-js-only change leaves the wasm identical.
   if cmp -s "$BIN/embedder.wasm" "$LATEST/embedder.wasm" 2>/dev/null \
@@ -110,11 +121,12 @@ snapshot() {
   local TOKEN; TOKEN="$(basename "$CHECKOUT_ROOT")"
   [ "$CHECKOUT_ROOT" = "$MAIN_ROOT" ] && TOKEN="main"
   STAMP="$(date -u +%Y%m%d-%H%M%S)-$SHA$DIRTY-$TOKEN"
+  [ "$LINK" = proxy ] && STAMP="$STAMP-proxy"
   DEST="$HERE/artifacts/$STAMP"
   mkdir -p "$DEST"
   cp "$BIN/embedder.js" "$BIN/embedder.wasm" "$DEST/"
-  # Threading-mode stamp (embedder.cmake): the dev harness reads it from
-  # /engine/ before choosing the canvas context, so it belongs in the snapshot.
+  # Link-mode stamp (embedder.cmake): stage-engine and the dev harness read
+  # it, so it belongs in the snapshot.
   cp "$BIN/bib-build-config.js" "$DEST/" 2>/dev/null || true
   cat > "$DEST/meta.json" <<EOF
 {
@@ -124,6 +136,7 @@ snapshot() {
   "branch": "$(git -C "$CHECKOUT_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')",
   "sha": "$SHA",
   "dirty": $([ -n "$DIRTY" ] && echo true || echo false),
+  "link": "$LINK",
   "pthread": ${BIB_PTHREAD:-1},
   "webkit_patch": "$(cat "$HERE/.webkit-patch.applied" 2>/dev/null || echo unknown)"
 }
@@ -265,11 +278,15 @@ if [ "$SNAPSHOT_ONLY" = 1 ]; then
   snapshot; exit
 fi
 
-# --- fast path: an existing snapshot already matches these sources -------
+# --- fast path: an existing snapshot of THIS link mode already matches
+#     these sources (meta.json without "link" predates the split: proxy) ---
 MATCH=""
 for d in $(ls -1d "$HERE/artifacts"/2* 2>/dev/null | sort -r); do
   [ -f "$d/embedder.wasm" ] || continue
-  if grep -q "\"$SRC_HASH\"" "$d/meta.json" 2>/dev/null; then MATCH="$d"; break; fi
+  grep -q "\"$SRC_HASH\"" "$d/meta.json" 2>/dev/null || continue
+  L="$(sed -n 's/.*"link": *"\([a-z]*\)".*/\1/p' "$d/meta.json" 2>/dev/null)"
+  [ "${L:-proxy}" = "$LINK" ] || continue
+  MATCH="$d"; break
 done
 if [ -n "$MATCH" ] && [ "$FORCE" = 0 ]; then
   echo "==> already built — snapshot $MATCH matches this checkout (source_hash $SRC_HASH)"
@@ -401,9 +418,10 @@ if [ "$PRE_NOW" != "$(cat "$PRE_STAMP" 2>/dev/null || true)" ]; then
 fi
 
 # --- 6. build the engine ------------------------------------------------
-BIB_JOBS="$JOBS" BIB_TREE="$W" BIB_SRC="$BUILD_SRC" bash "$SRC/tools/build-webcore.sh"
+BIB_PROXY="$([ "$LINK" = proxy ] && echo 1 || echo 0)" \
+  BIB_JOBS="$JOBS" BIB_TREE="$W" BIB_SRC="$BUILD_SRC" bash "$SRC/tools/build-webcore.sh"
 printf '%s' "$PRE_NOW" > "$PRE_STAMP"
-ls -lh "$W/build/webcore/bin/embedder.wasm"
+ls -lh "$W/build/webcore/bin/$([ "$LINK" = proxy ] && echo proxy/)embedder.wasm"
 echo "OK — engine at $W/build/webcore/bin/ (sources: $BUILD_SRC)"
 snapshot
 echo "    stage into a checkout with: node tools/stage-engine.mjs"

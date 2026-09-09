@@ -30,7 +30,7 @@ and the CMake cache all tolerate a vanished checkout).
 |---|---|---|
 | engine build state (`engine/WebkitWasm/{third_party,build}`, ~12 GB, gitignored) | main checkout only | singleton; resolved via git common dir (`tools/lib/paths.mjs`), build serialized by `engine/.build.lock` (flock; owner in `.build.owner`). Any checkout can *build its own sources* against it (below) |
 | `third_party/WebKit` working tree | main checkout | singleton with **one** patch loaded at a time; which one is recorded in `engine/.webkit-patch.applied` (+ `.owner`). A build from a checkout whose tracked patch differs takes the tree over automatically and losslessly (§ WebKit-tree changes) |
-| `engine/artifacts/<stamp>/` | main checkout | immutable snapshots of `embedder.{js,wasm}` + meta.json (`source_hash` = hash of the sources built, plus checkout/branch/sha/dirty/pthread), newest 12 kept, `latest` symlink. `engine/artifacts/keep/<stamp>/` is **pruning-exempt** (retention globs `artifacts/2*`): `cp -a` a notable build there and it stays runnable — `--list` shows keeps, `--from keep/<stamp>` stages one. That is the depth limit on retro-benchmarking (notes/perf-measurement.md § Retro-running) |
+| `engine/artifacts/<stamp>/` | main checkout | immutable snapshots of `embedder.{js,wasm}` + bib-build-config.js + meta.json (`source_hash` = hash of the sources built, plus checkout/branch/sha/dirty and `link`: `plain` — the shipping no-SAB link — or `proxy`, from `build-engine.sh --proxy`, stamp suffixed `-proxy`, refused by stage-engine without `--allow-proxy`), newest 12 kept, `latest` symlink. `engine/artifacts/keep/<stamp>/` is **pruning-exempt** (retention globs `artifacts/2*`): `cp -a` a notable build there and it stays runnable — `--list` shows keeps, `--from keep/<stamp>` stages one. That is the depth limit on retro-benchmarking (notes/perf-measurement.md § Retro-running) |
 | `src/engine/` | per checkout | hardlinks into a snapshot (~0 disk; Chrome can't reliably follow symlinks, hardlinks are fine). Pruning a snapshot never breaks staged copies — hardlinks keep inodes alive, and `.staged-meta.json` lets stage-engine keep a still-matching staged copy whose snapshot was pruned instead of downgrading to `latest` |
 | `node_modules` | per checkout | hardlink-clone of main's; the dev server mounts it at `/vendor` for the harness, and `stage-engine` hardlinks `binaryen/index.js` into `src/vendor/` for the extension (engine-build.md § Host-root asset contract) |
 | smoke harness (dev-server, `web/`, staged engine) | per checkout | ordinary tracked source, not build state — `tools/lib/dev-harness.mjs` serves **this** checkout's copy; only the build tree behind `stage-engine` is shared |
@@ -81,7 +81,7 @@ since both checkouts' objects stay in the graph).
 
 1. `bash tools/build-engine.sh` — from any checkout; takes the lock, waits with a message if
    another build is running. Flags: `--sync-webkit` (below), `--force` (skip the fast path),
-   `--snapshot-only`.
+   `--snapshot-only`, `--proxy` (the unshipped `-sPROXY_TO_PTHREAD` link; engine.md § Build shape).
    - **Fast path**: if a snapshot's `source_hash` already matches this checkout's engine sources,
      it prints it and exits (~0.7 s). A fresh JS-only worktree costs nothing out of the gate.
 2. `node tools/stage-engine.mjs` in your checkout picks the newest snapshot whose `source_hash`

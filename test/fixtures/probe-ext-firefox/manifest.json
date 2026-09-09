@@ -1,0 +1,67 @@
+{
+ "manifest_version": 3,
+ "name": "browsception firefox probe",
+ "version": "0.0.1",
+ "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA24VU/NsX7uu6nhVS5WZS1PrCvDl/P2ZNkZ/xs2XHsGIcSVnNA5GvN+edj7W7WttQZV6tispKHPS9urfL/OX6QE4oJHpvrit6Tha7JDxnyrT6MNS61K6OkIK+3jFoCpZ8k1lmdaywkl0UXwiQXg+cgXAFhrOJk9tAAH5a12ZP1QTlu/kAZ1evqwsE/qYYbD0VKZdpxrwFQbPs4yXpemECXYOrNrKC3va9NTK8XHFVN8THKsuIs5z0BzPMi+cvyCJHOiyjyWcJDhJtYg/NgImismUrQA5V2idloceAA/NT06Y/fKvCGqwPL8lQNlvqQXGVCt9qXXAoDjksB67tZ695fQIDAQAB",
+ "minimum_chrome_version": "120",
+ "browser_specific_settings": {
+  "gecko": {
+   "id": "probe@browsception.test",
+   "strict_min_version": "128.0"
+  }
+ },
+ "action": {
+  "default_title": "ff-probe"
+ },
+ "permissions": [
+  "alarms",
+  "declarativeNetRequest",
+  "declarativeNetRequestWithHostAccess",
+  "declarativeNetRequestFeedback",
+  "storage",
+  "tabs",
+  "webRequest"
+ ],
+ "host_permissions": [
+  "<all_urls>"
+ ],
+ "background": {
+  "scripts": [
+   "background.js"
+  ],
+  "type": "module"
+ },
+ "content_security_policy": {
+  "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+ },
+ "cross_origin_embedder_policy": {
+  "value": "require-corp"
+ },
+ "cross_origin_opener_policy": {
+  "value": "same-origin"
+ },
+ "web_accessible_resources": [
+  {
+   "resources": [
+    "viewer.html"
+   ],
+   "matches": [
+    "<all_urls>"
+   ]
+  }
+ ],
+ "declarative_net_request": {
+  "rule_resources": [
+   {
+    "id": "blacklist",
+    "enabled": true,
+    "path": "rules/blacklist.json"
+   },
+   {
+    "id": "catchall",
+    "enabled": true,
+    "path": "rules/catchall.json"
+   }
+  ]
+ }
+}

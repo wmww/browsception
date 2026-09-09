@@ -76,7 +76,6 @@ console.log('fb =', JSON.stringify(await page.evaluate(() => __bs.fb)), 'deviceP
 
 // --- in-page instrumentation ----------------------------------------------
 await page.evaluate(() => {
-  const M = window.Module;
   const P = (globalThis.__perf = {
     wheelCalls: 0, wheelPx: 0, tickCalls: 0,
     frameTs: [], // performance.now() of each presented frame
@@ -85,17 +84,17 @@ await page.evaluate(() => {
     offsets: [], // [t, offsetPx]
     running: false,
   });
-  const rawWheel = M._bib_wheel.bind(M);
-  M._bib_wheel = (x, y, dx, dy, mods) => {
-    P.wheelCalls++; P.wheelPx += Math.abs(dy); P.wheelTs.push([performance.now(), dy]);
-    return rawWheel(x, y, dx, dy, mods);
-  };
-  const rawTick = M._bib_tick.bind(M);
-  M._bib_tick = () => { P.tickCalls++; return rawTick(); };
+  // Every export call goes through the worker link; wrap it to count.
   const bs = globalThis.__bs;
-  const rawFrame = Module.bibFrame;
-  // viewer's bibFrame lives on Module; count presentations with timestamps.
-  Module.bibFrame = function (...a) { P.frameTs.push(performance.now()); return rawFrame.apply(this, a); };
+  const link = bs.link;
+  const rawCall = link.call.bind(link);
+  link.call = (fn, ...args) => {
+    if (fn === 'bib_wheel') { P.wheelCalls++; P.wheelPx += Math.abs(args[3]); P.wheelTs.push([performance.now(), args[3]]); }
+    else if (fn === 'bib_tick') P.tickCalls++;
+    return rawCall(fn, ...args);
+  };
+  // Presented frames, with timestamps.
+  bs.onFrame(() => P.frameTs.push(performance.now()));
   P.reset = () => {
     P.wheelCalls = P.wheelPx = P.tickCalls = P.dispatched = P.dispatchedPx = 0;
     P.frameTs.length = 0; P.wheelTs.length = 0; P.offsets.length = 0;

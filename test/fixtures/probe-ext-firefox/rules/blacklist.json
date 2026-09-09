@@ -1,0 +1,34 @@
+[
+ {
+  "id": 100,
+  "priority": 1,
+  "action": {
+   "type": "redirect",
+   "redirect": {
+    "regexSubstitution": "moz-extension://6f3e6a5a-7b1c-4c2b-9f0a-2e2d1c0b0a99/viewer.html?url=\\0"
+   }
+  },
+  "condition": {
+   "regexFilter": "^https?://(?:[^/:@?#]+\\.)?site-a\\.bstest(?::\\d+)?(?:[/?#].*)?$",
+   "resourceTypes": [
+    "main_frame"
+   ]
+  }
+ },
+ {
+  "id": 101,
+  "priority": 1,
+  "action": {
+   "type": "redirect",
+   "redirect": {
+    "regexSubstitution": "moz-extension://6f3e6a5a-7b1c-4c2b-9f0a-2e2d1c0b0a99/viewer.html?url=\\0"
+   }
+  },
+  "condition": {
+   "regexFilter": "^https?://(?:[^/:@?#]+\\.)?site-b\\.bstest(?::\\d+)?(?:[/?#].*)?$",
+   "resourceTypes": [
+    "main_frame"
+   ]
+  }
+ }
+]

@@ -62,17 +62,16 @@ The engine is built without `-sASSERTIONS`, so a `RELEASE_ASSERT` surfaces as a 
 with an **empty reason** — useless on its own. The wasm does carry a name section, so
 `engine-pre.js` hooks the engine worker's `Module.onAbort` (called synchronously from `abort()`,
 still inside the wasm stack) and logs `engine abort stack (reason: …) Error … WebCore::Foo::bar`
-to the host console. That single line is how youtube.com's crash was identified in one run
-(`GraphicsLayer::create` ← `enableCompositingMode` ← `setActiveViewTransition`). The host page's
-own `onAbort` (crashed-UI kill switch) also logs a stack, marked *(host thread)* — it only carries
-engine frames if the main thread was the one that aborted.
+through `printErr`, which the worker forwards to the viewer's console. That single line is how
+youtube.com's crash was identified in one run
+(`GraphicsLayer::create` ← `enableCompositingMode` ← `setActiveViewTransition`). Then it chains
+to the host's own `onAbort` (the worker posts the crashed-UI notification).
 
-Trap, if that hook is ever touched: Emscripten *proxies* the page Module's `onExit`/`onAbort`/
-`print`/`printErr` into pthread workers, installing its stub only into a slot that is empty or
-already marked `.proxy`. A plain `Module.onAbort = …` in pre-js therefore wins that race and
-silently swallows the crash notification — the viewer never shows "engine crashed". The hook is an
-accessor that captures the stub and chains it; tier-2 scenario 12 asserts both halves (crashed UI
-*and* a named stack).
+Trap, if that hook is ever touched: the pre-js installs `onAbort` as an accessor that starts by
+forwarding to whatever the host set BEFORE `importScripts` (engine-worker.js) — a plain
+`Module.onAbort = …` in pre-js would replace the host's and silently swallow the crash
+notification. (In the proxy link the same accessor exists to capture Emscripten's proxy stub.)
+Tier-2 scenario 12 asserts both halves (crashed UI *and* a named stack).
 
 ### Launch recipes
 - **CI / programmatic**: Chromium `--headless=new` (supports extensions) driven by Playwright or
@@ -82,6 +81,13 @@ accessor that captures the stub and chains it; tier-2 scenario 12 asserts both h
   Use the **full system chromium**, never Playwright's bundled `chromium-headless-shell`: the
   shell SEGVs in V8 JIT code space on ~1/3 of heavy-JS engine loads and drops WebGL contexts at
   first composite (fork-era finding; harness artifact, not an engine bug).
+- **Firefox**: `test/harness/firefox.mjs` — system Firefox headless over WebDriver BiDi (no
+  dependency; Playwright can't install Firefox extensions), extension from `dist/firefox/`
+  (`tools/pack-firefox.mjs`), fixtures via `network.dns.localDomains` +
+  `network.socket.forcePort` prefs. Its `page` API is deliberately Playwright-shaped
+  (`goto`/`evaluate(fn, jsonArg)`/`waitForFunction(exprString)`/`url()`), but `evaluate` round-trips
+  through JSON and console capture needs `page.hookConsole()` on extension pages
+  (extension-platform.md § Firefox).
 - **Agent GUI sessions**: the gui-testing skill's `guibox` — headless sway compositor, real
   windowed Chromium, `grim` screenshots, `wdotool` input. For anything CDP can't reach or fakes:
   the real omnibox, the toolbar popup, actual user-gesture semantics, focus/IME quirks, "does it
@@ -106,17 +112,19 @@ Pure-function tests, Node + vitest (or similar):
    link contract). Skips when no engine is staged.
 
 ### Tier 1 — bridge integration, no engine (<30 s, per-commit)
-Headless Chromium + extension + fixture server + a **stub engine** (tiny worker speaking the shim
-ABI). Real fetch bridge, real DNR, real COOP/COEP page — fake WebKit. Covers the platform
-integration that unit tests can't and that doesn't need the 100 MB engine:
+Headless Chromium + extension + fixture server + a **stub engine** (src/shim/engine-stub.mjs,
+speaking the bridge's bytes/strings interface in-process). Real fetch bridge, real DNR, real
+webRequest capture — fake WebKit. Covers the platform integration that unit tests can't and that
+doesn't need the 100 MB engine:
 4. Interception matrix: nav to fixture domains under each mode/list state → tab lands on
    viewer.html with correct `?url=`; whitelisted domain loads natively; escape-hatch rule works
    and dies with the tab; DNR header-rewrite rules fire on bridge fetches only (oracle-verified
    against a simultaneous native-tab fetch).
-5. Bridge semantics: streaming into SAB ring, redirect chain reported per chosen policy,
-   Set-Cookie capture path, `credentials:'omit'` (oracle: no host-jar cookie ever received),
-   guard denials surfaced as engine-visible errors, size cap aborts.
-6. Isolation preconditions: `crossOriginIsolated === true` in viewer, SAB usable in worker.
+5. Bridge semantics: chunk streaming under the credit window, redirect chain reported per chosen
+   policy, Set-Cookie capture path, `credentials:'omit'` (oracle: no host-jar cookie ever
+   received), guard denials surfaced as engine-visible errors, size cap aborts.
+6. Headless parity (`parity.test.mjs`): extension pages exist and Chrome's manifest COOP/COEP
+   still isolates them — a platform property we no longer depend on, kept as a parity check.
 6b. Sweep (`sweep.test.mjs`): the SW's tab sweep against real Chromium tab state — a tab whose
    navigation is still in flight gets sandboxed (a local server that accepts and never answers
    pins it pre-commit, where `tab.url` is 'about:blank'), and an escape-hatch tab survives a
@@ -142,7 +150,8 @@ whole machine, end to end:
 11. **Invariants** (the 2.5 guard-rail suite): during all of the above, CDP
     Network/Target events show no target-origin document or subresource ever loaded top-level;
     oracle shows no credentialed/blocked request; `hostile.bstest` full pass.
-12. **Crash/recovery**: kill the engine worker → viewer shows crashed state → reload recovers.
+12. **Crash/recovery**: `__bs.crash()` aborts the engine in its worker → viewer shows crashed
+    state (worker terminated) → reload recovers.
 13. **Startup budget**: warm start to interactive under threshold (regression tripwire, generous
     bound).
 14. **Resize**: canvas fills the window, the engine framebuffer follows resizes, input stays
@@ -171,11 +180,10 @@ whole machine, end to end:
     lands at exactly the summed deltas and the sticky pixels are back at their fixed positions.
     Guards the damage-merge policy: a frame-covering merged rect silently demotes every tick to a
     full repaint (few fps).
-21. **Present coherence** (`scroll-sticky.bstest`): the band handed to `bibFrame` is a snapshot
-    the engine must not touch until the present handler returns. In-page trackpad-rate wheels
-    plus a paced multi-ms read in the handler; the band must be byte-identical when re-read after
-    the handler. Guards against the scroll-up duplicated-band glitch (rendering-input.md §
-    present snapshot) — pre-fix it tore on 13-60% of presents.
+21. *Retired 2026-09-09* (present coherence): it raced an async main-thread upload against
+    engine mutations of a shared framebuffer. With the worker host the band is copied out
+    synchronously on the engine's one thread before anything else can run, so that failure class
+    cannot exist; the ABI states the contract instead.
 22. **Guest wasm shim + media stubs, in the extension**: the guest realm compiles and runs a real
     wasm module (base64 → host bridge → binaryen wasm2js → eval; only the whole path returns the
     right answer), and `Audio`/`HTMLVideoElement` exist with ENABLE_VIDEO=OFF-honest answers. The
@@ -194,7 +202,15 @@ whole machine, end to end:
     engine intact. That last one is the only cover for the bridge's native-handoff gate reaching
     `location.replace` — see security.md § Sandbox→host sinks for which schemes get how far.
 
-That's ~26 scenarios total. Growth policy: a new test requires a new *class* of failure it would
+24. **Firefox subset** (`test/tier2/firefox.test.mjs`, ~35 s, skips without `/usr/bin/firefox`):
+    fresh-install interception through the runtime-installed dynamic catch-all (oracle sees no
+    target bytes), boot + render in the worker-hosted engine (and `crossOriginIsolated === false`,
+    the design premise), the app.bstest execute battery (bridge, cookie round-trip via
+    onHeadersReceived capture, pushState mirror, redirect chain), blacklist/whitelist reconcile,
+    native handoff, scheme gates, crash → reload. Same source tree as Chrome; only the manifest
+    differs.
+
+That's ~30 scenarios total. Growth policy: a new test requires a new *class* of failure it would
 catch (or a regression that escaped); prefer extending an existing scenario's probes over adding
 scenarios.
 

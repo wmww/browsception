@@ -35,8 +35,8 @@ version-specific).
 
 ### Host-root asset contract
 
-`engine-pre.js` runs in the engine pthread's worker and fetches three files by **origin-absolute**
-path, so every host must serve them at its root:
+`engine-pre.js` runs in the engine's worker (the host Worker itself, src/ext/engine-worker.js)
+and fetches three files by **origin-absolute** path, so every host must serve them at its root:
 
 | Path | Source | What breaks without it |
 |---|---|---|
@@ -60,7 +60,7 @@ invalidate the engine artifact — restage instead of rebuild.)
 
 | Thing | Value |
 |---|---|
-| WebkitWasm | in-repo (`engine/WebkitWasm/`, hard fork of github.com/theogbob/WebkitWasm @ `825c260`, pthread build) |
+| WebkitWasm | in-repo (`engine/WebkitWasm/`, hard fork of github.com/theogbob/WebkitWasm @ `825c260`; tree compiled `-pthread`, shipped as the plain no-SAB link — engine.md § Build shape) |
 | WebKit | branch `webkitglib/2.52` @ `aec9d2ad958e716ab4bca4bf03007e6edac7323f` (blobless clone; pin lives in `engine/WebkitWasm/tools/bootstrap.sh`) |
 | Emscripten | 6.0.0 via emsdk (installed into `third_party/emsdk`) |
 | Host CMake | **must be < 4.0** — we pin 3.31.7 locally (`engine/cmake-3.31.7-linux-x86_64/`) |
@@ -169,8 +169,9 @@ fine; unified TUs ~1.2 GB clang RSS each.
   Win/PlayStation/curl files the port pattern is modeled on. Full monorepo git checkout only.
 - **Link flags**: `-sSTACK_SIZE=8MB` is mandatory (64 KB default = instant empty-message
   StackOverflowError on any JSC op). `INITIAL_MEMORY=256MB` vs ~531 MB actually used on heavy
-  sites → growth lands mid-critical-path (consider raising). `MAXIMUM_MEMORY=4GB` + shared
-  memory reserves the whole 4 GB SAB at instantiation — can fail; 2 GB fallback.
+  sites → growth lands mid-critical-path (consider raising). `MAXIMUM_MEMORY=4GB` on the
+  (non-shared) memory is fine on both browsers (Firefox grew a worker memory to 4095 MB in the
+  2026-09-09 probe); the old shared-memory link reserved the whole 4 GB SAB at instantiation.
 - **wasm32 is Darwin-like: `size_t` = `unsigned long`**, exposing gaps LP64 hides (missing
   `Coder<unsigned long>`, `parse<Size>`, roundeven, RawHex). Expect this error class on uprevs.
 - **offlineasm offset extractor** must scan the `.wasm` (not the `.js` stub) and be linked `-O0`
@@ -189,9 +190,11 @@ fine; unified TUs ~1.2 GB clang RSS each.
   first (else FastMalloc mismatch). `-Wundefined-inline` in 2.52 = missing `*Inlines.h` include.
   Wide ninja rebuilds can OOM-kill em++ showing only warnings — re-run; the wasm link step
   transiently spikes multiple GB (worse with `-g`).
-- **Flipping `BIB_PTHREAD` changes compile flags → full recompile (~1.5–2 h)**; keep a separate
-  build dir per mode if the single-thread Firefox fallback comes back. Hard-reload the browser
-  after rebuilds (the ~100 MB wasm caches aggressively).
+- **Never flip `BIB_PTHREAD`** (compile flags → full recompile, ~1.5–2 h): link mode is a
+  per-target property (engine.md § Build shape); `-no-pthread` at link is what makes the
+  shipping artifact SAB-free. Emscripten's glue hard-codes the `.wasm` name it fetches, which
+  is why the proxy target links into `bin/proxy/` under the same file names. Hard-reload the
+  browser after rebuilds (the ~100 MB wasm caches aggressively).
 
 ## Incremental builds (fix 6, 2026-08-10)
 

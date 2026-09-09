@@ -67,7 +67,7 @@ test('every hook in abi.mjs appears in the header hook section with its scope', 
       assert.match(hookSection, line, `${name} [${scope}]`);
     }
   // No hook named in the header is missing from abi.mjs.
-  const all = [...HOOKS.page, ...HOOKS.worker];
+  const all = [...HOOKS.host, ...HOOKS.worker];
   for (const m of hookSection.matchAll(/^ \* (bib\w+)\(/gm))
     assert.ok(all.includes(m[1]), `header hook ${m[1]} missing from abi.mjs`);
 });

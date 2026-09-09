@@ -52,6 +52,8 @@ result appended here (keep the question, add `**Answer (date):**`).
    every GL entry point it left in the module's imports (engine-build.md § No-GPU link contract).
 6. **Sync XHR / blocking loads in the pthread build.** Confirm atomics-blocking network waits don't
    deadlock with `PROXY_TO_PTHREAD` (main-thread proxying rules). Decide policy for sync XHR.
+   **Moot (2026-09-09):** the shipping link has no second thread to block on; sync XHR stays
+   unsupported in the engine (networking.md), and the proxy link is an unshipped experiment.
 7. **Chrome PNA (Private Network Access) and extension fetches.** Does Chrome apply any
    local-network protections to extension-origin fetch in current versions? Affects how much guard
    #3 in networking.md must carry alone (DNS rebinding remains ours regardless).
@@ -119,6 +121,23 @@ result appended here (keep the question, add `**Answer (date):**`).
     for a hypothetical Chrome mode B. Low priority.
 13. **Firefox port plan.** Superseded by plans/one-engine-both-browsers.md (worker-hosted
     non-pthread link on both browsers; mode B dropped). Probe results land here.
+    **Answer (2026-09-09, Firefox 155.0.1 headless, `tools/probe-firefox.mjs` + landed
+    `test/tier2/firefox.test.mjs`):** every probe passed; the port shipped the same day.
+    | Probe | Result |
+    |---|---|
+    | DNR main_frame redirect (static catch-all, dynamic, allow@10, session `tabIds`, `updateEnabledRulesets`) | PASS — raw target after `url=`; relative `regexSubstitution` = silent no-op, `extensionPath` drops `\0`; 29997 static rules available |
+    | Session `modifyHeaders` (UA/Cookie/Referer/Origin) scoped by `initiatorDomains: [uuid]` | PASS on the wire, plain tab untouched; gecko id as initiatorDomain → "Invalid domain"; ext-page fetch is CORS-exempt (`type: 'basic'`) |
+    | webRequest from an extension page | PASS — `onHeadersReceived` + `['responseHeaders']` shows 302/Location/HttpOnly Set-Cookie; `'extraHeaders'` rejected; `onBeforeRedirect` never fires under `redirect:'error'`; `initiator` undefined, `originUrl` set; listener survives event-page suspend |
+    | OPFS (`createWritable` on the page) | PASS, quota ~2.5 GB |
+    | Worker: non-shared `WebAssembly.Memory` grown to 4095 MB, `importScripts`, `import()` | PASS; page `crossOriginIsolated === false`, no `SharedArrayBuffer` |
+    | WebGL2 `texSubImage2D` 1600×900 in headless | PASS, real context (Mesa), median 2 ms/upload |
+    | Event page: `chrome.*` promise-returning DNR/storage.session/tabs/onMessage/action | PASS; no `clients`/`self.registration` |
+    | CSP `'wasm-unsafe-eval'` page + worker; Chrome-only manifest keys | PASS; `key`/COOP/COEP warn only |
+    Automation: hand-rolled WebDriver BiDi over Node's WebSocket (`webExtension.install`
+    `{type:'path'}`, `--remote-allow-system-access`), fixtures via `network.dns.localDomains` +
+    `network.socket.forcePort`, TLS via `acceptInsecureCerts` — test/harness/firefox.mjs.
+    Residual: whether dynamic rules apply at browser startup before the event page runs
+    (temporary installs can't probe it; the sweep is the backstop regardless).
 14. **Kitesurf open-sourcing** (Cloudflare, promised 2026-08): if it lands embeddable, evaluate as
     a lightweight second engine (Blitz+Stylo+Boa, no video/WebGL — but tiny vs WebKit).
 15. **WebSocket bridging** for nested-page WS (host WebSocket from extension origin). Post-MVP.

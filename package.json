@@ -14,6 +14,8 @@
     "test:tier0": "node --test 'test/tier0/*.test.mjs'",
     "test:tier1": "node --test --test-concurrency=1 'test/tier1/*.test.mjs'",
     "test:tier2": "node --test --test-concurrency=1 'test/tier2/*.test.mjs'",
+    "test:tier2:firefox": "node --test test/tier2/firefox.test.mjs",
+    "pack:firefox": "node tools/pack-firefox.mjs",
     "fixtures": "node test/fixtures/server.mjs"
   },
   "keywords": [],

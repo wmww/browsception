@@ -5,9 +5,9 @@
 
 export const ABI_VERSION = 1;
 
-// JS → engine exports (Module._<name>). Fire-and-forget via engine-thread
-// proxy except bib_abi_version / bib_wasm_alloc / bib_wasm_free, which run on
-// the calling thread.
+// JS → engine exports (Module._<name>), fire-and-forget. The worker host
+// (src/ext/engine-worker.js) calls them; the viewer names them through
+// EngineLink.call(name, ...args).
 export const EXPORTS = [
   'bib_abi_version',
   'bib_tick',
@@ -21,6 +21,7 @@ export const EXPORTS = [
   'bib_set_viewport',
   'bib_wasm_alloc',
   'bib_wasm_free',
+  'bib_present_done',
   'bib_mouse_move',
   'bib_mouse_button',
   'bib_wheel',
@@ -35,10 +36,11 @@ export const EXPORTS = [
   'bib_crash', // dev builds only
 ];
 
-// engine → JS hooks on Module, by scope. [page] = viewer main thread
-// (MAIN_THREAD_ASYNC_EM_ASM), [worker] = engine pthread's worker global.
+// engine → JS hooks on Module, by scope. [host] = the engine worker's Module
+// (src/ext/engine-worker.js; the page's Module in the proxy link), [worker] =
+// the pre-js's own hooks next to the engine.
 export const HOOKS = {
-  page: [
+  host: [
     'bibNetBegin',
     'bibNetCancel',
     'bibNetAck',

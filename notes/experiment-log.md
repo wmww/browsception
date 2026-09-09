@@ -564,3 +564,43 @@ JS never reads that field, so the wrap could go with it.
 **Decision**: no GPU code in the engine at all; the security claim is now a property of the import
 list, enforced per-commit by tier-0 `engine-imports.test.mjs` (it fails on any pre-2026-08-15
 artifact). Contract for keeping it true: engine-build.md § No-GPU link contract.
+
+## 2026-09-09 — One engine build, worker-hosted, on Chrome and Firefox (plans/one-engine-both-browsers.md)
+
+**Hypothesis**: a non-pthread link hosted in a plain dedicated Worker (frames and bytes crossing
+by transferable buffers) matches the `-sPROXY_TO_PTHREAD` link on fps and input latency, since
+the engine was single-threaded in practice anyway and the copy count is unchanged.
+
+**Setup**: same tree, two links from `embedder.cmake` (`20260909-212732-…-proxy` = old viewer +
+proxy artifact, staged into a `git archive HEAD src` copy; `20260909-213513-…` = plain link +
+worker-hosted viewer). `node tools/bench/run.mjs --ext <old> --save proxy-link`, then
+`--save plain-link --compare proxy-link`; 3 reps × 4 s, headless Chromium 152, machine load ~1.3–2.5.
+(`host present ms/s` reads 0 on the new path — the present happens inside the link's message
+handler and is not separable; not a win.)
+
+| scenario | metric | proxy | plain |
+|---|---|---|---|
+| text-scroll 1600 | fps / busy% | 59.6 / 20 | 59.8 / 20 |
+| article-scroll 1600 | fps / busy% | 60.0 / 37 | 59.3 / 37 |
+| text-scroll 2560 | fps / busy% / rAF p95 | 35.7 / 24 / 46.9 ms | 34.0 / 22 / 30.9 ms |
+| article-scroll 2560 | fps / busy% / Mpx per frame | **37.6** / 42 / 0.61 | **31.2** / 36 / 0.71 |
+| app-update | updates/s | 30.2 | 29.7 |
+| input-latency | click / key / type burst ms | 16.4 / 16.3 / 17 | 16.3 / 16.3 / 15 |
+| boot-trivial | engine ready / first frame ms | 459 / 549 | 428 / 526 |
+| boot-article | engine ready / load complete ms | 402 / 784 | 350 / 705 |
+
+**Result**: at 1600x900 and for input latency, boot and app-update the two links are within
+noise (the plan's gate). Boot is 5–13% faster (no pthread pool spin-up). At 2560x1330 the
+plain link is worse on the article page: −17% fps with the engine *less* busy (42 → 36%) and
+more pixels per presented frame — the host present path, not the engine, is the limit, and it
+now includes a 13 MB band transfer + postMessage scheduling per frame on top of the upload
+(text-scroll-2560 shows the same direction, −5%, inside its ±17% spread). That is exactly the
+open risk the plan named; the answer it named too — an OffscreenCanvas presenter inside the
+engine worker, no transfer, no main-thread upload — is now a local change
+(rendering-input.md option 2, issues/host-present-ceiling-large-fb.md).
+
+**Also in this change**: Firefox 155 runs the same artifact (probe table in open-questions #13;
+`test/tier2/firefox.test.mjs` 7/7); Chrome tier-2 29 scenarios green; scenario 21 (present
+coherence) retired because the worker copies the band out synchronously.
+**Decision**: ship the plain link on both browsers; the proxy link stays an `EXCLUDE_FROM_ALL`
+target. The 2560 regression goes on the existing host-present issue.

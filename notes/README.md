@@ -63,8 +63,9 @@ lives in [roadmap.md](roadmap.md). Phase summaries:
   gate: tools/smoke-mvp.mjs real-site pass — sandboxed example.com/wikipedia, whitelist→native
   sweep (experiment-log.md 2026-08-10).
 
-Tests: `npm test` = tiers 0–1, pure headless, per-commit (90 tests). `npm run test:tier2` = 30
-scenarios (incl. 6 HiDPI at dpr 2/1.5) against the staged engine artifact (~65 s; restage with
+Tests: `npm test` = tiers 0–1, pure headless, per-commit. `npm run test:tier2` = 29 Chrome
+scenarios (incl. 6 HiDPI at dpr 2/1.5) + a 7-scenario Firefox subset (`test/tier2/firefox.test.mjs`,
+system Firefox over BiDi) against the staged engine artifact (~2 min; restage with
 tools/stage-engine.mjs after engine rebuilds — it also stages the extension's host-root assets;
 src/engine/, src/vendor/ and the two injection payloads are gitignored). Engine iteration is
 genuinely incremental (~90 s for embedder-only changes; engine-build.md fix 6) and works from any
@@ -79,8 +80,13 @@ Load-bearing implementation facts:
   and every host-world sink is gated by its `isHttpUrl` (security.md § Sandbox→host sinks).
 - src/manifest.json + src/rules/ are **generated** by tools/gen-ext.mjs (pinned key/id; CSP needs
   `'wasm-unsafe-eval'`). The manifest's catch-all `enabled: true` must agree with DEFAULT_STATE.
-- Portability gotchas: TextDecoder rejects SAB views (copy first — heap.mjs); assigning a class's
-  `.prototype` throws in ESM strict mode.
+- The engine runs in a dedicated Worker (`src/ext/engine-worker.js`, classic script: it
+  `importScripts` the plain-link `embedder.js`); the viewer talks to it only through
+  `src/ext/engine-link.mjs` (`__bs.link.call('bib_x', …)`), and the bridge/stub speak a
+  bytes/strings interface — no code outside the worker touches the wasm heap. One artifact for
+  Chrome and Firefox; a proxy-link (`-sPROXY_TO_PTHREAD`) artifact is refused by stage-engine.
+- Portability gotchas: extension schemes are non-special in Node's URL (`.origin` is "null"),
+  compare extension URLs by prefix; assigning a class's `.prototype` throws in ESM strict mode.
 - bibChrome/bibPersist callbacks deliver kind/json as JS strings (ABI docs in bib_abi.h). The
   `url` signal carries `kind`/`index`/`length` so the viewer can mirror the engine's history into
   real tab history; the commit-time index (like canGoBack) is one navigation stale.
@@ -231,6 +237,27 @@ intercepting than either state (tier-0 tripwire). The test's other half was its 
 that re-navigates a pre-commit tab rejects `page.goto` with ERR_ABORTED even when the tab lands
 correctly, so tier-1 asserts on the settled URL now (security.md § reconcile gap, testing.md 6b).
 
+*One engine build, worker-hosted, on Chrome and Firefox* (2026-09-09) — the `-sPROXY_TO_PTHREAD`
+link and every SharedArrayBuffer dependency are gone. The object tree still compiles `-pthread`;
+`embedder.cmake` now links two targets from it — the shipping **plain link** (`-no-pthread`,
+`-sENVIRONMENT=worker,web,node`) and the proxy link as an `EXCLUDE_FROM_ALL` target for a future
+Chrome-only experiment (`tools/build-engine.sh --proxy`; `meta.json` carries `"link"`, stage-engine
+refuses proxy artifacts). The viewer hosts the plain link in a dedicated Worker
+(`engine-worker.js`) and drives it through `EngineLink` messages: input/control as export calls,
+frames as one transferred band buffer per present (the worker's `bibFrame` copies the band out
+synchronously and returns `true` to own `_bib_present_done`, so one-frame-in-flight
+backpressure follows the real present across the hop), network bytes transferred in and copied
+into the heap by the worker — same copy count as the shared heap had. The bridge and the
+tier-1 stub became a bytes/strings interface (`heap.mjs` deleted). Firefox then needed only
+manifest generation (`tools/lib/manifest.mjs`, `tools/pack-firefox.mjs` → `dist/firefox/`) plus
+three feature-detected differences: the catch-all is a **dynamic** rule there (per-profile UUID),
+`onHeadersReceived` alone delivers the 3xx (no `onBeforeRedirect` under `redirect:'error'`), and
+`originUrl`/no-`extraHeaders` in the capture. Probed 2026-09-09 on Firefox 155 (open-questions #13):
+DNR redirect/allow/session rules, session `modifyHeaders`, webRequest capture, OPFS, 4 GB
+non-shared memory in a worker, WebGL2 presenter all work. Tier-2: 29 Chrome scenarios + the
+7-scenario Firefox subset green from one tree (testing.md); bench A/B in experiment-log.md.
+Scenario 21 retired (tearing is structurally impossible now).
+
 Open issues in issues/ (guest-JS wedge, rcap dynamic budget, host-present ceiling at large
 framebuffers, CLoop `join` returned a non-string). Next work: [roadmap.md](roadmap.md).
 
@@ -238,8 +265,10 @@ framebuffers, CLoop `join` returned a non-string). Next work: [roadmap.md](roadm
 
 - **Engine: WebKit**, via the WebkitWasm lineage (WebCore embedded WebKit1-style, JSC CLoop
   interpreter, Skia). See [engine.md](engine.md).
-- **Primary target: Chrome MV3** with an extension-page viewer (DNR main_frame redirect). Firefox
-  later, via the StreamFilter hosting mode. See [extension-platform.md](extension-platform.md).
+- **Chrome MV3 and Firefox from one tree**, both with the extension-page viewer (DNR main_frame
+  redirect). No SharedArrayBuffer anywhere, so Firefox's non-isolated extension pages are no
+  obstacle; the only divergence is manifest generation. The stay-on-origin "mode B" is rejected.
+  See [extension-platform.md](extension-platform.md), [architecture.md](architecture.md).
 - **Fake in-page URL bar is acceptable** for the MVP; the address bar showing the extension URL is a
   permanent platform constraint of the extension-page mode.
 - **No external servers**: networking goes through the extension's own CORS-exempt `fetch()`, not a

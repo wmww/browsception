@@ -53,13 +53,33 @@ known issue at fork time: no video support. Sister project (gecko port): HeyPute
 ## Build shape
 
 - Emscripten, wasm32 (not Memory64 — 4 GB is enough; Memory64 costs 10–100% on memory ops).
-- pthreads + `PROXY_TO_PTHREAD` (COOP/COEP required on the hosting page — fine in our Chrome
-  extension-page mode). Keep the single-threaded build working as a fallback for Firefox
-  extension-page mode.
+- **One object tree, two link targets, one shipping link** (2026-09-09, replaced the
+  `PROXY_TO_PTHREAD` link). The tree compiles `-pthread` (stays that way: flipping it is a full
+  recompile for nothing — a `-pthread`-compiled object links either way, atomics are legal on
+  non-shared memory, pthread/proxying calls resolve to Emscripten's single-thread stubs). Link
+  mode is a per-target property in `src/embedder/embedder.cmake`:
+  - `BibEmbedder` → `bin/embedder.{js,wasm}`: the **plain link** — `-no-pthread` at link (CMake
+    puts the tree's `-pthread` on the link line too, so it must be overridden there; emcc's
+    `PTHREADS` cannot be set with `-s`), `-sENVIRONMENT=worker,web,node`, no SharedArrayBuffer,
+    no pthread pool, no proxying. The extension hosts it in a plain dedicated Worker
+    (src/ext/engine-worker.js) on Chrome and Firefox alike; the dev harness and node runner host
+    it on their own thread. Tier-0 `engine-imports.test.mjs` asserts the glue has no SAB.
+  - `BibEmbedderProxy` → `bin/proxy/embedder.{js,wasm}`: the old `-sPROXY_TO_PTHREAD` link,
+    `EXCLUDE_FROM_ALL`, built only by `tools/build-engine.sh --proxy`, refused by stage-engine
+    for the extension (meta.json `"link": "proxy"`). Kept for a future Chrome-only real-threads
+    experiment; nothing tests it by default.
+  - `BIB_LINK_PROXY` (compile definition on the 5 embedder TUs only) is main.cpp's switch —
+    `__EMSCRIPTEN_PTHREADS__` is defined in both. The proxy link keeps the self-proxying exports
+    and the present snapshot; the plain link runs every export direct and hands `bibFrame` the
+    live framebuffer (the hook is synchronous on the one thread).
+  - Why this is not the perf cost the old notes feared: the engine was already single-threaded
+    in practice (guest workers on the engine thread, sync image decode, no network thread, one
+    GC mutator); the pthread link only bought (a) engine off the UI thread — a Worker gives that
+    — and (b) a shared heap for zero-copy present/bytes-in, replaced by transferable buffers at
+    the same copy count. Bench A/B: experiment-log.md 2026-09-09.
 - `-fwasm-exceptions`, `-sSUPPORT_LONGJMP=wasm` (both solved problems in 2026 Emscripten).
-- Avoid Asyncify (≈50% size/CPU overhead at engine scale). Sync-over-async where needed via
-  blocking a pthread on Atomics (the bridge does this for resource loads); JSPI is Chrome-shipped
-  if we ever need it, but atomics-blocking is more portable.
+- Avoid Asyncify (≈50% size/CPU overhead at engine scale). Nothing blocks on Atomics anymore
+  (there is no second thread to wake it); the bridge is fully async (networking.md).
 - Expect a ~10+ GB build tree; CI on a beefy self-hosted runner.
 
 ## JS performance reality
@@ -97,9 +117,10 @@ known issue at fork time: no video support. Sister project (gecko port): HeyPute
 
 The versioned contract is **src/abi/bib_abi.h** (+ JS mirror src/abi/abi.mjs; tier-0 test keeps
 them in sync). Shape follows the embedder's existing conventions: `extern "C"` exports in
-(self-proxying to the engine pthread, fire-and-forget), `Module.*` hooks out (page-scope via
-MAIN_THREAD_ASYNC_EM_ASM, worker-scope via plain EM_ASM), pointers cross via the shared wasm heap
-with explicit ownership rules. Covers lifecycle/boot-config, viewport resize + DPR, input,
+(fire-and-forget; the worker host calls them directly, the viewer names them by string through
+`EngineLink.call`), `Module.*` hooks out (all run synchronously in the engine worker's scope
+and are forwarded to the viewer as messages), pointers marshalled only inside the worker with
+explicit ownership rules. Covers lifecycle/boot-config, viewport resize + DPR, input,
 the fetch bridge (async, credit-window flow control — see networking.md), chrome signals
 (multiplexed `bibChrome(kind, json)`), and the async `bib_query` channel backing the `__bs`
 dev/test hook. Find/audio/IME/touch are reserved names, post-MVP.

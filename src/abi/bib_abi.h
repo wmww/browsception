@@ -8,25 +8,30 @@
  * Model (matches the existing embedder's conventions — see
  * notes/engine.md § integration seams and the 1.1 survey):
  *
- *  - JS → engine: EMSCRIPTEN_KEEPALIVE extern "C" exports. Every export
- *    self-proxies onto the engine pthread and is FIRE-AND-FORGET unless noted
- *    (return values cannot cross the proxy; request/response pairs use an id +
- *    a result hook instead). Calls made before main() are dropped.
- *  - engine → JS: calls to hooks installed on Module, via
- *    MAIN_THREAD_ASYNC_EM_ASM ([page] scope) or plain EM_ASM ([worker] scope
- *    — the engine pthread's worker global, installed by the pre-js). The
- *    scope annotation is load-bearing: page hooks land in the viewer,
- *    worker hooks land next to the engine.
+ *  - JS → engine: EMSCRIPTEN_KEEPALIVE extern "C" exports, FIRE-AND-FORGET
+ *    unless noted (request/response pairs use an id + a result hook). Calls
+ *    made before main() are dropped. Shipping (plain) link: the engine runs
+ *    on the host Worker's one thread (src/ext/engine-worker.js), the viewer
+ *    posts each call as a message and the worker calls the export directly.
+ *    Proxy link (-sPROXY_TO_PTHREAD, kept buildable): every export
+ *    self-proxies onto the engine pthread.
+ *  - engine → JS: calls to hooks installed on Module. All hooks are [host]
+ *    hooks: in the plain link every EM_ASM (MAIN_THREAD_* included — they
+ *    are plain synchronous EM_ASM without pthreads) runs in the Worker's
+ *    scope on the Worker's Module, which forwards to the viewer by message.
+ *    In the proxy link MAIN_THREAD_ASYNC_EM_ASM hooks land on the page's
+ *    Module and plain-EM_ASM ones on the engine pthread's worker Module
+ *    (installed by the pre-js); see the per-hook notes at the bottom.
  *
- * Ownership of pointer arguments (wasm heap is shared memory; both sides can
- * read it):
+ * Ownership of pointer arguments (the host end that speaks pointers is the
+ * worker, src/ext/engine-worker.js; the bridge and viewer only see bytes and
+ * strings):
  *  - engine → JS (hook args): engine mallocs, JS reads/copies, then JS calls
  *    _bib_wasm_free(ptr). Every pointer handed to a hook must be freed by JS.
- *  - JS → engine (export args): JS allocates via _bib_wasm_alloc (thread-safe,
- *    runs on the caller's thread), writes, passes the pointer; ownership
- *    transfers to the engine, which frees after consuming. `const char*`
- *    export args are ccall-marshalled strings (copied by the proxy pack) —
- *    no manual allocation.
+ *  - JS → engine (export args): JS allocates via _bib_wasm_alloc, writes,
+ *    passes the pointer; ownership transfers to the engine, which frees after
+ *    consuming. `const char*` export args are ccall-marshalled strings — no
+ *    manual allocation.
  *
  * Coordinates — ONE unit crosses this ABI in either direction: framebuffer
  * DEVICE pixels. Viewport size, the bibFrame dirty box and every input
@@ -101,14 +106,21 @@ void bib_set_visible(int visible);
  * resizes the frame view, and answers with a full-frame bibFrame. */
 void bib_set_viewport(int widthPx, int heightPx, double dpr);
 
-/* Shared-heap scratch allocation (thread-safe, runs on the calling thread —
- * NOT proxied). See ownership rules at the top. */
+/* Heap scratch allocation (plain malloc/free; never proxied). See ownership
+ * rules at the top. */
 char* bib_wasm_alloc(int size);
 void bib_wasm_free(char* ptr);
 
+/* Signals that the host has consumed the band handed to bibFrame; until then
+ * the engine paints no new frame (damage coalesces). Called by the bibFrame
+ * wrapper itself right after the handler returns, unless the handler
+ * returned true — then the host owns the call (the worker host makes it once
+ * the main thread has actually presented the transferred band). */
+void bib_present_done(void);
+
 /* There is deliberately NO shutdown/destroy export: the engine runtime is not
- * teardown-safe under PROXY_TO_PTHREAD. Kill = terminate the workers and
- * drop the Module (viewer-side), then boot a fresh instance. */
+ * teardown-safe. Kill = terminate the Worker (viewer-side), then boot a
+ * fresh instance. */
 
 /* ========================================================================
  * Input (JS → engine)
@@ -117,14 +129,17 @@ void bib_wasm_free(char* ptr);
  * (backing/CSS ratio) and the engine maps device px → logical px (÷ its live
  * dpr) before hit-testing. All input exports are fire-and-forget.
  *
- * COALESCING: positional input (bib_wheel, bib_mouse_move) may be merged by
- * the engine while it is behind — consecutive wheels summed into one event,
+ * COALESCING: positional input (bib_wheel, bib_mouse_move) may be merged
+ * while the engine is behind — consecutive wheels summed into one event,
  * consecutive moves reduced to the latest position — so the guest can see
  * fewer events than were sent (real browsers batch wheel the same way). The
  * merge never crosses another input event, and never applies to keys or
- * buttons: relative order and every discrete event are preserved. Callers
- * that need an event delivered on its own (a synthetic gesture under test)
- * get that by not sending another one before the engine drains. */
+ * buttons: relative order and every discrete event are preserved. Plain
+ * link: the viewer does it (one summed wheel / latest move per rAF tick,
+ * flushed before any discrete event); the worker runs calls in arrival
+ * order. Proxy link: the engine's queued task packs merge the same way.
+ * Callers that need an event delivered on its own (a synthetic gesture under
+ * test) get that by not sending another one before the engine drains. */
 
 #define BIB_MOD_SHIFT 1
 #define BIB_MOD_CTRL 2
@@ -160,8 +175,9 @@ void bib_set_focus(int focused);
  * Networking — the fetch bridge (both directions)
  * ========================================================================
  * Design: notes/networking.md. The engine's loader emits requests through the
- * [page] hook bibNetBegin; the shim guards + fetches them and streams results
- * back through the bib_net_* exports. Everything is async on the engine
+ * bibNetBegin hook; the worker host forwards them (bytes + parsed JSON) to the
+ * bridge on the main thread, which guards + fetches them and streams results
+ * back through the bib_net_* exports (worker-marshalled). Everything is async on the engine
  * run loop (this port has no separate network thread; sync XHR remains
  * unsupported). One request id maps to exactly one terminal event:
  * bib_net_done, bib_net_fail, or bib_net_redirect.
@@ -243,21 +259,28 @@ void bib_crash(void);
 /* ========================================================================
  * Hooks (engine → JS, on Module) — names + scopes
  * ========================================================================
- * [page]   installed by the viewer, delivered via MAIN_THREAD_ASYNC_EM_ASM.
- * [worker] installed by the pre-js in the engine pthread's worker scope.
+ * [host]   plain link: the Worker's Module (src/ext/engine-worker.js),
+ *          called synchronously; proxy link: the page's Module, delivered
+ *          via MAIN_THREAD_ASYNC_EM_ASM.
+ * [worker] installed by the pre-js next to the engine (both links).
  *
- * bibNetBegin(reqJsonPtr)                       [page]  request out (above)
- * bibNetCancel(reqId)                           [page]  abort in-flight fetch
- * bibNetAck(reqId, bytes)                       [page]  chunk consumed (flow)
- * bibFrame(fbPtr, fbW, fbH, strideBytes,        [page]  frame ready; fbPtr is
- *          dirtyX, dirtyY, dirtyW, dirtyH)              a stable heap buffer
- *          (RGBA8888, row 0 = top). fbPtr is a present SNAPSHOT the engine
- *          filled before posting and will not touch again until the wrapping
- *          EM_ASM calls _bib_present_done() after the handler returns — the
- *          host may read it (SAB view) without racing engine paints/blits.
- *          Reading the LIVE framebuffer here instead was the scroll-up
- *          duplicated-band tear (fixed 2026-08-15). Do NOT free fbPtr.
- * bibChrome(kind, json)                         [page]  chrome signal. Unlike
+ * bibNetBegin(reqJsonPtr)                       [host]  request out (above)
+ * bibNetCancel(reqId)                           [host]  abort in-flight fetch
+ * bibNetAck(reqId, bytes)                       [host]  chunk consumed (flow)
+ * bibFrame(fbPtr, fbW, fbH, strideBytes,        [host]  frame ready (RGBA8888,
+ *          dirtyX, dirtyY, dirtyW, dirtyH)              row 0 = top). The
+ *          engine treats the frame as in flight until _bib_present_done():
+ *          the wrapping EM_ASM calls it right after the handler returns,
+ *          unless the handler returns `true` to take ownership and call it
+ *          later (the worker host does, after the main thread presented).
+ *          Plain link: the handler runs synchronously on the engine thread
+ *          and fbPtr is the LIVE framebuffer — copy the band out before
+ *          returning; nothing can mutate it during the call. Proxy link:
+ *          fbPtr is a present SNAPSHOT the engine filled before posting and
+ *          will not touch again until _bib_present_done() — reading the live
+ *          framebuffer across threads was the scroll-up duplicated-band tear
+ *          (fixed 2026-08-15). Do NOT free fbPtr.
+ * bibChrome(kind, json)                         [host]  chrome signal. Unlike
  *          the other hooks, both args arrive as JS STRINGS (decoded + freed
  *          engine-side, bibPersist-style delivery). kinds:
  *          "title" {"title"}
@@ -284,10 +307,10 @@ void bib_crash(void);
  *                shim's own fetch — deliberately: the two paths cover each
  *                other's blind spots and the host renders the last one.
  *          reserved (fast-follows): "open", "download", "dialog", "caret"
- * bibQueryResult(queryId, jsonPtr)              [page]  bib_query answer
- * bibPersist(jsonPtr)                           [page]  storage snapshot to
+ * bibQueryResult(queryId, jsonPtr)              [host]  bib_query answer
+ * bibPersist(jsonPtr)                           [host]  storage snapshot to
  *          persist (until storage moves fully to engine-side OPFS)
- * bibReady()                                    [page]  boot complete; safe to
+ * bibReady()                                    [host]  boot complete; safe to
  *          call exports (replaces legacy onEngineReady)
  * bibWakeUp()                                   [worker] RunLoop wake request
  * bibArmTimer(ms)                               [worker] RunLoop timer arm

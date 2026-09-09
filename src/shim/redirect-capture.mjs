@@ -1,17 +1,25 @@
 // Observational webRequest capture for bridge fetches (notes/bridge-probe.md
 // decisions 1–2). fetch() cannot see Set-Cookie at all, and redirect:'error'
 // rejects without exposing the 3xx — but onHeadersReceived (with
-// ['responseHeaders','extraHeaders']) delivers status, Location, and every
-// Set-Cookie (incl. HttpOnly) before the abort. We record per-URL FIFO queues
-// (URL-keyed correlation is correct for the jar; FIFO covers concurrent
-// same-URL requests) and the bridge takes exactly one entry per fetch.
+// ['responseHeaders'] + Chrome's 'extraHeaders') delivers status, Location,
+// and every Set-Cookie (incl. HttpOnly) before the abort. We record per-URL
+// FIFO queues (URL-keyed correlation is correct for the jar; FIFO covers
+// concurrent same-URL requests) and the bridge takes exactly one entry per
+// fetch.
 //
-// Redirects come from onBeforeRedirect, not onHeadersReceived: some redirects
-// are synthesized by the network stack and never receive response headers at
-// all (HSTS upgrade of e.g. http://wikipedia.org/ — a 307 with no server in
-// the loop; DNR redirect rules likewise). onBeforeRedirect fires for those and
-// carries the same responseHeaders as onHeadersReceived for server redirects,
-// plus the resolved redirectUrl, which we hand the engine as the Location.
+// Redirects: a server 3xx is captured at onHeadersReceived (the only event
+// Firefox fires for a redirect:'error' fetch). Chrome also fires
+// onBeforeRedirect for it, with the resolved redirectUrl — authoritative, so
+// it overwrites that entry's Location — and onBeforeRedirect is the ONLY
+// event for redirects the network stack synthesizes without response headers
+// (HSTS upgrade of e.g. http://wikipedia.org/ — a 307 with no server in the
+// loop; DNR redirect rules likewise): those are pushed from there.
+//
+// Browser differences, all feature-detected here: `details.initiator`
+// (Chrome) vs `details.originUrl` (Firefox) name the requesting page;
+// 'extraHeaders' exists on Chrome only (Firefox rejects it, and shows
+// Set-Cookie without it); onBeforeRedirect never fires on Firefox under
+// redirect:'error'.
 
 // Statuses fetch treats as a redirect (a 3xx without a parseable Location is
 // delivered as an ordinary response instead, and only onHeadersReceived fires).
@@ -37,6 +45,7 @@ const keyOf = (url) => {
 export class RedirectCapture {
   #queues = new Map(); // key -> [{at, entry: {status, headers: [[k,v],...]}}]
   #waiters = new Map(); // key -> [resolve, ...]
+  #redirects = new Map(); // requestId -> {at, entry} awaiting onBeforeRedirect (Chrome)
   #listeners = null;
   #lastSweep = 0;
 
@@ -59,32 +68,51 @@ export class RedirectCapture {
       if (q) q.push({ at: performance.now(), entry });
       else this.#queues.set(key, [{ at: performance.now(), entry }]);
     };
+    // Prefix, not URL.origin: extension schemes are non-special, and
+    // `new URL('moz-extension://x/').origin` is "null" outside the browser.
+    const ours = (details) => {
+      if (details.initiator !== undefined) return details.initiator === origin;
+      const from = details.originUrl ?? details.documentUrl;
+      return typeof from === 'string' && (from === origin || from.startsWith(origin + '/'));
+    };
+    // Server redirects captured at onHeadersReceived, remembered per request
+    // so Chrome's onBeforeRedirect can fix up the Location (see header).
+    const redirects = this.#redirects;
     const onHeadersReceived = (details) => {
-      if (details.initiator !== origin) return;
+      if (!ours(details)) return;
       const headers = headersOf(details);
-      // A redirect we will also see in onBeforeRedirect (same requestId, same
-      // headers) — take it there so both kinds of redirect look alike, and so
-      // this fetch enqueues exactly one entry.
+      const entry = { status: details.statusCode, headers };
       if (REDIRECT_STATUS.has(details.statusCode) && headers.some(([k]) => k === 'location'))
-        return;
-      push(details.url, { status: details.statusCode, headers });
+        redirects.set(details.requestId, { at: performance.now(), entry });
+      push(details.url, entry);
     };
     const onBeforeRedirect = (details) => {
-      if (details.initiator !== origin) return;
+      if (!ours(details)) return;
       // redirectUrl is authoritative (absolute, post-DNR) and is the only
       // Location a stack-synthesized redirect has.
+      const seen = redirects.get(details.requestId);
+      if (seen) {
+        redirects.delete(details.requestId);
+        const i = seen.entry.headers.findIndex(([k]) => k === 'location');
+        if (i >= 0) seen.entry.headers[i] = ['location', details.redirectUrl];
+        else seen.entry.headers.push(['location', details.redirectUrl]);
+        return;
+      }
       const headers = headersOf(details).filter(([k]) => k !== 'location');
       headers.push(['location', details.redirectUrl]);
       push(details.url, { status: details.statusCode, headers });
     };
     const filter = { urls: ['http://*/*', 'https://*/*'], types: ['xmlhttprequest'] };
+    // Chrome hides Set-Cookie unless 'extraHeaders' is asked for; Firefox
+    // has no such option (it rejects the string) and shows it regardless.
+    const extra = chromeApi.webRequest.OnHeadersReceivedOptions?.EXTRA_HEADERS ? ['extraHeaders'] : [];
     chromeApi.webRequest.onHeadersReceived.addListener(onHeadersReceived, filter, [
       'responseHeaders',
-      'extraHeaders',
+      ...extra,
     ]);
     chromeApi.webRequest.onBeforeRedirect.addListener(onBeforeRedirect, filter, [
       'responseHeaders',
-      'extraHeaders',
+      ...extra,
     ]);
     this.#listeners = { onHeadersReceived, onBeforeRedirect };
     this.chromeApi = chromeApi;
@@ -99,6 +127,7 @@ export class RedirectCapture {
     this.#listeners = null;
     this.#queues.clear();
     this.#waiters.clear();
+    this.#redirects.clear();
   }
 
   /**
@@ -160,6 +189,7 @@ export class RedirectCapture {
       if (fresh.length) this.#queues.set(key, fresh);
       else this.#queues.delete(key);
     }
+    for (const [id, r] of this.#redirects) if (now - r.at >= this.maxAgeMs) this.#redirects.delete(id);
   }
 }
 

@@ -6,14 +6,19 @@
 // engine-driven: fetch(redirect:'error') + webRequest capture recovers the
 // 3xx, reported via bib_net_redirect; the engine issues the next hop itself.
 //
-// `module` is the Module-shaped engine interface (real Emscripten Module or
-// the tier-1 stub): HEAPU8, _bib_wasm_alloc/_bib_wasm_free, and the bib_net_*
-// exports. The bridge installs the bibNet* hooks on it; it must be
-// constructed before the engine script loads.
+// `engine` is the bytes/strings engine interface — src/ext/engine-link.mjs
+// (the real engine, in its worker) or the tier-1 stub (src/shim/engine-stub.mjs):
+//   engine.netResponse(id, headersJson)   engine.netData(id, Uint8Array)
+//   engine.netDone(id, metricsJson|null)  engine.netFail(id, kind, message|null)
+//   engine.netRedirect(id, status, headersJson)
+// and the events it raises, which the bridge assigns:
+//   engine.onNetBegin(req, body)  engine.onNetCancel(id)  engine.onNetAck(id, bytes)
+// Heap pointers never reach this layer: the worker end marshals them (ABI
+// ownership rules in bib_abi.h). Construct the bridge before booting the
+// engine so no request is emitted into a void.
 
 import { NET_ERR, NET_WINDOW_BYTES } from '../abi/abi.mjs';
 import { evaluateRequest, CAPS } from './guard.mjs';
-import { readCString, readBytes, allocCString, allocBytes } from './heap.mjs';
 import { setCookiesOf } from './redirect-capture.mjs';
 import { BRIDGE_RULE, baseSessionRules, perRequestHeaderRule } from '../ext/bridge-rules.mjs';
 
@@ -54,7 +59,7 @@ export class Bridge {
   #usedRuleIds = new Set();
 
   /**
-   * @param {object} module Module-shaped engine interface
+   * @param {object} engine bytes/strings engine interface (header comment)
    * @param {{
    *   capture: import('./redirect-capture.mjs').RedirectCapture,
    *   userAgent: string,
@@ -65,8 +70,8 @@ export class Bridge {
    *   windowBytes?: number,
    * }} opts
    */
-  constructor(module, opts) {
-    this.module = module;
+  constructor(engine, opts) {
+    this.engine = engine;
     this.capture = opts.capture;
     this.userAgent = opts.userAgent;
     // 2.4 sandboxed->native boundary: called with the URL of every http(s)
@@ -87,9 +92,9 @@ export class Bridge {
     this.windowBytes = opts.windowBytes ?? NET_WINDOW_BYTES;
     this.extId = new URL(this.chrome.runtime.getURL('')).hostname;
 
-    module.bibNetBegin = (ptr) => this.#begin(ptr);
-    module.bibNetCancel = (id) => this.#cancel(id);
-    module.bibNetAck = (id, bytes) => this.#ack(id, bytes);
+    engine.onNetBegin = (req, body) => this.#begin(req, body);
+    engine.onNetCancel = (id) => this.#cancel(id);
+    engine.onNetAck = (id, bytes) => this.#ack(id, bytes);
   }
 
   async init() {
@@ -116,7 +121,7 @@ export class Bridge {
   #fail(id, kind, message) {
     const st = this.#inflight.get(id);
     if (!st) return;
-    this.module._bib_net_fail(id, kind, message ? allocCString(this.module, message) : 0);
+    this.engine.netFail(id, kind, message ?? null);
     this.#finish(id);
     if (st.main && kind !== NET_ERR.CANCELLED) this.onMainLoadFailed?.(st.url, kind, message);
   }
@@ -149,17 +154,9 @@ export class Bridge {
     return this.#nextRuleId;
   }
 
-  async #begin(reqPtr) {
-    const m = this.module;
-    let req;
-    try {
-      req = JSON.parse(readCString(m, reqPtr));
-    } finally {
-      m._bib_wasm_free(reqPtr);
-    }
-    const body = req.bodyLen > 0 ? readBytes(m, req.bodyPtr, req.bodyLen) : null;
-    if (req.bodyPtr) m._bib_wasm_free(req.bodyPtr);
-
+  // req: the parsed request JSON (ABI § Networking) minus its body pointer;
+  // body: the request body bytes, or null.
+  async #begin(req, body) {
     const id = req.id;
     const st = {
       ctrl: new AbortController(),
@@ -233,7 +230,7 @@ export class Bridge {
       st.took = true;
       if (entry && entry.status >= 300 && entry.status < 400) {
         const headers = { status: entry.status, url: req.url, headers: entry.headers };
-        m._bib_net_redirect(id, entry.status, allocCString(m, JSON.stringify(headers)));
+        this.engine.netRedirect(id, entry.status, JSON.stringify(headers));
         this.#finish(id);
         return;
       }
@@ -248,19 +245,15 @@ export class Bridge {
     st.took = true;
     const headers = [...res.headers.entries()].filter(([k]) => !stripped.has(k));
     if (entry) for (const v of setCookiesOf(entry)) headers.push(['set-cookie', v]);
-    m._bib_net_response(
+    this.engine.netResponse(
       id,
-      allocCString(
-        m,
-        JSON.stringify({ status: res.status, statusText: res.statusText, url: res.url, headers }),
-      ),
+      JSON.stringify({ status: res.status, statusText: res.statusText, url: res.url, headers }),
     );
 
     await this.#stream(id, st, res);
   }
 
   async #stream(id, st, res) {
-    const m = this.module;
     const t0 = performance.now();
     let bytes = 0;
     let chunks = 0;
@@ -284,13 +277,15 @@ export class Bridge {
           return this.#fail(id, NET_ERR.TOO_LARGE, `cap ${this.maxResponseBytes}`);
         }
         // Deliver in bounded slices, honoring the credit window before each
-        // slice, so a coalesced multi-MB fetch chunk can't overshoot it.
+        // slice, so a coalesced multi-MB fetch chunk can't overshoot it. A
+        // chunk that fits in one slice crosses as its own buffer (transferred,
+        // no copy); bigger chunks pay one copy per slice.
         for (let off = 0; off < value.length; off += SLICE_BYTES) {
           while (st.unacked >= this.windowBytes && this.#inflight.has(id))
             await new Promise((r) => (st.ackWaiter = r));
           if (!this.#inflight.has(id)) return void reader.cancel().catch(() => {});
           const slice = value.subarray(off, off + SLICE_BYTES);
-          m._bib_net_data(id, allocBytes(m, slice), slice.length);
+          this.engine.netData(id, slice);
           st.unacked += slice.length;
           maxUnacked = Math.max(maxUnacked, st.unacked);
         }
@@ -307,7 +302,7 @@ export class Bridge {
     }
     if (!this.#inflight.has(id)) return;
     const metrics = { bytes, chunks, ms: Math.round(performance.now() - t0), maxUnacked };
-    m._bib_net_done(id, allocCString(m, JSON.stringify(metrics)));
+    this.engine.netDone(id, JSON.stringify(metrics));
     this.#finish(id);
   }
 

@@ -1,0 +1,69 @@
+// One source for both browsers' manifests (plans → notes/extension-platform.md
+// § Firefox). Everything else in the extension is shared verbatim; this file
+// is the whole divergence budget.
+//
+// Chrome: MV3 service worker, pinned key (a static DNR ruleset needs an
+// absolute redirect URL, so the id must be known at build time), manifest
+// COOP/COEP (harmless now that nothing needs SharedArrayBuffer; kept so the
+// viewer stays cross-origin isolated).
+// Firefox: no extension service workers — an event page (background.page)
+// loads the same module; gecko id for storage.sync + a stable identity; NO
+// static catch-all ruleset, because a moz-extension UUID is per profile and
+// Firefox treats a relative regexSubstitution as a silent no-op — the SW
+// installs the catch-all as a dynamic rule instead (dnr-rules.mjs
+// desiredRuleState({staticCatchall: false})). Chrome-only keys are dropped
+// rather than left to warn.
+
+import { CATCHALL_RULESET_ID } from '../../src/ext/dnr-rules.mjs';
+
+export const GECKO_ID = 'browsception@phie.me';
+export const FIREFOX_MIN_VERSION = '128.0';
+
+const COMMON = {
+  manifest_version: 3,
+  name: 'browsception',
+  version: '0.1.0',
+  description: 'Runs websites inside a nested wasm browser engine.',
+  permissions: ['declarativeNetRequest', 'webRequest', 'storage', 'tabs'],
+  host_permissions: ['<all_urls>'],
+  action: { default_popup: 'ext/popup.html', default_title: 'browsception' },
+  options_ui: { page: 'ext/options.html', open_in_tab: true },
+  // DNR redirects can only target listed resources (spike 0.3).
+  web_accessible_resources: [{ resources: ['ext/viewer.html'], matches: ['<all_urls>'] }],
+  // MV3 default CSP has no wasm; 'wasm-unsafe-eval' is the (only) MV3-legal
+  // way to run the engine. No 'unsafe-eval' — JS stays 'self'.
+  content_security_policy: {
+    extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
+  },
+};
+
+export function chromeManifest(key) {
+  return {
+    ...COMMON,
+    key,
+    minimum_chrome_version: '124',
+    background: { service_worker: 'ext/sw.mjs', type: 'module' },
+    declarative_net_request: {
+      rule_resources: [
+        {
+          id: CATCHALL_RULESET_ID,
+          // Enabled at install: DEFAULT_STATE is whitelist mode, and the static
+          // toggle must not wait for the SW (first-navigation race). The SW
+          // disables it for blacklist/inactive states; that choice persists.
+          enabled: true,
+          path: 'rules/catchall.json',
+        },
+      ],
+    },
+    cross_origin_opener_policy: { value: 'same-origin' },
+    cross_origin_embedder_policy: { value: 'require-corp' },
+  };
+}
+
+export function firefoxManifest() {
+  return {
+    ...COMMON,
+    browser_specific_settings: { gecko: { id: GECKO_ID, strict_min_version: FIREFOX_MIN_VERSION } },
+    background: { page: 'ext/background.html' },
+  };
+}

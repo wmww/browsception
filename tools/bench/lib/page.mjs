@@ -8,6 +8,12 @@
 // win unless the host is measured too.
 
 /** Installed once per page, after __bs.ready. Exposes window.__bench. */
+// Two generations of host API (notes/perf-measurement.md § contract): the
+// worker-hosted viewer exposes `__bs.onFrame(cb)` (band + geometry per
+// presented frame) and `__bs.link.call` (every export call); older artifacts
+// had a page-side `Module` whose `bibFrame`/`_bib_wheel` were wrappable and
+// whose framebuffer was readable from `ptr`. Both are feature-detected so a
+// retro-run against an old checkout still measures.
 export function installBench() {
   if (globalThis.__bench) return 'already';
   const M = globalThis.Module;
@@ -28,7 +34,37 @@ export function installBench() {
   });
 
   // --- presented-frame timestamps + host present cost ---------------------
-  if (typeof M?.bibFrame === 'function') {
+  // Pixel watch: the watched pixel can only change in a frame whose dirty
+  // band covers it, so reading it from the band is as complete as reading
+  // the whole framebuffer was.
+  const checkWatch = (px, t1) => {
+    const wch = B.watch;
+    if (!wch) return;
+    const hit = wch.want
+      ? Math.abs(px[0] - wch.want[0]) <= wch.tol && Math.abs(px[1] - wch.want[1]) <= wch.tol
+        && Math.abs(px[2] - wch.want[2]) <= wch.tol
+      : Math.abs(px[0] - wch.from[0]) > wch.tol || Math.abs(px[1] - wch.from[1]) > wch.tol
+        || Math.abs(px[2] - wch.from[2]) > wch.tol;
+    if (hit) {
+      B.watch = null;
+      wch.resolve({ ms: t1 - wch.t0, px: [px[0], px[1], px[2]], at: t1 });
+    }
+  };
+  if (typeof bs?.onFrame === 'function') {
+    // Worker-hosted viewer: the present already happened (inside the link's
+    // frame handler) — presentMs is not separable here, recorded as 0.
+    bs.onFrame(({ band, fbW, fbH, stride, y, h }) => {
+      const t1 = performance.now();
+      B.frames++;
+      if (B.frameTs.length < 100000) B.frameTs.push(t1);
+      const wch = B.watch;
+      if (wch && wch.x < fbW && wch.y < fbH && wch.y >= y && wch.y < y + h) {
+        const off = (wch.y - y) * stride + wch.x * 4;
+        checkWatch(band.subarray(off, off + 3), t1);
+      }
+    });
+    B.hooks.frame = true;
+  } else if (typeof M?.bibFrame === 'function') {
     const raw = M.bibFrame;
     M.bibFrame = function (ptr, fbW, fbH, stride, x, y, w, h) {
       const t0 = performance.now();
@@ -42,19 +78,8 @@ export function installBench() {
         // Read the watched pixel straight out of the framebuffer: no readback,
         // no extra engine work, and the timestamp is the frame that carried it.
         try {
-          if (wch.x < fbW && wch.y < fbH) {
-            const off = ptr + wch.y * stride + wch.x * 4;
-            const px = new Uint8Array(M.HEAPU8.buffer, off, 3);
-            const hit = wch.want
-              ? Math.abs(px[0] - wch.want[0]) <= wch.tol && Math.abs(px[1] - wch.want[1]) <= wch.tol
-                && Math.abs(px[2] - wch.want[2]) <= wch.tol
-              : Math.abs(px[0] - wch.from[0]) > wch.tol || Math.abs(px[1] - wch.from[1]) > wch.tol
-                || Math.abs(px[2] - wch.from[2]) > wch.tol;
-            if (hit) {
-              B.watch = null;
-              wch.resolve({ ms: t1 - wch.t0, px: [px[0], px[1], px[2]], at: t1 });
-            }
-          }
+          if (wch.x < fbW && wch.y < fbH)
+            checkWatch(new Uint8Array(M.HEAPU8.buffer, ptr + wch.y * stride + wch.x * 4, 3), t1);
         } catch (e) { /* heap grew under us; next frame re-reads */ }
       }
       return r;
@@ -63,7 +88,18 @@ export function installBench() {
   }
 
   // --- wheel entries actually reaching the engine -------------------------
-  if (typeof M?._bib_wheel === 'function') {
+  if (bs?.link && typeof bs.link.call === 'function') {
+    const link = bs.link;
+    const raw = link.call.bind(link);
+    link.call = (fn, ...args) => {
+      if (fn === 'bib_wheel') {
+        B.wheelCalls++;
+        B.wheelPx += Math.abs(args[3]);
+      }
+      return raw(fn, ...args);
+    };
+    B.hooks.wheel = true;
+  } else if (typeof M?._bib_wheel === 'function') {
     const raw = M._bib_wheel.bind(M);
     M._bib_wheel = (x, y, dx, dy, mods) => {
       B.wheelCalls++;
@@ -265,9 +301,33 @@ export function installBench() {
  * missed. Stamps the first presented frame and — given a watch spec — the
  * first frame whose framebuffer actually carries the target page's
  * verification pixel (engine startup vs the page becoming visible).
+ * Hooks whichever the viewer creates first: `__bs` (worker-hosted viewer,
+ * observe via onFrame) or a page-side `Module` (older artifacts).
  * @param {{x:number,y:number,rgb:number[],tol?:number}|null} watch
  */
 export function bootProbe(watch) {
+  const tol = watch?.tol ?? 6;
+  const matches = (px) => Math.abs(px[0] - watch.rgb[0]) <= tol && Math.abs(px[1] - watch.rgb[1]) <= tol
+    && Math.abs(px[2] - watch.rgb[2]) <= tol;
+  let bsValue;
+  Object.defineProperty(window, '__bs', {
+    configurable: true,
+    get: () => bsValue,
+    set(v) {
+      bsValue = v;
+      if (v && typeof v.onFrame === 'function' && !v.__benchBootWrapped) {
+        v.__benchBootWrapped = true;
+        v.onFrame(({ band, fbW, fbH, stride, y, h }) => {
+          if (window.__benchFirstFrameMs == null) window.__benchFirstFrameMs = performance.now();
+          if (watch && window.__benchWatchMs == null && watch.x < fbW && watch.y < fbH
+              && watch.y >= y && watch.y < y + h) {
+            const off = (watch.y - y) * stride + watch.x * 4;
+            if (matches(band.subarray(off, off + 3))) window.__benchWatchMs = performance.now();
+          }
+        });
+      }
+    },
+  });
   let value;
   Object.defineProperty(window, 'Module', {
     configurable: true,
@@ -281,14 +341,9 @@ export function bootProbe(watch) {
           if (window.__benchFirstFrameMs == null) window.__benchFirstFrameMs = performance.now();
           if (watch && window.__benchWatchMs == null) {
             try {
-              if (watch.x < fbW && watch.y < fbH) {
-                const off = ptr + watch.y * stride + watch.x * 4;
-                const px = new Uint8Array(v.HEAPU8.buffer, off, 3);
-                const tol = watch.tol ?? 6;
-                if (Math.abs(px[0] - watch.rgb[0]) <= tol && Math.abs(px[1] - watch.rgb[1]) <= tol
-                    && Math.abs(px[2] - watch.rgb[2]) <= tol)
-                  window.__benchWatchMs = performance.now();
-              }
+              if (watch.x < fbW && watch.y < fbH
+                  && matches(new Uint8Array(v.HEAPU8.buffer, ptr + watch.y * stride + watch.x * 4, 3)))
+                window.__benchWatchMs = performance.now();
             } catch (e) { /* heap grew; next frame re-reads */ }
           }
           return raw.apply(this, arguments);

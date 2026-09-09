@@ -9,12 +9,18 @@ import { RedirectCapture, setCookiesOf } from '../../src/shim/redirect-capture.m
 const ORIGIN = 'chrome-extension://abcd';
 const URL_A = 'https://app.example/a';
 
-function fakeChrome() {
+// Chrome shape by default: `initiator` on details, 'extraHeaders' advertised
+// (and required — without it Chrome hides Set-Cookie). firefox: true models
+// Firefox — no extraHeaders option (the string is rejected there), the
+// requesting page named by `originUrl` instead of `initiator`.
+function fakeChrome({ firefox = false } = {}) {
   const listeners = { onHeadersReceived: [], onBeforeRedirect: [] };
   const event = (k) => ({
     addListener: (fn, filter, extra) => {
       assert.deepEqual(filter.types, ['xmlhttprequest']);
-      assert.ok(extra.includes('responseHeaders') && extra.includes('extraHeaders'));
+      assert.ok(extra.includes('responseHeaders'));
+      if (firefox) assert.ok(!extra.includes('extraHeaders'), 'Firefox rejects extraHeaders');
+      else assert.ok(extra.includes('extraHeaders'));
       listeners[k].push(fn);
     },
     removeListener: (fn) => {
@@ -22,15 +28,20 @@ function fakeChrome() {
       if (i >= 0) listeners[k].splice(i, 1);
     },
   });
+  const who = firefox ? { originUrl: `${ORIGIN}/ext/viewer.html?url=x` } : { initiator: ORIGIN };
   return {
-    webRequest: { onHeadersReceived: event('onHeadersReceived'), onBeforeRedirect: event('onBeforeRedirect') },
-    fire: (k, details) => listeners[k].slice().forEach((fn) => fn({ initiator: ORIGIN, ...details })),
+    webRequest: {
+      onHeadersReceived: event('onHeadersReceived'),
+      onBeforeRedirect: event('onBeforeRedirect'),
+      ...(firefox ? {} : { OnHeadersReceivedOptions: { EXTRA_HEADERS: 'extraHeaders' } }),
+    },
+    fire: (k, details) => listeners[k].slice().forEach((fn) => fn({ ...who, ...details })),
     listenerCount: () => listeners.onHeadersReceived.length + listeners.onBeforeRedirect.length,
   };
 }
 
-const started = () => {
-  const chrome = fakeChrome();
+const started = (opts) => {
+  const chrome = fakeChrome(opts);
   const capture = new RedirectCapture();
   capture.start(ORIGIN, chrome);
   return { chrome, capture };
@@ -56,6 +67,27 @@ test('server redirect: exactly one entry, resolved Location + hop Set-Cookie', a
   assert.equal(h.location, 'https://app.example/final', 'relative Location resolved');
   assert.equal(entry.headers.filter(([k]) => k === 'location').length, 1);
   assert.equal(await capture.take(URL_A, 10), null, 'one fetch, one entry');
+});
+
+// Firefox never fires onBeforeRedirect for a redirect:'error' fetch (verified
+// 2026-09-09, Firefox 155): the 3xx must be complete from onHeadersReceived
+// alone, with the Location as the server sent it.
+test('firefox: a server redirect is complete from onHeadersReceived alone', async () => {
+  const { chrome, capture } = started({ firefox: true });
+  chrome.fire('onHeadersReceived', {
+    requestId: '1', url: URL_A, statusCode: 302,
+    responseHeaders: hdrs({ 'Set-Cookie': 'hop=2; Path=/', Location: '/final' }),
+  });
+  const entry = await capture.take(URL_A, 10);
+  assert.equal(entry.status, 302);
+  assert.deepEqual(setCookiesOf(entry), ['hop=2; Path=/']);
+  assert.equal(Object.fromEntries(entry.headers).location, '/final');
+  assert.equal(await capture.take(URL_A, 10), null, 'one fetch, one entry');
+  // Another extension page's fetch (originUrl elsewhere) is not ours.
+  chrome.fire('onHeadersReceived', {
+    originUrl: 'moz-extension://other/x.html', requestId: '2', url: URL_A, statusCode: 200, responseHeaders: [],
+  });
+  assert.equal(await capture.take(URL_A, 10), null);
 });
 
 test('stack-synthesized redirect (HSTS/DNR): onBeforeRedirect alone still yields an entry', async () => {

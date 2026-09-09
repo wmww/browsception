@@ -1,9 +1,11 @@
 // Frame presentation for the viewer (graduated from spike 0.4 — numbers in
-// notes/open-questions.md #10): WebGL2 texSubImage2D straight from the
-// wasm-heap SAB view — ~0.7 ms/full 1080p frame even on SwiftShader — with
-// putImageData as the compat fallback. Dirty boxes upload as a full-width row
-// band (contiguous, single texSubImage2D; the band upload is the 6-15x win and
-// column cropping isn't worth a staging copy).
+// notes/open-questions.md #10): WebGL2 texSubImage2D of the dirty band —
+// ~0.7 ms/full 1080p frame even on SwiftShader — with putImageData as the
+// compat fallback. The engine worker hands over one transferable buffer per
+// frame holding the full-width dirty rows [y0, y0+rows) (contiguous, single
+// texSubImage2D; the band upload is the 6-15x win and column cropping isn't
+// worth a staging copy). Both paths copy at call time, so the caller may hand
+// the buffer straight back to the worker when present() returns.
 //
 // The engine owns framebuffer geometry (bibFrame carries fbW/fbH): present()
 // re-sizes/recreates on change (WebGL2 texStorage2D is immutable).
@@ -56,8 +58,6 @@ class WebGL2Presenter {
     this.tex = null;
     this.fbW = 0;
     this.fbH = 0;
-    this.sabDirect = true;
-    this.scratch = null;
   }
 
   #ensureSize(fbW, fbH) {
@@ -77,39 +77,13 @@ class WebGL2Presenter {
     this.canvas.width = fbW;
     this.canvas.height = fbH;
     gl.viewport(0, 0, fbW, fbH);
-    this.dirtyFull = true; // fresh texture: first upload must be everything
   }
 
-  /** heap: Uint8Array over the whole wasm heap (SAB). Geometry per bibFrame. */
-  present(heap, ptr, fbW, fbH, strideBytes, dirtyY, dirtyH) {
+  /** band: RGBA8 rows [y0, y0+rows) of an fbW-wide frame (stride fbW*4). */
+  present(band, fbW, fbH, y0, rows) {
     const gl = this.gl;
     this.#ensureSize(fbW, fbH);
-    let y0 = dirtyY;
-    let rows = dirtyH;
-    if (this.dirtyFull || strideBytes !== fbW * 4) {
-      y0 = 0;
-      rows = fbH;
-      this.dirtyFull = false;
-    }
-    const byteOff = ptr + y0 * strideBytes;
-    const byteLen = rows * strideBytes;
-    let view = new Uint8Array(heap.buffer, byteOff, byteLen);
-    if (this.sabDirect) {
-      try {
-        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, y0, fbW, rows, gl.RGBA, gl.UNSIGNED_BYTE, view);
-      } catch {
-        this.sabDirect = false;
-      }
-    }
-    if (!this.sabDirect) {
-      if (!this.scratch || this.scratch.length < byteLen)
-        this.scratch = new Uint8Array(fbW * fbH * 4);
-      this.scratch.set(view);
-      gl.texSubImage2D(
-        gl.TEXTURE_2D, 0, 0, y0, fbW, rows, gl.RGBA, gl.UNSIGNED_BYTE,
-        this.scratch.subarray(0, byteLen),
-      );
-    }
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, y0, fbW, rows, gl.RGBA, gl.UNSIGNED_BYTE, band);
     gl.uniform2f(this.uCanvasSize, this.canvas.width, this.canvas.height);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
@@ -126,20 +100,13 @@ class Canvas2DPresenter {
     if (!this.ctx) throw new Error('2d context unavailable');
   }
 
-  present(heap, ptr, fbW, fbH, strideBytes, dirtyY, dirtyH) {
+  present(band, fbW, fbH, y0, rows) {
     if (this.canvas.width !== fbW || this.canvas.height !== fbH) {
       this.canvas.width = fbW;
       this.canvas.height = fbH;
-      dirtyY = 0;
-      dirtyH = fbH; // resize cleared the canvas
     }
-    // ImageData rejects SAB-backed views: copy the band out.
-    const pixels = new Uint8ClampedArray(dirtyH * fbW * 4);
-    for (let row = 0; row < dirtyH; row++) {
-      const src = ptr + (dirtyY + row) * strideBytes;
-      pixels.set(new Uint8Array(heap.buffer, src, fbW * 4), row * fbW * 4);
-    }
-    this.ctx.putImageData(new ImageData(pixels, fbW, dirtyH), 0, dirtyY);
+    const pixels = new Uint8ClampedArray(band.buffer, band.byteOffset, rows * fbW * 4);
+    this.ctx.putImageData(new ImageData(pixels, fbW, rows), 0, y0);
   }
 
   dispose() {}

@@ -7,9 +7,10 @@
 // Scenarios here: 7 render, 8 execute, 9 input, 10 navigation chrome, 11
 // invariants, 12 crash/recovery, 13 startup budget, 14 resize, 15 guest
 // WebSocket, 16 engine-side load failure, 17 view transitions absent, 19
-// positional-input coalescing, 20 sticky-chrome scroll, 21 present
-// coherence, 22 guest wasm shim + media stubs (18 HiDPI has its own file —
-// dpr is a browser-launch property).
+// positional-input coalescing, 20 sticky-chrome scroll, 22 guest wasm shim +
+// media stubs (18 HiDPI has its own file — dpr is a browser-launch property;
+// 21 present coherence was retired with the shared-heap present: the worker
+// copies the band out synchronously, so nothing can race it).
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -367,80 +368,6 @@ test('sticky chrome: scroll keeps its distance and the fixed elements stay put',
   await page.close();
 });
 
-// --- Scenario 21: present coherence ----------------------------------------
-// The bibFrame contract (ABI): fbPtr is a snapshot the engine must not touch
-// until the handler returns (_bib_present_done). When the present read the
-// LIVE framebuffer instead, an upload overlapping bibScrollBlit's bottom-up
-// memmove spliced two scroll positions into one frame — the scroll-up
-// duplicated-band glitch (wikipedia, 2026-08-15). Recipe that reproduced it
-// ~60% of presents pre-fix: wheel events dispatched in-page at trackpad rate
-// (CDP-driven wheels are too slow — the engine idles between presents), and
-// a present handler that takes realistic GPU-upload time (paced multi-ms
-// read; headless SwiftShader's own read is too fast to overlap anything).
-// The tripwire: the pushed band, read slowly during the handler, must be
-// byte-identical to the same band right after — any drift means the engine
-// mutated an in-flight frame.
-test('present coherence: the pushed frame band never mutates mid-present', { timeout: 300000 }, async () => {
-  const page = await bootViewer('https://scroll-sticky.bstest/');
-  await until(page, 4, 4, is([0, 0, 128]), 120000, 'sticky fixture at top');
-
-  await page.evaluate(() => {
-    const orig = Module.bibFrame;
-    const spin = (ms) => { const t0 = performance.now(); while (performance.now() - t0 < ms) {} };
-    window.__coh = { presents: 0, torn: 0 };
-    let buf1 = null, buf2 = null;
-    Module.bibFrame = function (ptr, fbW, fbH, strideBytes, x, y, w, h) {
-      const heap = new Uint8Array(Module.HEAPU8.buffer);
-      const off = ptr + y * strideBytes, len = h * strideBytes;
-      if (!buf1 || buf1.length < len) { buf1 = new Uint8Array(len); buf2 = new Uint8Array(len); }
-      const SL = 16, sliceRows = Math.ceil(h / SL);
-      for (let s = 0; s < SL; s++) {
-        const r0 = s * sliceRows, r1 = Math.min(h, r0 + sliceRows);
-        if (r0 >= r1) break;
-        buf1.set(heap.subarray(off + r0 * strideBytes, off + r1 * strideBytes), r0 * strideBytes);
-        spin(3 / SL);
-      }
-      const r = orig.apply(this, arguments);
-      buf2.set(new Uint8Array(Module.HEAPU8.buffer).subarray(off, off + len));
-      window.__coh.presents++;
-      for (let row = 0; row < h; row++) {
-        const ro = row * strideBytes;
-        for (let i = 0; i < fbW * 4; i += 32) {
-          if (buf1[ro + i] !== buf2[ro + i] || buf1[ro + i + 1] !== buf2[ro + i + 1]) {
-            window.__coh.torn++;
-            return r;
-          }
-        }
-      }
-      return r;
-    };
-    window.__cohDrive = async (ticks, delta) => {
-      const cv = document.getElementById('screen');
-      const rect = cv.getBoundingClientRect();
-      const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
-      for (let i = 0; i < ticks; i++) {
-        cv.dispatchEvent(new WheelEvent('wheel', { deltaY: delta, clientX: cx, clientY: cy, bubbles: true, cancelable: true }));
-        await new Promise((res) => setTimeout(res, 2));
-      }
-    };
-  });
-
-  // down into the page, then the glitch gesture: fast scroll-up bursts
-  await page.evaluate(() => window.__cohDrive(150, 120));
-  await page.waitForTimeout(300);
-  await page.evaluate(() => window.__cohDrive(200, -60));
-  await page.waitForTimeout(300);
-  await page.evaluate(() => window.__cohDrive(200, 60));
-  await page.waitForTimeout(300);
-  await page.evaluate(() => window.__cohDrive(200, -60));
-  await page.waitForTimeout(400);
-
-  const r = await page.evaluate(() => window.__coh);
-  assert.ok(r.presents >= 20, `too few presents to trust the tripwire (${r.presents})`);
-  assert.equal(r.torn, 0, `${r.torn}/${r.presents} presents saw the band mutate mid-present`);
-  await page.close();
-});
-
 // --- Scenario 14: resize ---------------------------------------------------
 test('resize: canvas fills the window; framebuffer follows resizes; input stays aligned', { timeout: 300000 }, async () => {
   const page = await bootViewer('https://grid.bstest/');
@@ -497,16 +424,17 @@ test('resize: canvas fills the window; framebuffer follows resizes; input stays 
 test('crash: engine abort -> crashed UI -> reload recovers', { timeout: 300000 }, async () => {
   const page = await bootViewer('https://grid.bstest/');
   await until(page, 100, 100, is([255, 0, 0]), 120000, 'pre-crash paint');
-  await page.evaluate(() => Module._bib_crash());
+  await page.evaluate(() => __bs.crash());
   await page.waitForFunction(() => __bs.dead === true, undefined, { timeout: 30000 });
   const boot = await page.evaluate(() => document.getElementById('boot').textContent);
   assert.match(boot, /crashed/i);
-  // Crash triage: engine-pre.js's worker-side onAbort runs synchronously inside
-  // abort(), so its stack still names the engine's C++ frames (wasm name
-  // section). Without it, a RELEASE_ASSERT is an unattributable "Aborted()".
+  // Crash triage: engine-pre.js's onAbort runs synchronously inside abort()
+  // in the engine worker, so its stack still names the engine's C++ frames
+  // (wasm name section); the worker forwards the line to this page's console.
+  // Without it, a RELEASE_ASSERT is an unattributable "Aborted()".
   const stack = page.consoleLines.find((l) => l.includes('engine abort stack'));
   assert.ok(stack, `abort stack logged: ${page.consoleLines.slice(-5).join(' | ')}`);
-  assert.match(stack, /embedder\.wasm.*bibRunCrash/s, `stack names engine frames: ${stack.slice(0, 400)}`);
+  assert.match(stack, /embedder\.wasm[.:].*crash/is, `stack names engine frames: ${stack.slice(0, 400)}`);
   await page.reload();
   await page.waitForFunction(() => globalThis.__bs?.ready, undefined, { timeout: BOOT_TIMEOUT });
   await until(page, 100, 100, is([255, 0, 0]), 120000, 'post-reload paint');
@@ -767,8 +695,9 @@ test('scheme gates: a non-http(s) ?url= target never boots the engine', { timeou
       15000,
     );
     assert.match(strip, /only http\(s\) URLs/, `${target}: ${strip}`);
-    // No engine at all: the refusal happens before the embedder script loads.
-    assert.equal(await page.evaluate(() => !!globalThis.Module), false, `${target}: engine never loaded`);
+    // No engine at all: the refusal happens before the worker is created
+    // (the __bs hook is only built once the target passed the gate).
+    assert.equal(await page.evaluate(() => !!globalThis.__bs), false, `${target}: engine never loaded`);
     assert.ok(page.url().startsWith(`chrome-extension://${EXT_ID}/`), `${target}: tab stays extension-origin`);
     await page.close();
   }
@@ -852,9 +781,11 @@ test('scheme gates: a guest cannot steer the real tab at a non-http(s) URL', { t
     // the curl-less port: there is no local-file backend left to hit.)
     ['link click', "document.getElementById('filelink').click()", /file:\/\/\/etc\/passwd.*engine refused it.*Not allowed to load local resource/],
     ['location assign', "location.href = 'file:///etc/passwd'", /file:\/\/\/etc\/passwd.*engine refused it.*Not allowed to load local resource/],
-    // A 302 to file: never becomes a hop either: the host fetch refuses the
-    // unsafe redirect, so the capture sees no 3xx and the load just fails.
-    ['302 hop to file:', "location.href = '/redir-file'", /hostile\.bstest\/redir-file.*network error/],
+    // A 302 to file: the host fetch refuses the unsafe redirect, but the
+    // capture already took the 3xx at onHeadersReceived (the only event
+    // Firefox fires), so the engine sees the hop and refuses the scheme
+    // itself — same outcome on both browsers.
+    ['302 hop to file:', "location.href = '/redir-file'", /hostile\.bstest\/redir-file.*engine refused it.*unsupported scheme/i],
     // These two DO reach the bridge as main loads, so they are what the
     // http(s) precondition on the native-handoff branch actually stops.
     ['ftp assign', "location.href = 'ftp://hostile.bstest/x'", /ftp:\/\/hostile\.bstest\/x.*blocked by the sandbox guard.*scheme:ftp/],

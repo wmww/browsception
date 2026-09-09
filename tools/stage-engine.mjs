@@ -22,6 +22,11 @@
 //                            wt-setup on every pretest to self-heal.
 //   --list                   inventory of snapshots: identity, whether each
 //                            matches this checkout, which one is staged.
+//   --allow-proxy            stage a -sPROXY_TO_PTHREAD artifact (meta.json
+//                            "link": "proxy", or no "link" — pre-split
+//                            snapshots). Refused otherwise: the viewer hosts
+//                            the plain link in a Worker and cannot drive a
+//                            proxy build (notes/engine.md § build shape).
 //
 // Every staging action prints the artifact's identity (stamp, branch, checkout,
 // source_hash): an A/B run once measured a neighbour's engine because stamps
@@ -46,6 +51,7 @@ const fromIdx = process.argv.indexOf('--from');
 const fromArg = fromIdx >= 0 ? process.argv[fromIdx + 1] : null;
 const ifStale = process.argv.includes('--if-stale');
 const listMode = process.argv.includes('--list');
+const allowProxy = process.argv.includes('--allow-proxy');
 
 const readJson = (p) => {
   try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return {}; }
@@ -55,6 +61,13 @@ const snapshotHashes = (dir) => {
   const m = readMeta(dir);
   return [m.source_hash, ...(m.also_source_hashes ?? [])].filter(Boolean);
 };
+// Link mode of a snapshot. Snapshots from before the split carry only
+// "pthread", which then meant the proxy link.
+const linkOf = (dir) => {
+  const m = readMeta(dir);
+  return m.link ?? (m.pthread === 0 || m.pthread === false ? 'plain' : 'proxy');
+};
+const stageable = (dir) => allowProxy || linkOf(dir) === 'plain';
 const snapshots = () => {
   try {
     return readdirSync(ARTIFACTS)
@@ -102,6 +115,7 @@ if (listMode) {
     const marks = [
       isStagedFrom(d) ? 'staged' : null,
       snapshotHashes(d).includes(hash) ? 'matches-this-checkout' : null,
+      linkOf(d) === 'proxy' ? 'proxy-link' : null,
     ].filter(Boolean).join(', ');
     console.log(`  ${prefix}${basename(d)}  branch=${m.branch ?? '?'} checkout=${basename(m.checkout ?? '?')}` +
       ` source_hash=${m.source_hash ?? '?'} webkit_patch=${(m.webkit_patch ?? '?').slice(0, 12)}` +
@@ -126,7 +140,7 @@ function stageOnce() {
   let src, mode, warning = null;
   if (fromArg) {
     if (fromArg === 'mine') {
-      src = snapshots().find((d) => readMeta(d).checkout === checkoutRoot);
+      src = snapshots().find((d) => readMeta(d).checkout === checkoutRoot && stageable(d));
       if (!src) {
         console.error(`no snapshot was built from this checkout (${basename(checkoutRoot)}) — see --list`);
         process.exit(1);
@@ -139,9 +153,14 @@ function stageOnce() {
     if (m.checkout && m.checkout !== checkoutRoot)
       console.warn(`note: pinning ${basename(m.checkout)}'s artifact` +
         ` (branch ${m.branch ?? '?'}, source_hash ${m.source_hash ?? '?'})`);
+    if (existsSync(join(src, 'meta.json')) && !stageable(src)) {
+      console.error(`${basename(src)} is a proxy-link (SAB/pthread) artifact — the extension cannot host it.` +
+        ` Build the plain link (bash tools/build-engine.sh) or pass --allow-proxy for the dev harness.`);
+      process.exit(1);
+    }
   } else {
     const hash = engineSrcHash(checkoutRoot);
-    const match = snapshots().find((d) => snapshotHashes(d).includes(hash));
+    const match = snapshots().find((d) => snapshotHashes(d).includes(hash) && stageable(d));
     if (match) {
       src = match;
       mode = 'link';
@@ -149,8 +168,10 @@ function stageOnce() {
       if (!ifStale)
         console.log(`staged copy still matches these sources (snapshot ${readJson(STAGED_META).stamp ?? '?'} pruned) — keeping it`);
       return;
-    } else if (existsSync(join(ARTIFACTS, 'latest/embedder.wasm'))) {
-      src = realpathSync(join(ARTIFACTS, 'latest'));
+    } else if (snapshots().find(stageable)) {
+      // Newest stageable snapshot, whoever built it (latest may be a proxy
+      // artifact from a --proxy build).
+      src = snapshots().find(stageable);
       mode = 'link';
       const m = readMeta(src);
       warning = (
@@ -196,19 +217,20 @@ function stageOnce() {
     console.log(`staged ${f} (${(statSync(d).size / 1048576).toFixed(1)} MB, ${mode} from ${basename(src)})`);
   }
 
-  // Threading-mode stamp: the dev harness (web/browser.html) reads it from the
-  // /engine mount before picking #screen's context. Snapshots made before it was
+  // Link-mode stamp: the dev harness (web/browser.html) reads it from the
+  // /engine mount to decide who pumps. Snapshots made before it was
   // snapshotted don't carry the file — meta.json records the same bit, so
   // synthesize it rather than letting the harness fall back to its default.
   {
     const d = join(OUT, CONFIG);
     rmSync(d, { force: true });
-    if (existsSync(join(src, CONFIG))) {
+    if (existsSync(join(src, CONFIG)) && readFileSync(join(src, CONFIG), 'utf8').includes('BIB_BUILD_CONFIG')) {
       copyFileSync(join(src, CONFIG), d);
     } else {
-      const pthread = readMeta(src).pthread;
-      writeFileSync(d, `// Synthesized by tools/stage-engine.mjs from ${basename(src)}/meta.json.\n` +
-        `window.BIB_PTHREAD_BUILD = ${pthread === undefined ? true : !!pthread};\n`);
+      const link = mode === 'link' ? linkOf(src) : 'plain';
+      writeFileSync(d, `// Synthesized by tools/stage-engine.mjs from ${basename(src)}.\n` +
+        `globalThis.BIB_BUILD_CONFIG = { link: ${JSON.stringify(link)} };\n` +
+        `globalThis.BIB_PTHREAD_BUILD = ${link === 'proxy'};\n`);
     }
   }
 
@@ -218,6 +240,7 @@ function stageOnce() {
   writeFileSync(STAGED_META, JSON.stringify({
     stamp: basename(src),
     source_hashes: mode === 'link' ? snapshotHashes(src) : [],
+    link: mode === 'link' ? linkOf(src) : 'plain',
     ...(fromArg ? { pinned: true } : {}),
   }, null, 2) + '\n');
   console.log(identityLine(src, mode) + (fromArg ? ' [PINNED]' : ''));

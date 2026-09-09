@@ -96,10 +96,12 @@ Decided at 1.1 (ABI: src/abi/bib_abi.h), revising the earlier SAB-ring/Atomics-b
   (`didReceiveResponse/Buffer/FinishLoading/Fail`) is already fully async, and sync XHR is already
   unsupported in this embedder (`loadResourceSynchronously` errors). Blocking on Atomics would add
   deadlock risk (the embedder treats blocking cross-thread calls as forbidden) for zero benefit.
-- Request out: engine → `bibNetBegin(reqJson)` hook on the page. Response in: shim allocates in
-  the (shared) wasm heap via `bib_wasm_alloc`, writes headers JSON / body chunks, and calls
-  `bib_net_response` / `bib_net_data` / `bib_net_done|fail|redirect` — exports that self-proxy to
-  the engine thread with ownership transfer. No extra SAB: the wasm heap *is* shared memory.
+- Request out: engine → `bibNetBegin(reqJson)` hook in the engine worker, which parses it,
+  copies the body out and posts `{req, body}` to the bridge on the main thread. Response in: the
+  bridge calls the link's `netResponse/netData/netDone/netFail/netRedirect` (strings and
+  `Uint8Array`s; chunks are transferred), and the worker allocates in the heap via
+  `bib_wasm_alloc`, copies, and calls the matching `bib_net_*` export with ownership transfer.
+  One copy per byte, no shared memory (src/shim/bridge.mjs header for the interface).
 - Backpressure: engine acks consumed chunks via `bibNetAck(id, bytes)`; the shim pauses its
   `response.body` reader when a request has ≥ `NET_WINDOW_BYTES` (4 MB) unacked in flight, so a
   fast server can't OOM the engine. Delivery is sliced to ≤64 KB per `bib_net_data` call (bounded

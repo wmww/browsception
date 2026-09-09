@@ -44,10 +44,11 @@ add a row here (working agreement).
 | `bibReady` | Boot signal (no args) |
 | `bibWakeUp` / `bibArmTimer` | Schedule its own execution (worker-scope; CPU consumption only) |
 
-`bib_wasm_alloc/free` are host→engine-heap only and callable by the shim, not capabilities of the
-engine. The engine also implicitly holds: Emscripten runtime imports (clock, math, pthread
-machinery), Atomics/SAB on its own heap, and proxied-call queues — platform surface shared by any
-pthread wasm module.
+`bib_wasm_alloc/free` are host→engine-heap only and callable by the worker host, not capabilities
+of the engine. The engine also implicitly holds: Emscripten runtime imports (clock, math) and the
+worker's `postMessage` to the viewer — every message is parsed by `engine-link.mjs` into one of
+the hooks above, so the message channel adds no capability the table doesn't list. No
+SharedArrayBuffer, no Atomics on shared memory, no proxied-call queue (2026-09-09).
 
 ## What an owned engine can do (residual risk)
 
@@ -62,10 +63,12 @@ pthread wasm module.
   "tab crashed" and offers reload — never auto-loops).
 - Persist data in its OPFS namespace (quota-capped).
 - Exploit the residual host surface it can still reach *through* the shim: the host's fetch stack
-  (URL parsing, HTTP), canvas/WebGL texture upload, structured-clone/postMessage, Atomics/SAB,
-  AudioWorklet (later). This is the honest accounting of "layer two": tiny compared to a full web
-  platform, but not zero. Spectre-class side channels from wasm also remain (we run with
-  cross-origin isolation, which is the platform's mitigation posture).
+  (URL parsing, HTTP), canvas/WebGL texture upload, structured-clone/postMessage (transferred
+  ArrayBuffers), AudioWorklet (later). This is the honest accounting of "layer two": tiny compared
+  to a full web platform, but not zero. Spectre-class side channels from wasm also remain; on
+  Chrome the viewer is still cross-origin isolated (manifest COOP/COEP kept), on Firefox extension
+  pages cannot be — and with no SharedArrayBuffer there is no high-resolution timer to hand the
+  engine either way.
 
 ## Deliberate non-features (attack-surface decisions, final unless revisited explicitly)
 
@@ -98,10 +101,10 @@ The shim never re-implements web security; it implements *capability* security.
 - Phishing consideration: our viewer intentionally looks like a browser. The real omnibox showing
   `chrome-extension://` is actually a mitigation here (can't spoof arbitrary real sites at the
   top level). Fake URL bar must always display the engine's true URL.
-- Mode B (stay-on-origin, Firefox-later) weakens isolation: viewer runs in the target origin →
-  site's previously-registered service workers could hijack (must unregister + clear storage on
-  entry), other extensions' content scripts run there, origin credentials ambient. Documented in
-  architecture.md; extension-page mode remains primary partly for this reason.
+- A stay-on-origin viewer ("mode B", once planned for Firefox) would weaken isolation: viewer in
+  the target origin → the site's previously-registered service workers could hijack, other
+  extensions' content scripts run there, origin credentials ambient. Rejected 2026-09-09
+  (architecture.md); the extension-page viewer is the only mode on both browsers.
 
 ### Sandbox→host sinks: only http(s) crosses
 
@@ -136,8 +139,10 @@ what can reach it (tier-2 `scheme gates` scenario):
   `canDisplay` refuses it ("Not allowed to load local resource"). The fork-era `file:`/MEMFS
   finding is structurally closed twice over: the curl-less port has no local-file backend, so
   `file:` would only be a bridge request, and the bridge would deny it.
-- A `302` to `file:` never becomes a hop either: the host `fetch` refuses the unsafe redirect, the
-  capture sees no 3xx, and the load fails as a network error.
+- A `302` to `file:` reaches the engine as a redirect hop (the capture takes the 3xx at
+  `onHeadersReceived` — the only event Firefox fires; the host `fetch` refuses to follow it) and
+  the engine refuses the scheme itself ("Redirect to unsupported scheme"): a refusal strip, no
+  host-world sink involved, on both browsers.
 - `ftp:` and unknown schemes (`bsx://…`) **do** arrive at the bridge as main loads — those are what
   the precondition actually stops today, and they are what the test pins.
 

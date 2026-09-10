@@ -32,11 +32,25 @@ Two modes: **whitelist** (default — everything runs sandboxed except domains y
 | `src/` | The extension (unpacked root): viewer, service worker, popup/options, engine shim |
 | `src/abi/` | The C ⇄ JS ABI contract (`bib_abi.h` + mirrored `abi.mjs`) |
 | `engine/WebkitWasm/` | The engine: embedder C++, WebKit patch, build scripts, dev harness |
-| `scripts/` | Engine build/staging, extension generation, real-site smoke tests |
+| `scripts/` | Engine build/staging, extension generation + release packaging, real-site smoke tests |
 | `test/` | Tiered suites: tier 0–1 headless (no engine), tier 2 against the real engine |
 | `notes/` | Design docs and distilled project knowledge |
 
 ## Building & running
+
+**Release packages**, from a fresh clone, for both browsers:
+
+```sh
+npm run release                  # or release:chrome / release:firefox
+```
+
+That runs every step below in order and skips the ones already done, so re-running it after a
+JS-only change takes seconds and never rebuilds the engine. Out come `dist/chrome/` +
+`dist/firefox/` (loadable unpacked) and `dist/browsception-<version>-chrome.zip` /
+`-firefox.xpi` (byte-reproducible archives). The first run on a machine with no engine build
+costs the ~1.5 h / ~12 GB below.
+
+**Step by step**, which is also the dev loop:
 
 ```sh
 bash scripts/build-engine.sh     # one-time ~1.5 h: fetches pinned WebKit + emsdk,
@@ -44,6 +58,7 @@ bash scripts/build-engine.sh     # one-time ~1.5 h: fetches pinned WebKit + emsd
 node scripts/stage-engine.mjs    # hardlink engine artifacts into src/engine/
 node scripts/gen-ext.mjs         # generate manifest + DNR rulesets
 # then load src/ as an unpacked extension (chrome://extensions, Developer mode)
+node scripts/pack-ext.mjs firefox   # Firefox needs its own manifest: dist/firefox/
 ```
 
 Tests: `npm test` (headless tiers, no engine needed), `npm run test:tier2` (against the

@@ -32,6 +32,7 @@ surface for speed (no WebGPU for the nested engine, no nested-wasm-runs-natively
 | [rendering-input.md](rendering-input.md) | Blit paths, input forwarding, IME, find-in-page, clipboard, audio, popups |
 | [security.md](security.md) | Threat model, trust boundaries, what we must enforce ourselves |
 | [testing.md](testing.md) | Automated test tiers (unit/bridge/full-integration), fixture+oracle design, agent iteration loop |
+| [release.md](release.md) | Release packaging: the `npm run release` step chain and its fast paths, what each browser's package contains, the deterministic zip writer |
 | [worktrees.md](worktrees.md) | Ephemeral-worktree workflow: wt-setup, building your branch's engine sources against the shared tree, WebKit-patch ownership, artifact snapshots, per-checkout ports |
 | [open-questions.md](open-questions.md) | Unverified assumptions and spikes to run (answers appended in place) |
 | [experiment-log.md](experiment-log.md) | Append-only lab notebook: dated entries (hypothesis → what ran → numbers → decision) behind the distilled notes |
@@ -249,7 +250,7 @@ synchronously and returns `true` to own `_bib_present_done`, so one-frame-in-fli
 backpressure follows the real present across the hop), network bytes transferred in and copied
 into the heap by the worker — same copy count as the shared heap had. The bridge and the
 tier-1 stub became a bytes/strings interface (`heap.mjs` deleted). Firefox then needed only
-manifest generation (`scripts/lib/manifest.mjs`, `scripts/pack-firefox.mjs` → `dist/firefox/`) plus
+manifest generation (`scripts/lib/manifest.mjs`, `scripts/pack-ext.mjs` → `dist/firefox/`) plus
 three feature-detected differences: the catch-all is a **dynamic** rule there (per-profile UUID),
 `onHeadersReceived` alone delivers the 3xx (no `onBeforeRedirect` under `redirect:'error'`), and
 `originUrl`/no-`extraHeaders` in the capture. Probed 2026-09-09 on Firefox 155 (open-questions #13):
@@ -269,8 +270,17 @@ scenarios, the HSTS one made possible by trusting the fixture CA for real in the
 (pkix refuses the old self-signed `*.bstest` leaf). Details: extension-platform.md § Firefox,
 networking.md § redirect capture, experiment-log.md.
 
+*One release command per browser* (2026-09-09) — `npm run release [chrome|firefox]`
+(scripts/release.mjs) takes a fresh clone to `dist/browsception-<version>-chrome.zip` /
+`-firefox.xpi`. It orchestrates only: build-engine → wt-setup → stage-engine → gen-ext →
+pack-ext → zip, each already idempotent, so a re-run is ~7 s and never rebuilds the engine.
+`pack-firefox.mjs` generalized to `pack-ext.mjs <target>` (dist/chrome/ too — it drops
+Chrome's own `_metadata/`), and `scripts/lib/zip.mjs` writes reproducible archives with no npm
+dep and no `zip` binary. [release.md](release.md).
+
 Open issues in issues/ (guest-JS wedge, rcap dynamic budget, host-present ceiling at large
-framebuffers, CLoop `join` returned a non-string). Next work: [roadmap.md](roadmap.md).
+framebuffers, CLoop `join` returned a non-string, Firefox tier-2 crash-reload scenario). Next
+work: [roadmap.md](roadmap.md).
 
 ## Key decisions
 

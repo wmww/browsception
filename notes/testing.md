@@ -75,7 +75,7 @@ Tier-2 scenario 12 asserts both halves (crashed UI *and* a named stack).
 
 ### Launch recipes
 - **CI / programmatic**: Chromium `--headless=new` (supports extensions) driven by Playwright or
-  raw CDP: `--load-extension=dist/ --user-data-dir=<tmp> --no-first-run --host-resolver-rules=…`.
+  raw CDP: `--load-extension=src/ --user-data-dir=<tmp> --no-first-run --host-resolver-rules=…`.
   One browser boot per suite, fresh profile per test where isolation matters.
   (Verify headless=new extension + DNR + COOP/COEP behavior early — open-questions #19.)
   Use the **full system chromium**, never Playwright's bundled `chromium-headless-shell`: the
@@ -83,7 +83,7 @@ Tier-2 scenario 12 asserts both halves (crashed UI *and* a named stack).
   first composite (fork-era finding; harness artifact, not an engine bug).
 - **Firefox**: `test/harness/firefox.mjs` — system Firefox headless over WebDriver BiDi (no
   dependency; Playwright can't install Firefox extensions), extension from `dist/firefox/`
-  (`scripts/pack-firefox.mjs`), fixtures via `network.dns.localDomains` +
+  (`scripts/pack-ext.mjs firefox`), fixtures via `network.dns.localDomains` +
   `network.socket.forcePort` prefs (every port-80/443 connection — no live internet from a
   harness profile unless `profilePrefs` clears both), the fixture CA trusted for real via
   `certutil` (`ff.trustsFixtureCert`; HSTS scenarios skip without it; hosts named one by one in
@@ -96,7 +96,7 @@ Tier-2 scenario 12 asserts both halves (crashed UI *and* a named stack).
   windowed Chromium, `grim` screenshots, `wdotool` input. For anything CDP can't reach or fakes:
   the real omnibox, the toolbar popup, actual user-gesture semantics, focus/IME quirks, "does it
   *look* right." Always `--user-data-dir` inside the session dir (disposable profile per skill
-  guidance), extension loaded unpacked from `dist/`.
+  guidance), extension loaded unpacked from `src/` (or `dist/chrome/`).
 
 ## Automated test suite (CI, no agent)
 
@@ -114,6 +114,10 @@ Pure-function tests, Node + vitest (or similar):
    `offscreencanvas`/`webgpu`. security.md's "the engine cannot reach the GPU driver" is a claim
    about imports, and imports appear from a link flag, not from a call (engine-build.md § No-GPU
    link contract). Skips when no engine is staged.
+5. **Release archives** (`zip.test.mjs`): `scripts/lib/zip.mjs` round-tripped through the
+   system `unzip` (an independent implementation — our own reader proves nothing about a
+   hand-rolled binary format) plus the determinism the release build promises. Skips without
+   `unzip`.
 
 ### Tier 1 — bridge integration, no engine (<30 s, per-commit)
 Headless Chromium + extension + fixture server + a **stub engine** (src/shim/engine-stub.mjs,

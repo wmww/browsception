@@ -25,6 +25,37 @@ engine's history mirrors into real tab history, so back/forward/reload just work
 Two modes: **whitelist** (default — everything runs sandboxed except domains you trust) and
 **blacklist** (everything native except listed domains).
 
+## Installing a release
+
+Grab the package for your browser from the [releases page](https://github.com/wmww/browsception/releases).
+Releases are numbered v1, v2, v3, … (no semver — there's no API to be stable about), and every
+release is rough until it isn't; expect it to be slow (the engine is an interpreter with CPU
+rasterization) and to break on some sites. Please report what breaks in
+[issues](https://github.com/wmww/browsception/issues), with your browser and the extension
+version from your extensions page.
+
+**Chrome / Edge / Brave** (any OS):
+
+1. Download `browsception-<N>-chrome.zip` and unzip it somewhere permanent (the browser loads
+   the folder in place).
+2. Open `chrome://extensions`, turn on **Developer mode** (top right), click **Load unpacked**,
+   pick the unzipped folder.
+3. Chrome on Windows/macOS will show a "disable developer mode extensions" prompt at each
+   launch; dismiss it. There is no auto-update: for a new release, unzip over the folder and
+   hit the reload button on the extension's card.
+
+**Firefox**: release builds only run signed add-ons, and the xpi is unsigned for now, so:
+
+- Any Firefox: `about:debugging` → **This Firefox** → **Load Temporary Add-on** → pick
+  `browsception-<N>-firefox.xpi`. Gone on restart; repeat each session.
+- Developer Edition, Nightly or ESR: set `xpinstall.signatures.required` to `false` in
+  `about:config`, then open the xpi (File → Open, or drag it into the window) for a permanent
+  install.
+
+Once installed, the toolbar popup shows whether it's active and which mode you're in. The
+default is **whitelist**: every site runs inside the sandboxed engine until you add its domain
+to the trusted list.
+
 ## Repo layout
 
 | Path | What |

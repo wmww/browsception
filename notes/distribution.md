@@ -12,12 +12,13 @@ rule installed at runtime, so a store-assigned id works unchanged (verified: dis
 unpacked in a throwaway profile gets a path-derived id, intercepts from a fresh profile, and
 keeps the rule across a browser restart).
 
-Blocking any channel:
+Versioning is settled (release.md § Versioning: integer `VERSION` in manifest.mjs, `v<N>` tags),
+and the README has the load-unpacked / temporary-add-on install steps for channel 1.
+
+Blocking the stores (not channel 1):
 
 - **No icons** — no `icons` manifest entry, no icon files. Both stores need a 128 px icon;
   the toolbar action currently shows a placeholder.
-- **Version drift** — manifest `0.1.0` (scripts/lib/manifest.mjs), package.json `1.0.0` with
-  an empty description. One source, then the release filename follows.
 
 ## Channel 1: GitHub release, no review (possible today)
 
@@ -90,7 +91,7 @@ builds, and documented RAM needs. Until then, unlisted signing is the Firefox ch
 
 ## Checklist to first public release
 
-1. Icons (`icons` in COMMON manifest, files under `src/ext/`), version + description unified.
+1. Icons (`icons` in COMMON manifest, files under `src/ext/`).
 2. `PRIVACY.md` in the repo (served via GitHub Pages or raw URL) and a short reviewer note
    (`docs/store-notes.md` or in README) describing the model and permissions.
 3. AMO account, unlisted sign the xpi, attach both packages to a GitHub release with the

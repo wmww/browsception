@@ -25,11 +25,17 @@
 //
 // Not run here: tests. `npm test` (tiers 0-1) and `npm run test:tier2` stay
 // separate — a release build is a build, not a gate.
+//
+// Provenance: the version is scripts/lib/manifest.mjs VERSION, and a published
+// archive should come from a clean checkout tagged `v<VERSION>` so it can be
+// rebuilt byte-for-byte (zip.mjs is deterministic). A dirty tree or a missing
+// tag is a warning, not an error — dev builds are the common case.
 
 import { spawnSync } from 'node:child_process';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { checkoutRoot } from './lib/paths.mjs';
+import { VERSION } from './lib/manifest.mjs';
 import { packExt, TARGETS } from './pack-ext.mjs';
 import { writeZip } from './lib/zip.mjs';
 
@@ -70,6 +76,19 @@ function entries(dir, rel = '') {
   return out;
 }
 
+// Provenance warnings, printed now and again at the end (the top scrolls away).
+const git = (...a) => spawnSync('git', a, { cwd: checkoutRoot, encoding: 'utf8' }).stdout ?? '';
+const warnings = [];
+if (git('status', '--porcelain', '--untracked-files=no').trim()) {
+  warnings.push('working tree has uncommitted changes');
+}
+if (!git('tag', '--points-at', 'HEAD').split('\n').includes(`v${VERSION}`)) {
+  warnings.push(`HEAD is not tagged v${VERSION} (git tag v${VERSION})`);
+}
+const warn = () => { for (const w of warnings) console.log(`warning: ${w} — fine for a dev build, not for a published one`); };
+console.log(`browsception v${VERSION} (${git('rev-parse', '--short', 'HEAD').trim() || 'no git'})`);
+warn();
+
 if (flags.has('--skip-engine')) {
   console.log('[-] engine build skipped (--skip-engine)');
 } else {
@@ -104,3 +123,4 @@ for (const target of targets) {
 }
 
 console.log(`\nrelease build complete${flags.has('--no-zip') ? '' : ' — archives in dist/'}`);
+warn();

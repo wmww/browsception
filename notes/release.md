@@ -17,6 +17,16 @@ change is ~7 s and never rebuilds the engine:
 Outputs: `dist/<target>/` (loadable unpacked) and `dist/browsception-<version>-chrome.zip` /
 `-firefox.xpi`.
 
+## Versioning
+
+One number, `VERSION` in `scripts/lib/manifest.mjs`, plain integers (v1, v2, …): nothing has a
+stable API, and manifests only need 1–4 dot-separated integers that increase. package.json is
+`private` with no version field so nothing can drift. Cutting a release: bump `VERSION`,
+commit, `git tag v<N>`, `npm run release`, attach `dist/*.zip` + `*.xpi` to a GitHub release
+on that tag. release.mjs prints the version + short SHA and **warns** (start and end, never
+fails) when the tree has uncommitted tracked changes or HEAD isn't tagged `v<VERSION>` — the
+archives are byte-reproducible, so a tagged clean build is what makes an asset verifiable.
+
 ## Packaging
 
 `scripts/pack-ext.mjs <target>` assembles `dist/<target>/` as hardlinks into `src/` (the 100 MB

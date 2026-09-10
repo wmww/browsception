@@ -1,12 +1,8 @@
 {
   "name": "browsception",
-  "version": "1.0.0",
-  "description": "",
+  "private": true,
+  "description": "Runs websites inside a nested wasm browser engine (version: scripts/lib/manifest.mjs)",
   "license": "MIT",
-  "main": "index.js",
-  "directories": {
-    "test": "test"
-  },
   "scripts": {
     "wt-setup": "node scripts/wt-setup.mjs",
     "pretest": "node scripts/wt-setup.mjs --quiet",
@@ -22,7 +18,6 @@
     "pack": "node scripts/pack-ext.mjs",
     "fixtures": "node test/fixtures/server.mjs"
   },
-  "keywords": [],
   "type": "module",
   "devDependencies": {
     "playwright-core": "^1.62.1"

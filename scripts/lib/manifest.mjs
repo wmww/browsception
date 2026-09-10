@@ -15,10 +15,16 @@
 export const GECKO_ID = 'browsception@phie.me';
 export const FIREFOX_MIN_VERSION = '128.0';
 
+// The one version number. Plain integers (v1, v2, …): there is no API to be
+// semver about, and manifests accept 1–4 dot-separated integers that only
+// have to increase. Bump it, tag the commit `v<N>`, then `npm run release`
+// (release.mjs warns when HEAD isn't tagged with this).
+export const VERSION = '1';
+
 const COMMON = {
   manifest_version: 3,
   name: 'browsception',
-  version: '0.1.0',
+  version: VERSION,
   description: 'Runs websites inside a nested wasm browser engine.',
   permissions: ['declarativeNetRequest', 'webRequest', 'storage', 'tabs'],
   host_permissions: ['<all_urls>'],

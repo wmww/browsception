@@ -1,7 +1,7 @@
 {
  "manifest_version": 3,
  "name": "browsception",
- "version": "0.1.0",
+ "version": "1",
  "description": "Runs websites inside a nested wasm browser engine.",
  "permissions": [
   "declarativeNetRequest",

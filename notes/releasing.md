@@ -6,7 +6,7 @@ surprise. Being asked for a release is the approval to push and to create the Gi
 nothing more (no force-pushes, no deleting other people's tags, no store submissions).
 
 Releases are plain integers (v1, v2, …), see release.md § Versioning. Packaging internals are
-in release.md; the install paths users follow are README § Installing a release.
+in release.md; the install paths users follow are README § Install.
 
 ## 1. State
 

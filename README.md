@@ -1,116 +1,67 @@
 # Browsception
 
-A browser extension that runs websites inside a **nested browser engine compiled to
-WebAssembly**. WebKit — running as wasm inside a normal browser tab — parses, executes, and
-renders the target site to a pixel buffer; the extension blits it to a canvas and forwards
-your input in. The outer browser never runs a byte of the site's own code.
+A browser extension that opens websites inside a second browser engine: WebKit compiled to
+WebAssembly, running in a normal tab. The nested engine loads and renders the site; the
+extension shows the result and passes your clicks and keys in. Your real browser never runs
+any of the site's own code.
 
-Why:
+Why: a site would have to escape two sandboxes instead of one, and the inner one has no JIT,
+no GPU, and no access to your browser. Also because nobody seems to have tried it.
 
-- **Security** — escaping two browser sandboxes is much harder than one, especially when the
-  inner engine has no JIT, no GPU, and no access to the outer DOM.
-- **Compatibility** — one engine inside another (WebKit inside Chrome and Firefox, from one build).
-- **Experiment** — because as far as we know this exact combination has never been shipped.
+Expect it to be slow (the engine is an interpreter drawing on the CPU) and to break on some
+sites. Please report what breaks in [issues](https://github.com/wmww/browsception/issues),
+with your browser and the extension version.
 
-## How it works
+## Install
 
-The extension intercepts navigations with declarativeNetRequest and redirects them to its
-viewer page. The viewer boots a ~100 MB wasm build of WebKit (WebCore + JSC in CLoop
-interpreter mode, Skia CPU raster) and drives it through a small versioned ABI
-(`src/abi/bib_abi.h`): the engine runs in a dedicated Worker, frames come out as a
-transferred pixel band per present, input events go in, and all networking rides the
-extension's own CORS-exempt `fetch()` — no external proxy servers, TLS terminates in the host
-browser. Cookies/localStorage persist to OPFS. The engine's history mirrors into real tab
-history, so back/forward/reload just work.
+Download the package for your browser from the
+[releases page](https://github.com/wmww/browsception/releases). There is no auto-update;
+repeat these steps for a new release.
 
-Two modes: **whitelist** (default — everything runs sandboxed except domains you trust) and
-**blacklist** (everything native except listed domains).
+**Chrome, Edge, Brave**
 
-## Installing a release
+1. Unzip `browsception-<N>-chrome.zip` somewhere permanent; the browser loads the folder in place.
+2. Open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked**, pick the folder.
+3. On Windows and macOS, Chrome shows a "disable developer mode extensions" prompt at every
+   launch. Dismiss it.
 
-Grab the package for your browser from the [releases page](https://github.com/wmww/browsception/releases).
-Releases are numbered v1, v2, v3, … (no semver — there's no API to be stable about), and every
-release is rough until it isn't; expect it to be slow (the engine is an interpreter with CPU
-rasterization) and to break on some sites. Please report what breaks in
-[issues](https://github.com/wmww/browsception/issues), with your browser and the extension
-version from your extensions page.
+**Firefox**
 
-**Chrome / Edge / Brave** (any OS):
-
-1. Download `browsception-<N>-chrome.zip` and unzip it somewhere permanent (the browser loads
-   the folder in place).
-2. Open `chrome://extensions`, turn on **Developer mode** (top right), click **Load unpacked**,
-   pick the unzipped folder.
-3. Chrome on Windows/macOS will show a "disable developer mode extensions" prompt at each
-   launch; dismiss it. There is no auto-update: for a new release, unzip over the folder and
-   hit the reload button on the extension's card.
-
-**Firefox**: release builds only run signed add-ons, and the xpi is unsigned for now, so:
+The xpi is unsigned, and release Firefox only runs signed add-ons, so:
 
 - Any Firefox: `about:debugging` → **This Firefox** → **Load Temporary Add-on** → pick
-  `browsception-<N>-firefox.xpi`. Gone on restart; repeat each session.
+  `browsception-<N>-firefox.xpi`. This is gone on restart.
 - Developer Edition, Nightly or ESR: set `xpinstall.signatures.required` to `false` in
-  `about:config`, then open the xpi (File → Open, or drag it into the window) for a permanent
-  install.
+  `about:config`, then open the xpi for a permanent install.
 
-Once installed, the toolbar popup shows whether it's active and which mode you're in. The
-default is **whitelist**: every site runs inside the sandboxed engine until you add its domain
-to the trusted list.
+## Use
 
-## Repo layout
+The toolbar popup has an on/off switch and shows what happens to the current site. Two modes:
 
-| Path | What |
-|---|---|
-| `src/` | The extension (unpacked root): viewer, service worker, popup/options, engine shim |
-| `src/abi/` | The C ⇄ JS ABI contract (`bib_abi.h` + mirrored `abi.mjs`) |
-| `engine/WebkitWasm/` | The engine: embedder C++, WebKit patch, build scripts, dev harness |
-| `scripts/` | Engine build/staging, extension generation + release packaging, real-site smoke tests |
-| `test/` | Tiered suites: tier 0–1 headless (no engine), tier 2 against the real engine |
-| `notes/` | Design docs and distilled project knowledge |
+- **Whitelist** (default): every site opens in the sandbox, except domains you have marked as
+  trusted.
+- **Blacklist**: every site opens normally, except domains you have listed.
 
-## Building & running
+The popup can add the current site to the active list, switch modes, or open the current page
+normally just once. "Site lists & settings" edits both lists; a domain covers all of its
+subdomains. Back, forward and reload work as usual inside sandboxed pages, and cookies and
+logins persist.
 
-**Release packages**, from a fresh clone, for both browsers:
+## Build from source
 
 ```sh
-npm run release                  # or release:chrome / release:firefox
+npm run release
 ```
 
-That runs every step below in order and skips the ones already done, so re-running it after a
-JS-only change takes seconds and never rebuilds the engine. Out come `dist/chrome/` +
-`dist/firefox/` (loadable unpacked) and `dist/browsception-<version>-chrome.zip` /
-`-firefox.xpi` (byte-reproducible archives). The first run on a machine with no engine build
-costs the ~1.5 h / ~12 GB below.
+This produces loadable folders in `dist/chrome/` and `dist/firefox/` plus the release archives.
+The first run builds the engine, which takes about 1.5 hours and 12 GB on a Linux host; later
+runs reuse it. See [`notes/engine-build.md`](notes/engine-build.md) for details.
 
-**Step by step**, which is also the dev loop:
+## Credits and license
 
-```sh
-bash scripts/build-engine.sh     # one-time ~1.5 h: fetches pinned WebKit + emsdk,
-                                 # builds ~12 GB of deps, then the engine (Linux host)
-node scripts/stage-engine.mjs    # hardlink engine artifacts into src/engine/
-node scripts/gen-ext.mjs         # generate the manifest
-# then load src/ as an unpacked extension (chrome://extensions, Developer mode)
-node scripts/pack-ext.mjs firefox   # Firefox needs its own manifest: dist/firefox/
-```
+The engine is a fork of [WebkitWasm](https://github.com/theogbob/WebkitWasm) by theogbob, the
+port that first got WebKit running under Emscripten. Built on [WebKit](https://webkit.org),
+Skia, and Emscripten.
 
-Tests: `npm test` (headless tiers, no engine needed), `npm run test:tier2` (against the
-staged engine). Incremental engine rebuilds after embedder changes are ~2–3 min.
-
-## Credits
-
-The engine is a hard fork of [**WebkitWasm**](https://github.com/theogbob/WebkitWasm) by
-**theogbob** — the port that first got WebKit building and running under Emscripten, and the
-foundation this project stands on (imported at `825c260`; provenance and what we've rewritten
-since in [`engine/WebkitWasm/LICENSING.md`](engine/WebkitWasm/LICENSING.md)). Thanks to
-theogbob for BSD-licensing it on request. Related:
-[HeyPuter/firefox-wasm](https://github.com/HeyPuter/firefox-wasm), a sister port of Gecko.
-
-Built on [WebKit](https://webkit.org) (LGPL-2.1/BSD), Skia, and Emscripten.
-
-## License
-
-[MIT](LICENSE), except `engine/WebkitWasm/`, which is a fork of upstream's BSD-2-Clause code
-(notice retained in [`engine/WebkitWasm/LICENSE`](engine/WebkitWasm/LICENSE)) and whose WebKit
-patch inherits WebKit's LGPL-2.1/BSD terms. Shipping a *built* extension additionally carries
-LGPL-2.1's relink obligation for the statically linked WebCore — see
-[`engine/WebkitWasm/LICENSING.md`](engine/WebkitWasm/LICENSING.md).
+[MIT](LICENSE), except `engine/WebkitWasm/`, which is BSD-2-Clause and carries WebKit's
+LGPL-2.1/BSD terms. See [`engine/WebkitWasm/LICENSING.md`](engine/WebkitWasm/LICENSING.md).

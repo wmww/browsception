@@ -2,19 +2,15 @@
 // § Firefox). Everything else in the extension is shared verbatim; this file
 // is the whole divergence budget.
 //
-// Chrome: MV3 service worker, pinned key (a static DNR ruleset needs an
-// absolute redirect URL, so the id must be known at build time), manifest
-// COOP/COEP (harmless now that nothing needs SharedArrayBuffer; kept so the
-// viewer stays cross-origin isolated).
+// Neither manifest names the extension id: the catch-all is a dynamic rule on
+// both browsers (dnr-rules.mjs), so nothing has to be pinned at build time and
+// a store-assigned id works unchanged.
+//
+// Chrome: MV3 service worker, manifest COOP/COEP (harmless now that nothing
+// needs SharedArrayBuffer; kept so the viewer stays cross-origin isolated).
 // Firefox: no extension service workers — an event page (background.page)
-// loads the same module; gecko id for storage.sync + a stable identity; NO
-// static catch-all ruleset, because a moz-extension UUID is per profile and
-// Firefox treats a relative regexSubstitution as a silent no-op — the SW
-// installs the catch-all as a dynamic rule instead (dnr-rules.mjs
-// desiredRuleState({staticCatchall: false})). Chrome-only keys are dropped
-// rather than left to warn.
-
-import { CATCHALL_RULESET_ID } from '../../src/ext/dnr-rules.mjs';
+// loads the same module; gecko id for storage.sync + a stable identity.
+// Chrome-only keys are dropped rather than left to warn.
 
 export const GECKO_ID = 'browsception@phie.me';
 export const FIREFOX_MIN_VERSION = '128.0';
@@ -37,24 +33,11 @@ const COMMON = {
   },
 };
 
-export function chromeManifest(key) {
+export function chromeManifest() {
   return {
     ...COMMON,
-    key,
     minimum_chrome_version: '124',
     background: { service_worker: 'ext/sw.mjs', type: 'module' },
-    declarative_net_request: {
-      rule_resources: [
-        {
-          id: CATCHALL_RULESET_ID,
-          // Enabled at install: DEFAULT_STATE is whitelist mode, and the static
-          // toggle must not wait for the SW (first-navigation race). The SW
-          // disables it for blacklist/inactive states; that choice persists.
-          enabled: true,
-          path: 'rules/catchall.json',
-        },
-      ],
-    },
     cross_origin_opener_policy: { value: 'same-origin' },
     cross_origin_embedder_policy: { value: 'require-corp' },
   };

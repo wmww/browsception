@@ -60,8 +60,9 @@ lives in [roadmap.md](roadmap.md). Phase summaries:
   title — the buttons later gave way to native history, below); activation & modes UI (popup/options/badge, actions.mjs matrix);
   sandboxed→native boundary (engine flags top-level loads, bridge policy natives them);
   guard-rail invariants green (hostile.bstest full pass, no top-level target docs); **2.6
-  whitelist-by-default** — `DEFAULT_STATE.mode='whitelist'`, static catch-all enabled in the
-  manifest so a fresh install intercepts before the SW runs (ui.md § shipping default). Exit
+  whitelist-by-default** — `DEFAULT_STATE.mode='whitelist'`, so a fresh install sandboxes
+  everything (ui.md § shipping default; the catch-all was a static ruleset then, dynamic since
+  2026-09-09). Exit
   gate: scripts/smoke-mvp.mjs real-site pass — sandboxed example.com/wikipedia, whitelist→native
   sweep (experiment-log.md 2026-08-10).
 
@@ -80,8 +81,8 @@ Load-bearing implementation facts:
   target; a percent-encoded absolute http(s) target is tolerated on read (old tabs/bookmarks) and
   canonicalized back to raw on rewrite. Viewer, sweep and popup all read it through that module,
   and every host-world sink is gated by its `isHttpUrl` (security.md § Sandbox→host sinks).
-- src/manifest.json + src/rules/ are **generated** by scripts/gen-ext.mjs (pinned key/id; CSP needs
-  `'wasm-unsafe-eval'`). The manifest's catch-all `enabled: true` must agree with DEFAULT_STATE.
+- src/manifest.json is **generated** by scripts/gen-ext.mjs (CSP needs `'wasm-unsafe-eval'`).
+  Nothing pins the extension id: every DNR rule, catch-all included, is installed at runtime.
 - The engine runs in a dedicated Worker (`src/ext/engine-worker.js`, classic script: it
   `importScripts` the plain-link `embedder.js`); the viewer talks to it only through
   `src/ext/engine-link.mjs` (`__bs.link.call('bib_x', …)`), and the bridge/stub speak a
@@ -233,11 +234,11 @@ contract.
 *Reconcile no longer un-intercepts mid-flight* (2026-08-15) — the DNR apply turned the static
 catch-all **off before** installing the new dynamic rules, so every whitelist→blacklist edit had a
 few ms in which nothing intercepted and a navigation started there ran natively (the sweep then
-rescued it, aborting that navigation — the intermittent tier-1 sweep flake). Order is now owned by
-`applyPlan()`: catch-all on before the dynamic swap, off after, so the gap is never less
-intercepting than either state (tier-0 tripwire). The test's other half was its own bug: a sweep
-that re-navigates a pre-commit tab rejects `page.goto` with ERR_ABORTED even when the tab lands
-correctly, so tier-1 asserts on the settled URL now (security.md § reconcile gap, testing.md 6b).
+rescued it, aborting that navigation — the intermittent tier-1 sweep flake). Ordering logic fixed
+it then; the static ruleset is gone since 2026-09-09 (below), so the reconcile is one atomic call
+and the gap does not exist. The test's other half was its own bug: a sweep that re-navigates a
+pre-commit tab rejects `page.goto` with ERR_ABORTED even when the tab lands correctly, so tier-1
+asserts on the settled URL now (security.md § reconcile gap, testing.md 6b).
 
 *One engine build, worker-hosted, on Chrome and Firefox* (2026-09-09) — the `-sPROXY_TO_PTHREAD`
 link and every SharedArrayBuffer dependency are gone. The object tree still compiles `-pthread`;
@@ -270,6 +271,18 @@ dropped, body cancelled); tier-0 `bridge.test.mjs` (stubbed fetch) and two Firef
 scenarios, the HSTS one made possible by trusting the fixture CA for real in the Firefox profile
 (pkix refuses the old self-signed `*.bstest` leaf). Details: extension-platform.md § Firefox,
 networking.md § redirect capture, experiment-log.md.
+
+*No pinned extension id* (2026-09-09) — the Chrome manifest `key` existed for exactly one reason:
+a **static** catch-all ruleset needs an absolute `regexSubstitution`, so the id had to be known at
+build time — and a store-assigned id would then have redirected every navigation to a dead URL.
+Firefox already ran the catch-all as a dynamic rule; Chrome now does too, and `key`,
+`rule_resources`, `src/rules/`, `applyPlan` and the SW's ruleset-toggle calls are all gone. Both
+packages are id-agnostic (distribution.md). Two consequences: the reconcile is ONE atomic
+`updateDynamicRules` (no half-applied window to order around — security.md), and a fresh install
+has a millisecond window before `onInstalled` installs the rule, with no navigation in flight and
+the sweep as backstop. Tests read the id from the running extension (`extensionId(context)`);
+the probe extension keeps its key, because tier-1 deliberately tests static rules with the SW
+killed.
 
 *One release command per browser* (2026-09-09) — `npm run release [chrome|firefox]`
 (scripts/release.mjs) takes a fresh clone to `dist/browsception-<version>-chrome.zip` /

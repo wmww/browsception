@@ -8,8 +8,11 @@ infrastructure: the fixture server, the dev-build test hook, and the launch reci
 
 ### Fixture server
 Everything a test loads from disk lives under `test/fixtures/` — the pages, the CA, and
-`probe-ext/` (the probe extension three tier-1 suites load; `scripts/gen-ext.mjs` also reads the
-shared dev key from it, so the real extension keeps its pinned id).
+`probe-ext/` (the probe extension three tier-1 suites load). The probe keeps a pinned `key` and
+static rulesets — the tier-1 interception suite deliberately tests static rules with the SW
+killed, a platform property. The shipping extension pins nothing: read its id from the running
+extension with the harness's `extensionId(context)` (unpacked ids hash the load path, so every
+worktree gets a different one and nothing may hard-code one).
 
 A local HTTP(S) server (`test/fixtures/`) serving hand-written pages designed for assertion, on
 domains mapped into Chromium via `--host-resolver-rules="MAP *.bstest 127.0.0.1:<port>"`.

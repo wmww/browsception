@@ -1,10 +1,9 @@
 // DNR rule generation (notes/ui.md § DNR implementation sketch).
 //
 // Pure functions from (activation, mode, lists, escape hatches) to the exact
-// rule state the extension must hold: which static rulesets are enabled, the
-// full dynamic rule set, and session rules. The extension applies this
-// declaratively (diff against chrome.declarativeNetRequest state); tests
-// assert the JSON directly.
+// rule state the extension must hold: the full dynamic rule set and the
+// session rules. The extension applies this declaratively (one atomic
+// updateDynamicRules); tests assert the JSON directly.
 //
 // Interception is main_frame-only by design: bridge fetches and native
 // subresources must never hit these rules.
@@ -12,13 +11,11 @@
 import { entryMatches, isIpLiteral, listMatches } from './list-match.mjs';
 import { isHttpUrl, viewerTarget, viewerURLFor } from './viewer-url.mjs';
 
-export const CATCHALL_RULESET_ID = 'catchall';
-// The catch-all rule's id inside that ruleset, and — on browsers that cannot
-// ship it statically — inside the dynamic rule set.
+// The catch-all rule's id inside the dynamic rule set.
 export const CATCHALL_RULE_ID = 1;
 
 export const PRIORITY = {
-  CATCHALL: 1, // static whitelist-mode redirect-everything
+  CATCHALL: 1, // whitelist-mode redirect-everything
   LIST_REDIRECT: 1, // blacklist-mode per-domain redirect
   ALLOW: 10, // whitelist-mode per-domain allow (beats CATCHALL)
   ESCAPE: 100, // session+tab-scoped one-time allow (beats everything)
@@ -45,12 +42,13 @@ export function entryRegex(entry) {
 }
 
 // The catch-all rule (whitelist mode: redirect every http(s) main_frame).
-// Chrome: generated at build time into the static ruleset rules/catchall.json
-// — regexSubstitution needs an absolute URL, hence the pinned extension id
-// (manifest "key") — so a fresh install intercepts before the SW ever runs.
-// Firefox: the moz-extension UUID is per profile, a relative substitution is
-// a silent no-op, and `extensionPath` cannot carry \0, so the same rule is
-// installed at runtime as a dynamic rule (desiredRuleState below).
+// Always dynamic, on both browsers: `regexSubstitution` needs an ABSOLUTE
+// viewer URL (a relative one is a silent no-op, and `extensionPath` cannot
+// carry \0), so a static ruleset could only carry it by pinning the
+// extension id at build time — which is exactly what stops the package from
+// being installed from a store. Runtime knows the real id, so the SW installs
+// this at first run instead (desiredRuleState below); dynamic rules persist
+// across restarts and extension updates.
 // \0 carries the raw matched URL un-encoded — viewer-url.mjs owns that
 // contract on both sides.
 export function catchallRules(viewerBase) {
@@ -127,34 +125,6 @@ export function sweepAction(state, tab, viewerBase, escapeEntry = null) {
 }
 
 /**
- * Order the DNR calls a reconcile makes. The catch-all ruleset and the dynamic
- * rules are two separate (individually atomic) calls, so there is always a
- * window between them, and a navigation started inside it sees exactly the
- * half-applied state we left there. Order them so that window is never LESS
- * intercepting than either the old or the new state: catch-all ON before the
- * dynamic swap, OFF after it.
- *
- * Getting this backwards is not cosmetic: whitelist->blacklist then had a few
- * ms with the catch-all already off and no redirect rule yet, in which any
- * navigation ran natively (and the sweep's rescue aborted it mid-flight).
- * The price of this order is that deactivating over-sandboxes for the same few
- * ms; the sweep takes such a tab native immediately after.
- *
- * @param {string[]} enabledRulesets currently enabled static ruleset ids
- * @param {{enabledStaticRulesets: string[], dynamicRules: object[]}} desired
- * @returns {({op: 'catchall', enable: boolean}|{op: 'dynamic', rules: object[]})[]}
- */
-export function applyPlan(enabledRulesets, desired) {
-  const want = desired.enabledStaticRulesets.includes(CATCHALL_RULESET_ID);
-  const toggle = want !== enabledRulesets.includes(CATCHALL_RULESET_ID);
-  return [
-    ...(toggle && want ? [{ op: 'catchall', enable: true }] : []),
-    { op: 'dynamic', rules: desired.dynamicRules },
-    ...(toggle && !want ? [{ op: 'catchall', enable: false }] : []),
-  ];
-}
-
-/**
  * Compute the complete desired DNR state.
  * @param {{
  *   active: boolean,
@@ -164,22 +134,18 @@ export function applyPlan(enabledRulesets, desired) {
  *   escapeHatches?: {tabId: number, entry: string}[],
  * }} state
  * @param {string} viewerBase e.g. "chrome-extension://<id>/viewer.html"
- * @param {{staticCatchall?: boolean}} [opts] staticCatchall=false (Firefox):
- *   the manifest ships no catch-all ruleset, so whitelist mode carries the
- *   catch-all as a dynamic rule (same id, same priority) — one atomic swap
- *   installs it with the allow rules, so there is no reconcile gap at all.
  */
-export function desiredRuleState(state, viewerBase, { staticCatchall = true } = {}) {
+export function desiredRuleState(state, viewerBase) {
   const { active, mode, whitelist = [], blacklist = [], escapeHatches = [] } = state;
 
-  if (!active) return { enabledStaticRulesets: [], dynamicRules: [], sessionRules: [] };
+  if (!active) return { dynamicRules: [], sessionRules: [] };
 
   const dynamicRules = [];
-  const enabledStaticRulesets = [];
 
   if (mode === 'whitelist') {
-    if (staticCatchall) enabledStaticRulesets.push(CATCHALL_RULESET_ID);
-    else dynamicRules.push(...catchallRules(viewerBase));
+    // Catch-all first: one atomic swap installs it together with the allow
+    // rules, so a reconcile never leaves a less-intercepting half-state.
+    dynamicRules.push(...catchallRules(viewerBase));
     whitelist.forEach((entry, i) => {
       dynamicRules.push({
         id: ID_BASE.allow + i,
@@ -206,7 +172,7 @@ export function desiredRuleState(state, viewerBase, { staticCatchall = true } = 
 
   const sessionRules = escapeHatches.map(({ tabId, entry }) => escapeSessionRule(tabId, entry));
 
-  return { enabledStaticRulesets, dynamicRules, sessionRules };
+  return { dynamicRules, sessionRules };
 }
 
 // One tab-scoped "open natively" allow rule (2.3 escape hatch). Id is

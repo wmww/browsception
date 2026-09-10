@@ -75,10 +75,10 @@ async function pollUntil(fn, what, timeoutMs = 20000) {
   throw new Error(`${what} (last: ${JSON.stringify(last)})`);
 }
 
-// Fresh install (whitelist mode, empty whitelist): the event page installs the
-// catch-all as a DYNAMIC rule — Firefox cannot ship a static one because the
-// moz-extension UUID is per profile. Until then nothing intercepts; the sweep
-// is the backstop, exactly as for Chrome's startup race.
+// Fresh install (whitelist mode, empty whitelist): the background script
+// installs the catch-all as a dynamic rule (the only kind on either browser —
+// a static one would have to pin the extension id). Until then nothing
+// intercepts; the sweep is the backstop, exactly as for the startup race.
 test('firefox: fresh install intercepts any http(s) navigation into the viewer', { skip, timeout: 300000 }, async () => {
   const cfg = await ff.newPage();
   await cfg.goto(`${VIEWER_BASE}?stub=1`);

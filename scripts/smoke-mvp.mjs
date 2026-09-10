@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Phase-2 / MVP exit-gate runner: the SHIPPING DEFAULT (active, whitelist
-// mode, empty whitelist, static catch-all enabled) against REAL SITES.
+// mode, empty whitelist, catch-all installed) against REAL SITES.
 // Fresh profile, zero stored state — exactly a new install. Verifies:
 //   1. an omnibox-style navigation to any http(s) URL lands in the viewer
 //      and renders/executes nested (probe pixel + nested title -> tab title),
@@ -12,7 +12,7 @@
 
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { launch, extensionIdFromManifest } from '../test/harness/launch.mjs';
+import { launch, extensionId } from '../test/harness/launch.mjs';
 
 const EXT = join(dirname(fileURLToPath(import.meta.url)), '../src');
 const headed = process.argv.includes('--headed');
@@ -43,7 +43,7 @@ async function poll(fn, what, timeoutMs = 60000) {
 
 const session = await launch({ extensionDir: EXT, headless: !headed, needsEngine: true });
 const { context } = session;
-const EXT_ID = extensionIdFromManifest(EXT);
+const EXT_ID = await extensionId(session.context);
 const VIEWER_PREFIX = `chrome-extension://${EXT_ID}/ext/viewer.html?url=`;
 
 async function configure(patch) {

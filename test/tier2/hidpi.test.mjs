@@ -25,14 +25,13 @@ import { chromium } from 'playwright-core';
 import {
   CHROMIUM_BIN,
   RESOLVER_RULES,
-  extensionIdFromManifest,
+  extensionId,
   requireStagedEngine,
   waitForFixtureServer,
 } from '../harness/launch.mjs';
 
 const DPRS = [2, 1.5];
 const EXT_DIR = new URL('../../src', import.meta.url).pathname;
-const EXT_ID = extensionIdFromManifest(EXT_DIR);
 requireStagedEngine(EXT_DIR);
 const FIXTURE_BLACKLIST = ['grid.bstest', 'input.bstest', 'app.bstest', 'other.bstest', 'hostile.bstest'];
 const BOOT_TIMEOUT = 120000;
@@ -65,8 +64,10 @@ async function launchAt(dpr) {
       `--load-extension=${EXT_DIR}`,
     ],
   });
+  // Unpacked ids are hashed from the load path — ask the running extension.
+  const extId = await extensionId(context);
   const cfg = await context.newPage();
-  await cfg.goto(`chrome-extension://${EXT_ID}/ext/viewer.html?stub=1`);
+  await cfg.goto(`chrome-extension://${extId}/ext/viewer.html?stub=1`);
   await cfg.evaluate((p) => chrome.storage.sync.set(p), {
     active: true,
     mode: 'blacklist',
@@ -84,6 +85,7 @@ async function launchAt(dpr) {
   await cfg.close();
   return {
     context,
+    extId,
     close: async () => {
       await context.close();
       rmSync(userDataDir, { recursive: true, force: true });
@@ -103,9 +105,9 @@ test.after(async () => {
 });
 
 async function bootViewer(dpr, target) {
-  const { context } = await sessionAt(dpr);
+  const { context, extId } = await sessionAt(dpr);
   const page = await context.newPage();
-  await page.goto(`chrome-extension://${EXT_ID}/ext/viewer.html?url=${encodeURIComponent(target)}`);
+  await page.goto(`chrome-extension://${extId}/ext/viewer.html?url=${encodeURIComponent(target)}`);
   await page.waitForFunction(() => globalThis.__bs?.ready, undefined, { timeout: BOOT_TIMEOUT });
   assert.equal(await page.evaluate(() => devicePixelRatio), dpr, 'page really is HiDPI');
   return page;

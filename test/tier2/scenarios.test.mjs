@@ -15,16 +15,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { launch, extensionIdFromManifest, requireStagedEngine, waitForFixtureServer } from '../harness/launch.mjs';
+import { launch, extensionId, requireStagedEngine, waitForFixtureServer } from '../harness/launch.mjs';
 
 const EXT_DIR = new URL('../../src', import.meta.url).pathname;
-const EXT_ID = extensionIdFromManifest(EXT_DIR);
 requireStagedEngine(EXT_DIR); // before spawning anything — a missing engine is a setup error
-const VIEWER_BASE = `chrome-extension://${EXT_ID}/ext/viewer.html`;
-// The canonical form: own params precede url=, target RAW (viewer-url.mjs).
-// `extra` is a bare param string like 'perflog=1'.
-const viewerURL = (target, extra = '') =>
-  `${VIEWER_BASE}?${extra ? extra + '&' : ''}url=${target}`;
 
 const fixtures = spawn('node', [new URL('../fixtures/server.mjs', import.meta.url).pathname], {
   stdio: 'ignore',
@@ -36,6 +30,15 @@ test.after(async () => {
   fixtures.kill();
 });
 
+// Nothing pins the extension id any more — an unpacked load hashes it from
+// the load path, so it differs per checkout. Ask the running extension.
+const EXT_ID = await extensionId(session.context);
+const VIEWER_BASE = `chrome-extension://${EXT_ID}/ext/viewer.html`;
+// The canonical form: own params precede url=, target RAW (viewer-url.mjs).
+// `extra` is a bare param string like 'perflog=1'.
+const viewerURL = (target, extra = '') =>
+  `${VIEWER_BASE}?${extra ? extra + '&' : ''}url=${target}`;
+
 const BOOT_TIMEOUT = 120000;
 
 // Suite posture: dev-style blacklist covering every fixture domain, so a
@@ -46,7 +49,7 @@ const FIXTURE_BLACKLIST = ['grid.bstest', 'input.bstest', 'app.bstest', 'other.b
 async function configure(patch, ready) {
   const cfg = await session.context.newPage();
   await cfg.goto(`chrome-extension://${EXT_ID}/ext/viewer.html?stub=1`);
-  await cfg.evaluate((p) => chrome.storage.sync.set(p), patch);
+  if (patch) await cfg.evaluate((p) => chrome.storage.sync.set(p), patch);
   if (ready) {
     const t0 = Date.now();
     while (Date.now() - t0 < 15000) {
@@ -57,12 +60,19 @@ async function configure(patch, ready) {
   await cfg.close();
 }
 
+// The catch-all is a dynamic rule (id 1) on both browsers.
+const catchallInstalled = () =>
+  chrome.declarativeNetRequest.getDynamicRules().then((r) => r.some((x) => x.id === 1));
+const catchallGone = () =>
+  chrome.declarativeNetRequest.getDynamicRules().then((r) => !r.some((x) => x.id === 1));
+
 // 2.6 shipping default, probed BEFORE any storage write: whitelist mode with
-// an empty whitelist and the static catch-all enabled from the manifest, so a
-// fresh install intercepts even if the SW hasn't run yet. The navigation
-// lands here; the "default posture" scenario asserts on the recorded URL.
+// an empty whitelist, so a fresh install sandboxes everything. The catch-all
+// is a dynamic rule, installed by the SW's first run (onInstalled) — wait for
+// it, then navigate. The "default posture" scenario asserts on the recorded URL.
 let freshInstallUrl;
 test.before(async () => {
+  await configure(null, catchallInstalled);
   const page = await session.context.newPage();
   await page.goto('https://other.bstest/', { waitUntil: 'commit' });
   freshInstallUrl = page.url();
@@ -600,10 +610,8 @@ test('escape hatch: popup reopens the tab natively; other tabs stay sandboxed', 
 // --- 2.4 boundary: sandboxed page navigating to a native-disposition URL ---
 test('boundary: nested navigation to a whitelisted domain hands the real tab the URL', { timeout: 300000 }, async () => {
   // Whitelist mode, grid.bstest trusted: everything else sandboxed via the
-  // static catch-all; a nested navigation to grid.bstest must go NATIVE.
-  await configure({ mode: 'whitelist', whitelist: ['grid.bstest'] }, () =>
-    chrome.declarativeNetRequest.getEnabledRulesets().then((r) => r.includes('catchall')),
-  );
+  // catch-all; a nested navigation to grid.bstest must go NATIVE.
+  await configure({ mode: 'whitelist', whitelist: ['grid.bstest'] }, catchallInstalled);
 
   const page = await session.context.newPage();
   await page.goto('https://input.bstest/');
@@ -616,9 +624,7 @@ test('boundary: nested navigation to a whitelisted domain hands the real tab the
   await page.close();
 
   // Restore the suite's blacklist posture.
-  await configure({ mode: 'blacklist', whitelist: [] }, () =>
-    chrome.declarativeNetRequest.getEnabledRulesets().then((r) => !r.includes('catchall')),
-  );
+  await configure({ mode: 'blacklist', whitelist: [] }, catchallGone);
 });
 
 // --- Scenario 11: guard-rail invariants (2.5) ------------------------------

@@ -643,3 +643,31 @@ entry, its requestId's later events dropped; the bridge reports a redirect entry
 when the fetch resolved (cancelling the body). Google loads on Firefox
 (`https://www.google.com/?gws_rd=ssl`, title "Google"). Tier-0 66, tier-1 34, Firefox tier-2
 9/9 (two new), Chrome tier-1 bridge unchanged.
+
+## 2026-09-09 — Dropping the pinned extension id (plans/dynamic-id.md)
+
+**Hypothesis**: the only thing forcing a build-time extension id was the *static* catch-all
+ruleset — a `regexSubstitution` must be an absolute URL, so `rules/catchall.json` baked
+`chrome-extension://niccek…/ext/viewer.html?url=\0` and the manifest pinned the matching `key`.
+Firefox already ran the same rule dynamically. Make Chrome do the same and both packages become
+id-agnostic, which is what a store install needs (distribution.md).
+
+**What ran**: catch-all always dynamic (`desiredRuleState` returns `{dynamicRules, sessionRules}`);
+`applyPlan`, `CATCHALL_RULESET_ID`, `enabledStaticRulesets`, the SW's `getEnabledRulesets` /
+`updateEnabledRulesets` pair, the manifest `key` + `rule_resources` and `src/rules/` all deleted.
+Harness gained `extensionId(context)` (reads the id off the extension service worker's URL);
+`extensionIdFromManifest` survives for the probe extension only, which keeps its key because
+tier-1 tests static rules with the SW killed on purpose.
+
+**Numbers / results**: tier-0 63, tier-1 34, tier-2 Chrome 38, Firefox 8/9 (the failure is the
+known issues/firefox-tier2-crash-reload.md, identical before the change). `npm run release`
+clean. dist/chrome loaded unpacked in a throwaway profile: id `cdhcaoknjhmm…` (path-derived, not
+`niccek…`), the runtime redirect URL carries that id, a fresh-profile `https://other.bstest/`
+lands in the viewer, badge `S`, and after a full browser restart the catch-all is still in
+`getDynamicRules` and still intercepts.
+
+**Decision**: shipped. Two properties fall out: the reconcile is now ONE atomic
+`updateDynamicRules`, so the "gap must never intercept less" ordering problem is gone rather than
+managed (security.md); and a fresh install has a new millisecond-scale window before `onInstalled`
+installs the rule — no navigation is in flight then, and the sweep covers it as it does the
+startup race.

@@ -30,11 +30,11 @@ from **one source tree on both browsers**; the divergence budget is manifest gen
   the viewer the **raw** target after `url=` (query + fragment intact). Two traps: a *relative*
   `regexSubstitution` is accepted and silently never redirects; `redirect.extensionPath` cannot
   carry `\0`.
-- The moz-extension **UUID is per profile**, so no static ruleset can name the viewer. The
-  background script installs the whitelist-mode catch-all as a **dynamic rule** there
-  (`desiredRuleState({staticCatchall: false})`, detected from the manifest); dynamic rules persist
-  per profile, and the sweep covers the first navigation exactly as for Chrome's startup race.
-  Tests pin the UUID via the `extensions.webextensions.uuids` pref.
+- The moz-extension **UUID is per profile**, so no static ruleset could ever name the viewer.
+  That was the original reason the catch-all is a **dynamic rule** here; since 2026-09-09 Chrome
+  does the same (a pinned id blocks store distribution), so both browsers now run the identical
+  rule set. Dynamic rules persist per profile, and the sweep covers the first navigation exactly
+  as for Chrome's startup race. Tests pin the UUID via the `extensions.webextensions.uuids` pref.
 - No extension service workers: `background.page` (ext/background.html) loads the same
   `sw.mjs` as an event page. `chrome.*` is promise-returning; `storage.session`, `tabs`, `action`,
   `alarms` all present; `clients`/`self.registration` are not (sw.mjs uses neither).
@@ -127,8 +127,9 @@ Worker, frames and bytes cross by transfer. What the platform offers, for the re
   cloneable in Chrome) and/or bytes in OPFS to skip recompiles.
 - **Memory**: wasm32 → 4 GB per instance; per-tab process limits make multi-GB instances risky —
   budget ~1–2 GB target. Memory64 (Chrome 133 / Firefox 134) exists if ever needed; costs perf.
-- **MV3 SW lifetime**: irrelevant to the engine (lives in the viewer tab). Keep DNR rules static so
-  interception works with the SW asleep.
+- **MV3 SW lifetime**: irrelevant to the engine (lives in the viewer tab). Interception must not
+  need the SW awake — dynamic DNR rules persist across SW and browser restarts, so the SW only
+  reconciles state changes.
 
 ## Permissions manifest (draft)
 

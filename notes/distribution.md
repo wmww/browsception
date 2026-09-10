@@ -6,13 +6,14 @@ Facts below were checked 2026-09-09 against the linked policy pages; re-check be
 ## Where things stand
 
 Done: `npm run release` gives `dist/browsception-<v>-chrome.zip` and `-firefox.xpi` from a
-fresh clone; MIT + BSD-2 licensing sorted; repo public at github.com/wmww/browsception.
+fresh clone; MIT + BSD-2 licensing sorted; repo public at github.com/wmww/browsception;
+**packages are id-agnostic** (2026-09-09) — no manifest `key`, no static rulesets, every DNR
+rule installed at runtime, so a store-assigned id works unchanged (verified: dist/chrome loaded
+unpacked in a throwaway profile gets a path-derived id, intercepts from a fresh profile, and
+keeps the rule across a browser restart).
 
 Blocking any channel:
 
-- **Pinned extension id** — the Chrome manifest `key` + static catch-all bake the dev id into
-  the redirect URL, so a store-assigned id breaks interception. Fix: plans/dynamic-id.md
-  (catch-all becomes a dynamic rule on Chrome as it already is on Firefox; no key at all).
 - **No icons** — no `icons` manifest entry, no icon files. Both stores need a 128 px icon;
   the toolbar action currently shows a placeholder.
 - **Version drift** — manifest `0.1.0` (scripts/lib/manifest.mjs), package.json `1.0.0` with
@@ -20,7 +21,7 @@ Blocking any channel:
 
 ## Channel 1: GitHub release, no review (possible today)
 
-Attach the zip and the xpi (once id-agnostic) to a GitHub release with these instructions.
+Attach the zip and the xpi to a GitHub release with these instructions.
 
 **Chrome** (all OSes): unzip, `chrome://extensions`, Developer mode, Load unpacked, pick the
 folder. No account, no review. Costs: no auto-update; Chrome on Windows/macOS shows a
@@ -69,9 +70,9 @@ Effectively mandatory for non-technical Chrome users (see CRX note above).
   repo; mention that `eval` in `wasm-polyfill.js` runs inside the nested engine, not on the
   host page. Standing risk (roadmap.md): a rejection of the redirect-everything default would
   mean shipping per-site activation / blacklist mode as the store default.
-- Id: with plans/dynamic-id.md done, no key is needed and the store id is simply whatever is
-  assigned. (If a key were ever needed again: upload once unpublished, copy the public key from
-  the dashboard Package tab into the manifest, regenerate, re-upload.)
+- Id: no key is needed and the store id is simply whatever is assigned. (If a key were ever
+  needed again: upload once unpublished, copy the public key from the dashboard Package tab into
+  the manifest, regenerate, re-upload.)
 - Store installs auto-update; that plus no dev-mode nag is the whole benefit over channel 1.
 - Edge Add-ons store accepts the same zip (separate free account); Edge users can also install
   from the Chrome Web Store directly.
@@ -89,14 +90,13 @@ builds, and documented RAM needs. Until then, unlisted signing is the Firefox ch
 
 ## Checklist to first public release
 
-1. plans/dynamic-id.md.
-2. Icons (`icons` in COMMON manifest, files under `src/ext/`), version + description unified.
-3. `PRIVACY.md` in the repo (served via GitHub Pages or raw URL) and a short reviewer note
+1. Icons (`icons` in COMMON manifest, files under `src/ext/`), version + description unified.
+2. `PRIVACY.md` in the repo (served via GitHub Pages or raw URL) and a short reviewer note
    (`docs/store-notes.md` or in README) describing the model and permissions.
-4. AMO account, unlisted sign the xpi, attach both packages to a GitHub release with the
+3. AMO account, unlisted sign the xpi, attach both packages to a GitHub release with the
    install steps above. Optionally `update_url` + `updates.json` for Firefox auto-update.
-5. Chrome Web Store account, upload, justifications, publish. Then Edge if wanted.
-6. AMO listed only after the reproducibility prerequisites above.
+4. Chrome Web Store account, upload, justifications, publish. Then Edge if wanted.
+5. AMO listed only after the reproducibility prerequisites above.
 
 Sources: [Chrome manifest key](https://developer.chrome.com/docs/extensions/reference/manifest/key),
 [AMO source code submission](https://extensionworkshop.com/documentation/publish/source-code-submission/),

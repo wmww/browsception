@@ -1,7 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  applyPlan,
   desiredRuleState,
   catchallRules,
   entryRegex,
@@ -9,7 +8,6 @@ import {
   sweepAction,
   tabUrl,
   PRIORITY,
-  CATCHALL_RULESET_ID,
   CATCHALL_RULE_ID,
 } from '../../src/ext/dnr-rules.mjs';
 
@@ -37,50 +35,30 @@ test('entryRegex matches per list semantics', () => {
 test('inactive: everything empty', () => {
   assert.deepEqual(
     desiredRuleState({ active: false, mode: 'whitelist', whitelist: ['a.com'] }, VIEWER),
-    { enabledStaticRulesets: [], dynamicRules: [], sessionRules: [] },
+    { dynamicRules: [], sessionRules: [] },
   );
 });
 
-test('whitelist mode: catchall enabled + allow rule per entry', () => {
+test('whitelist mode: catch-all first, then an allow rule per entry', () => {
   const s = desiredRuleState(
     { active: true, mode: 'whitelist', whitelist: ['trusted.com', '=exact.net'], blacklist: ['ignored.com'] },
     VIEWER,
   );
-  assert.deepEqual(s.enabledStaticRulesets, [CATCHALL_RULESET_ID]);
-  assert.equal(s.dynamicRules.length, 2);
-  assert.deepEqual(s.dynamicRules[0], {
+  // The catch-all is a dynamic rule on both browsers (no pinned id anywhere),
+  // installed in the SAME atomic swap as the allow rules.
+  assert.deepEqual(s.dynamicRules[0], catchallRules(VIEWER)[0]);
+  assert.equal(s.dynamicRules[0].id, CATCHALL_RULE_ID);
+  assert.equal(s.dynamicRules.length, 3);
+  assert.deepEqual(s.dynamicRules[1], {
     id: 1000,
     priority: PRIORITY.ALLOW,
     action: { type: 'allow' },
     condition: { regexFilter: entryRegex('trusted.com'), resourceTypes: ['main_frame'] },
   });
-  assert.equal(s.dynamicRules[1].id, 1001);
+  assert.equal(s.dynamicRules[2].id, 1001);
   assert.deepEqual(s.sessionRules, []);
   // allow must beat the catch-all
   assert.ok(PRIORITY.ALLOW > PRIORITY.CATCHALL);
-});
-
-// Firefox: no static ruleset can name the per-profile moz-extension UUID, so
-// the catch-all rides in the dynamic set — same rule, same id and priority.
-test('whitelist mode without a static catchall: the catch-all is a dynamic rule', () => {
-  const s = desiredRuleState(
-    { active: true, mode: 'whitelist', whitelist: ['trusted.com'] },
-    VIEWER,
-    { staticCatchall: false },
-  );
-  assert.deepEqual(s.enabledStaticRulesets, []);
-  assert.deepEqual(s.dynamicRules[0], catchallRules(VIEWER)[0]);
-  assert.equal(s.dynamicRules[0].id, CATCHALL_RULE_ID);
-  assert.equal(s.dynamicRules[1].id, 1000);
-  assert.equal(s.dynamicRules.length, 2);
-  // Inactive / blacklist mode carry no catch-all either way.
-  assert.deepEqual(
-    desiredRuleState({ active: true, mode: 'blacklist', blacklist: ['x.com'] }, VIEWER, { staticCatchall: false })
-      .dynamicRules.map((r) => r.id),
-    [2000],
-  );
-  // applyPlan then never touches the static ruleset.
-  assert.deepEqual(applyPlan([], s), [{ op: 'dynamic', rules: s.dynamicRules }]);
 });
 
 test('blacklist mode: no catchall, redirect rule per entry', () => {
@@ -88,7 +66,6 @@ test('blacklist mode: no catchall, redirect rule per entry', () => {
     { active: true, mode: 'blacklist', whitelist: ['ignored.com'], blacklist: ['sketchy.com'] },
     VIEWER,
   );
-  assert.deepEqual(s.enabledStaticRulesets, []);
   assert.deepEqual(s.dynamicRules, [
     {
       id: 2000,
@@ -127,7 +104,7 @@ test('escape hatch: session allow scoped to tab + entry, beats all', () => {
   assert.ok(PRIORITY.ESCAPE > PRIORITY.ALLOW);
 });
 
-test('catchall ruleset shape', () => {
+test('catchall rule shape', () => {
   const rules = catchallRules(VIEWER);
   assert.equal(rules.length, 1);
   const r = rules[0];
@@ -233,42 +210,4 @@ test('sweepAction leaves an escaped tab native (the grant outranks the sweep)', 
   });
   // grant follows the host, not the URL: same-host navigation stays native
   assert.equal(sweep({ url: 'https://escaped.example/elsewhere' }, 'escaped.example'), null);
-});
-
-// Every reconcile is two DNR calls with a gap between them; a navigation that
-// starts in the gap sees whatever half-applied state we left. The catch-all
-// must therefore go on BEFORE the dynamic swap and off AFTER it — the other
-// order left whitelist->blacklist momentarily un-intercepted (a real escape,
-// which also aborted the racing navigation when the sweep rescued it).
-test('applyPlan never opens an un-intercepted window', () => {
-  const states = [
-    { active: false, mode: 'whitelist', whitelist: [], blacklist: [] },
-    { active: true, mode: 'whitelist', whitelist: [], blacklist: [] },
-    { active: true, mode: 'whitelist', whitelist: ['a.com'], blacklist: [] },
-    { active: true, mode: 'blacklist', whitelist: [], blacklist: [] },
-    { active: true, mode: 'blacklist', whitelist: [], blacklist: ['a.com'] },
-  ];
-  const label = (s) => (s.active ? `${s.mode}(${[...s.whitelist, ...s.blacklist].join()})` : 'off');
-  for (const from of states)
-    for (const to of states) {
-      const enabled = desiredRuleState(from, VIEWER).enabledStaticRulesets;
-      const plan = applyPlan(enabled, desiredRuleState(to, VIEWER));
-      const dyn = plan.findIndex((s) => s.op === 'dynamic');
-      assert.equal(dyn >= 0, true, 'the dynamic swap always happens');
-      for (const [i, step] of plan.entries())
-        if (step.op === 'catchall')
-          assert.equal(
-            step.enable,
-            i < dyn,
-            `${label(from)}->${label(to)}: catchall ${step.enable ? 'on' : 'off'} on the wrong side`,
-          );
-      // Nothing to do for the catch-all when both states agree about it.
-      assert.equal(
-        plan.length,
-        enabled.includes(CATCHALL_RULESET_ID) ===
-          desiredRuleState(to, VIEWER).enabledStaticRulesets.includes(CATCHALL_RULESET_ID)
-          ? 1
-          : 2,
-      );
-    }
 });

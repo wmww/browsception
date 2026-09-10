@@ -92,8 +92,25 @@ export async function launch(opts = {}) {
   };
 }
 
+/**
+ * The id Chromium assigned the loaded extension, read from its service
+ * worker's URL (chrome-extension://<id>/ext/sw.mjs). An unpacked extension
+ * with no manifest "key" gets an id hashed from its load path, so it differs
+ * per checkout/worktree and nothing may hard-code one.
+ */
+export async function extensionId(context) {
+  const url = (
+    context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker', { timeout: 30000 }))
+  ).url();
+  const id = /^chrome-extension:\/\/([a-p]{32})\//.exec(url)?.[1];
+  if (!id) throw new Error(`not an extension service worker URL: ${url}`);
+  return id;
+}
+
 // Compute the extension id from the "key" field of an unpacked extension's
 // manifest (sha256 of the DER pubkey, first 16 bytes, nibbles mapped a-p).
+// Only the probe extension (test/fixtures/probe-ext*) still pins a key — the
+// shipping extension's id is dynamic, use extensionId() above.
 export function extensionIdFromManifest(extensionDir) {
   const manifest = JSON.parse(readFileSync(join(extensionDir, 'manifest.json'), 'utf8'));
   if (!manifest.key) throw new Error('manifest has no "key" — id is not pinned');

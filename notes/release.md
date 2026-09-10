@@ -10,7 +10,7 @@ change is ~7 s and never rebuilds the engine:
 | engine | `scripts/build-engine.sh` | exits early when a snapshot's `source_hash` matches this checkout (`--skip-engine` skips even that; the check takes the build lock but never the WebKit tree) |
 | deps | `scripts/wt-setup.mjs --quiet` | `npm ci` only when `node_modules` is absent |
 | stage | `scripts/stage-engine.mjs` | hardlinks; **unpins** an A/B pin on purpose — a release ships the engine built from these sources |
-| manifest | `scripts/gen-ext.mjs` | chrome only (`src/manifest.json` + `src/rules/`) |
+| manifest | `scripts/gen-ext.mjs` | chrome only (`src/manifest.json`) |
 | pack | `scripts/pack-ext.mjs` | re-links only what changed |
 | zip | `scripts/lib/zip.mjs` | — |
 
@@ -22,15 +22,15 @@ Outputs: `dist/<target>/` (loadable unpacked) and `dist/browsception-<version>-c
 `scripts/pack-ext.mjs <target>` assembles `dist/<target>/` as hardlinks into `src/` (the 100 MB
 engine costs nothing) minus what the other browser owns, plus that browser's manifest:
 
-- **chrome** — `src/manifest.json` + `src/rules/` verbatim (gen-ext owns them: the static ruleset
-  bakes in the pinned id), minus `ext/background.html`. Chrome also loads `src/` directly; the
-  dist tree exists so the package excludes `_metadata/`, which Chrome itself writes into an
-  unpacked root.
-- **firefox** — manifest from `scripts/lib/manifest.mjs`, no static ruleset (per-profile UUID —
-  the SW installs the catch-all dynamically). This is what the tier-2 Firefox harness installs.
+- **chrome** — `src/manifest.json` verbatim (gen-ext owns it), minus `ext/background.html`.
+  Chrome also loads `src/` directly; the dist tree exists so the package excludes `_metadata/`,
+  which Chrome itself writes into an unpacked root.
+- **firefox** — manifest from `scripts/lib/manifest.mjs`. This is what the tier-2 Firefox harness
+  installs.
 
-The manifest key ships in the Chrome package: the static catch-all's redirect URL contains the
-extension id, so the id must be pinned at build time (`scripts/lib/manifest.mjs`).
+Neither package pins an extension id: no `key`, no static rulesets, nothing that bakes an
+absolute `chrome-extension://…` URL. Every DNR rule is installed at runtime, so a store-assigned
+id works unchanged (notes/distribution.md).
 
 `scripts/lib/zip.mjs` is a ~90-line zip writer (no npm dep, no `zip` binary): sorted entries,
 fixed 1980 timestamps and permissions, so identical inputs give a byte-identical archive —

@@ -154,10 +154,12 @@ load-failed strip ("blocked by the sandbox guard (scheme:ftp)"), tab and engine 
 Measured 2026-08-14 (Chromium 151; packed CRX external-install *and* unpacked `--load-extension`,
 fresh *and* warm profiles — same result in all four): a URL handed to the browser **at launch**
 (startup pages, session restore, an OS handoff — clicking a link in another app while the browser
-is closed) is fetched, committed and executed **natively**. The static ruleset is not registered
-when that request goes out, and nothing re-evaluates a request already on the wire. This is *not*
+is closed) is fetched, committed and executed **natively**. The ruleset is not registered when
+that request goes out, and nothing re-evaluates a request already on the wire. This is *not*
 install-only and *not* an artifact of unpacked loading: it happens on every launch of an
-already-installed extension.
+already-installed extension. (Measured while the catch-all was a static ruleset; it is dynamic on
+both browsers since 2026-09-09, which does not change the window — neither kind of rule is
+registered in time.)
 
 The SW's tab sweep is the only backstop. Instrumented (a startup page beaconing every 10 ms): the
 first script ran ~25 ms after the document request, the sweep redirected the tab into the viewer
@@ -165,23 +167,25 @@ first script ran ~25 ms after the document request, the sweep redirected the tab
 SW registration, …) and ~100 ms of script. Assume anything one page-load of native JS can do, a
 site on that URL can do — including persisting state that outlives the redirect.
 
+A **fresh install** adds a second, smaller window of the same shape: the catch-all only exists
+once the background script's first run has installed it (`onInstalled` → one
+`updateDynamicRules`, milliseconds). No navigation is in flight at install time, so in practice
+nothing crosses it; the sweep is the backstop there too.
+
 Not fixable inside MV3: blocking webRequest is gone, DNR cannot hold a request that predates its
 registration, and the SW cannot be awake before the browser starts navigating. What the sweep must
 get right (tier-1 `sweep.test.mjs`): the racing tab is usually still **pre-commit**, which Chromium
 reports as `url: 'about:blank'` + `pendingUrl: <target>` — reading only `tab.url` there misses
 exactly the tab the sweep exists for and leaves it native indefinitely.
 
-### The reconcile's own gap must never intercept less than either state
+### The reconcile has no gap
 
-A reconcile is two DNR calls (static catch-all toggle, dynamic-rule swap) with an unavoidable
-window between them, and a navigation started inside it sees the half-applied state. Until
-2026-08-15 the catch-all was turned **off first**, so a whitelist→blacklist edit had a few ms with
-no catch-all and no redirect rule yet: any navigation in that window ran natively — a
-self-inflicted second instance of the startup race, on a state change the user just requested.
-`applyPlan()` (dnr-rules.mjs) now fixes the order — catch-all ON before the swap, OFF after — so
-the window is always at least as intercepting as both the old and the new state; deactivating
-over-sandboxes for those same few ms instead, and the sweep undoes that immediately. Tripwire:
-tier-0 `dnr-rules.test.mjs` § applyPlan.
+A reconcile is **one** `updateDynamicRules` — catch-all and per-domain rules swap together,
+atomically — so no navigation can ever see a half-applied state. This was a real bug while the
+catch-all lived in a static ruleset: the two calls (ruleset toggle, dynamic swap) left a few ms
+in which a whitelist→blacklist edit intercepted nothing, and a navigation started there ran
+natively. Ordering logic (`applyPlan`, 2026-08-15) fixed it; dropping the static ruleset
+(2026-09-09) deleted the problem instead.
 
 ## Honest limitations (say these out loud in any writeup)
 

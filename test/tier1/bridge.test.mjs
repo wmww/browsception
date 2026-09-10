@@ -8,7 +8,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   launch,
-  extensionIdFromManifest,
+  extensionId,
   oracleClear,
   oracleRequests,
   HTTP_PORT,
@@ -27,16 +27,16 @@ before(async () => {
   server = await ensureFixtureServer();
   browser = await launch({ extensionDir: EXT });
   context = browser.context;
-  extId = extensionIdFromManifest(EXT);
+  extId = await extensionId(context);
   page = await context.newPage();
   await page.goto(`chrome-extension://${extId}/ext/viewer.html?stub=1`);
   await page.waitForFunction(() => !!globalThis.__bs);
   // This suite tests bridge semantics, not interception: pin an
   // everything-native posture so its native control navigations stay native
-  // (the shipping default is whitelist mode with the catch-all enabled).
+  // (the shipping default is whitelist mode, which carries the catch-all).
   await page.evaluate(() => chrome.storage.sync.set({ mode: 'blacklist' }));
   await page.waitForFunction(() =>
-    chrome.declarativeNetRequest.getEnabledRulesets().then((r) => !r.includes('catchall')),
+    chrome.declarativeNetRequest.getDynamicRules().then((r) => !r.some((x) => x.id === 1)),
   );
 }, { timeout: 30000 });
 

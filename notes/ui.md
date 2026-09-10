@@ -15,7 +15,7 @@ installed ──► INACTIVE  (no interception at all; extension dormant)
 ```
 
 ### Inactive
-No DNR rulesets enabled, no webRequest listeners. The browser behaves as if the extension weren't
+No DNR rules installed, no webRequest listeners. The browser behaves as if the extension weren't
 installed (aside from the toolbar icon, greyed).
 
 ### Active — whitelist mode (default)
@@ -105,7 +105,7 @@ back/forward list (src/ext/viewer.mjs).
   leave the sandbox. A tab is judged by `pendingUrl || url` — an in-flight navigation is what the
   tab is about to be, and 'about:blank' + pendingUrl is exactly how a tab that raced the rules
   looks. The pre-sweep instant of native execution is a known limit (security.md § Startup race).
-- Activation toggle is instant (enable/disable rulesets + the same sweep); no browser restart.
+- Activation toggle is instant (one dynamic-rule swap + the same sweep); no browser restart.
 
 ## Toolbar UI
 
@@ -135,28 +135,30 @@ back/forward list (src/ext/viewer.mjs).
   benefits from sync across machines); mirror to `storage.local` as fallback for sync quota
   errors. List size well within sync limits for realistic use; cap UI at a few hundred entries.
 
-## DNR implementation sketch (Chrome)
+## DNR implementation sketch
 
 | State | Rules |
 |---|---|
-| Inactive | all rulesets disabled |
-| Whitelist mode | static **catch-all redirect** rule (main_frame, http(s) → `viewer.html?url=\0`, low priority) enabled + one dynamic **`allow`** rule per whitelisted domain (`requestDomains`, higher priority) |
-| Blacklist mode | catch-all ruleset disabled; one dynamic **redirect** rule per blacklisted domain |
+| Inactive | no dynamic rules |
+| Whitelist mode | **catch-all redirect** rule (main_frame, http(s) → `viewer.html?url=\0`, low priority) + one **`allow`** rule per whitelisted domain (higher priority) |
+| Blacklist mode | no catch-all; one **redirect** rule per blacklisted domain |
 | Escape hatch | session rule: `allow`, `tabIds: [tab]`, highest priority |
 
 - `allow` beats `redirect` at higher priority; dynamic-rule quota (tens of thousands in MV3) is
   far above any realistic list size.
-- Keep the catch-all in a **static** ruleset toggled via `updateEnabledRulesets` so whitelist-mode
-  interception works even if the SW is cold; dynamic rules persist across SW restarts too.
-- Firefox: identical rule table. Only the catch-all differs — it must be a **dynamic** rule
-  (the manifest can't name the per-profile UUID), added/removed in the same atomic dynamic swap
-  as the allow rules (`desiredRuleState({staticCatchall: false})`, extension-platform.md).
+- Every rule above is **dynamic**, on both browsers. A static ruleset would have to bake an
+  absolute `regexSubstitution` — i.e. pin the extension id at build time — which no store-assigned
+  id can satisfy (notes/distribution.md). Dynamic rules persist across SW restarts, browser
+  restarts and extension updates, so the only window they don't cover is a fresh install before
+  `onInstalled` runs.
+- One consequence: the whole reconcile is a single `updateDynamicRules`, so it has no mid-flight
+  window that intercepts less than either the old or the new state.
 
 ## Shipping default (landed 2.6, 2026-08-10)
 
 Whitelist mode is the default: `DEFAULT_STATE` in src/ext/state.mjs is
-`{active: true, mode: 'whitelist'}` with empty lists, and the static catch-all ships **enabled in
-the manifest** (scripts/gen-ext.mjs) so a fresh install intercepts before the SW ever runs — the two
-must stay in agreement. The SW disables the catch-all for blacklist/inactive states and that
-toggle persists. Test suites that need native fixture traffic pin their own posture explicitly
-(tier-1 bridge suite: blacklist+empty; tier-2: fixture-domain blacklist).
+`{active: true, mode: 'whitelist'}` with empty lists, so a fresh install sandboxes every site.
+The catch-all that implements it is installed by the background script's first run
+(`onInstalled`, milliseconds, no navigation in flight) and then persists — see § DNR above and
+security.md § Startup race. Test suites that need native fixture traffic pin their own posture
+explicitly (tier-1 bridge suite: blacklist+empty; tier-2: fixture-domain blacklist).

@@ -15,7 +15,7 @@
 import { spawn } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { launch, extensionIdFromManifest, waitForFixtureServer } from '../test/harness/launch.mjs';
+import { launch, extensionId, waitForFixtureServer } from '../test/harness/launch.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const EXT = join(HERE, '../src');
@@ -42,7 +42,7 @@ const fixtures = usesFixture
 if (fixtures) await waitForFixtureServer();
 
 const session = await launch({ extensionDir: EXT, headless: !has('headed'), needsEngine: true });
-const EXT_ID = extensionIdFromManifest(EXT);
+const EXT_ID = await extensionId(session.context);
 const page = await session.context.newPage();
 const [vw, vh] = arg('size', '1600x900').split('x').map(Number);
 await page.setViewportSize({ width: vw, height: vh });

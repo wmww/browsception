@@ -2,8 +2,10 @@
 // page ext/background.html loads this same module (scripts/lib/manifest.mjs).
 // Owns activation/mode/list state (storage.sync) and applies it declaratively
 // to DNR. Interception itself never depends on this script being awake — the
-// rules persist (static ruleset toggle + dynamic rules); it only reconciles
-// state changes. Nothing here may assume a service-worker global (no
+// dynamic rules persist across restarts and updates; it only reconciles state
+// changes. The one window it does own is a FRESH install, where nothing
+// intercepts until `onInstalled` has installed the catch-all (milliseconds,
+// no navigation in flight). Nothing here may assume a service-worker global (no
 // `clients`, no `self.registration`).
 //
 // Also sweeps open tabs whose disposition no longer matches state: it applies
@@ -14,25 +16,17 @@
 // it cannot un-execute anything.
 
 import {
-  applyPlan,
   desiredRuleState,
   sweepAction,
   tabUrl,
   escapeSessionRule,
   escapeRuleId,
-  CATCHALL_RULESET_ID,
 } from './dnr-rules.mjs';
 import { viewerTarget } from './viewer-url.mjs';
 import { normalizeEntry } from './list-match.mjs';
 import { getState } from './state.mjs';
 
 const VIEWER = chrome.runtime.getURL('ext/viewer.html');
-// Chrome ships the whitelist-mode catch-all as a static ruleset (intercepts
-// before this script first runs); Firefox cannot (per-profile UUID), so there
-// it rides in the dynamic set — dnr-rules.mjs desiredRuleState.
-const STATIC_CATCHALL = !!chrome.runtime
-  .getManifest()
-  .declarative_net_request?.rule_resources?.some((r) => r.id === CATCHALL_RULESET_ID);
 
 // Serialized apply: a burst of storage changes must not interleave DNR calls.
 let applying = Promise.resolve();
@@ -43,29 +37,18 @@ function applyState() {
 
 async function doApply() {
   const state = await getState();
-  const desired = desiredRuleState(state, VIEWER, { staticCatchall: STATIC_CATCHALL });
+  const desired = desiredRuleState(state, VIEWER);
 
-  // Step order matters — applyPlan owns it (a reconcile's mid-flight window
-  // must never intercept less than both the old and the new state). Dynamic
-  // rules are replaced wholesale in one atomic update; session rules are NOT
-  // touched here: the bridge's header rules and (2.3) escape hatches live
-  // there, each managing its own id namespace.
-  const enabled = await chrome.declarativeNetRequest.getEnabledRulesets();
-  for (const step of applyPlan(enabled, desired)) {
-    if (step.op === 'catchall') {
-      await chrome.declarativeNetRequest.updateEnabledRulesets(
-        step.enable
-          ? { enableRulesetIds: [CATCHALL_RULESET_ID] }
-          : { disableRulesetIds: [CATCHALL_RULESET_ID] },
-      );
-    } else {
-      const existing = await chrome.declarativeNetRequest.getDynamicRules();
-      await chrome.declarativeNetRequest.updateDynamicRules({
-        removeRuleIds: existing.map((r) => r.id),
-        addRules: step.rules,
-      });
-    }
-  }
+  // The whole rule state is one atomic updateDynamicRules (catch-all
+  // included), so a reconcile has no mid-flight window in which it intercepts
+  // less than either the old or the new state. Session rules are NOT touched
+  // here: the bridge's header rules and (2.3) escape hatches live there, each
+  // managing its own id namespace.
+  const existing = await chrome.declarativeNetRequest.getDynamicRules();
+  await chrome.declarativeNetRequest.updateDynamicRules({
+    removeRuleIds: existing.map((r) => r.id),
+    addRules: desired.dynamicRules,
+  });
 
   // Only now: un-sandboxing a tab before its allow rule exists would just
   // bounce off the catch-all back into the viewer. (Sweeping the sandbox

@@ -6,7 +6,7 @@
 // Usage: node scripts/scroll-roundtrip.mjs [url] [dpr]
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { launch, extensionIdFromManifest } from '../test/harness/launch.mjs';
+import { launch, extensionId } from '../test/harness/launch.mjs';
 
 const EXT = join(dirname(fileURLToPath(import.meta.url)), '../src');
 const target = process.argv[2] ?? 'https://loginasroot.net/';
@@ -14,7 +14,7 @@ const dpr = Number(process.argv[3] ?? '1.5');
 
 const session = await launch({ extensionDir: EXT, headless: true });
 const { context } = session;
-const EXT_ID = extensionIdFromManifest(EXT);
+const EXT_ID = await extensionId(session.context);
 const page = await context.newPage();
 await page.setViewportSize({ width: 1280, height: 800 });
 if (dpr !== 1) {

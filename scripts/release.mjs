@@ -19,7 +19,7 @@
 //   3. stage     scripts/stage-engine.mjs  hardlinks the matching artifact and
 //                the host-root assets into src/. Unpins an A/B pin on purpose:
 //                a release ships the engine built from these sources.
-//   4. manifest  scripts/gen-ext.mjs       chrome only — manifest + static rules.
+//   4. manifest  scripts/gen-ext.mjs       chrome only — src/manifest.json.
 //   5. pack      scripts/pack-ext.mjs      dist/<target>/, hardlinks into src/.
 //   6. zip       scripts/lib/zip.mjs       the uploadable archive.
 //

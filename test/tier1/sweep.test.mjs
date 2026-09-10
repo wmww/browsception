@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:http';
-import { launch, extensionIdFromManifest } from '../harness/launch.mjs';
+import { launch, extensionId } from '../harness/launch.mjs';
 
 const EXT = join(dirname(fileURLToPath(import.meta.url)), '../../src');
 
@@ -29,7 +29,7 @@ before(async () => {
   base = `http://127.0.0.1:${server.address().port}`;
   browser = await launch({ extensionDir: EXT });
   context = browser.context;
-  extId = extensionIdFromManifest(EXT);
+  extId = await extensionId(context);
   cfg = await context.newPage();
   await cfg.goto(`chrome-extension://${extId}/ext/viewer.html?stub=1`);
 }, { timeout: 30000 });
@@ -61,7 +61,8 @@ test('sweep catches a tab whose navigation is still in flight', async () => {
   // request on the wire, no rule will ever re-evaluate it.
   await setState({ active: true, mode: 'whitelist', whitelist: ['127.0.0.1'], blacklist: [] });
   await pollUntil(
-    () => cfg.evaluate(() => chrome.declarativeNetRequest.getDynamicRules().then((r) => r.length === 1)),
+    // catch-all + the one allow rule (whitelist mode installs both together)
+    () => cfg.evaluate(() => chrome.declarativeNetRequest.getDynamicRules().then((r) => r.length === 2)),
     'allow rule applied',
   );
   const victim = await context.newPage();

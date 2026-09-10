@@ -19,7 +19,7 @@
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
-import { launch, extensionIdFromManifest, requireStagedEngine } from '../../test/harness/launch.mjs';
+import { launch, extensionId, requireStagedEngine } from '../../test/harness/launch.mjs';
 import { BENCH_HTTPS_PORT } from '../../test/harness/ports.mjs';
 import { startBenchServer, BENCH_ORIGIN, benchResolverRule, FIXTURE_DIR } from './lib/server.mjs';
 import { installBench } from './lib/page.mjs';
@@ -105,7 +105,7 @@ const newSession = () => launch({
   extraResolverRules: benchResolverRule(BENCH_HTTPS_PORT),
 });
 const session = await newSession();
-const EXT_ID = extensionIdFromManifest(EXT);
+const EXT_ID = await extensionId(session.context);
 const provenance = collectProvenance(EXT);
 const warnings = [];
 if (provenance.engineBuildRunning)

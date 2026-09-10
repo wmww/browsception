@@ -23,8 +23,11 @@ import { isRedirectEntry, setCookiesOf } from './redirect-capture.mjs';
 import { BRIDGE_RULE, baseSessionRules, perRequestHeaderRule } from '../ext/bridge-rules.mjs';
 
 // Fetch-forbidden request headers the engine may legitimately send; these
-// ride via the per-request DNR rule instead of the fetch init.
-const DNR_HEADERS = new Set(['cookie', 'referer', 'origin']);
+// ride via DNR instead of the fetch init. User-Agent is special: the engine
+// sends the same string on every request, so the first one seen becomes the
+// base rule's (one rule per profile, no per-request churn) and only a
+// differing one rides per-request.
+const DNR_HEADERS = new Set(['cookie', 'referer', 'origin', 'user-agent']);
 
 // Forbidden headers we silently drop (the host fetch stack owns them).
 // prettier-ignore
@@ -32,7 +35,7 @@ const DROP_HEADERS = new Set([
   'accept-charset', 'accept-encoding', 'access-control-request-headers',
   'access-control-request-method', 'connection', 'content-length', 'cookie2',
   'date', 'dnt', 'expect', 'host', 'keep-alive', 'te', 'trailer',
-  'transfer-encoding', 'upgrade', 'via', 'user-agent',
+  'transfer-encoding', 'upgrade', 'via',
 ]);
 const isDropped = (name) =>
   DROP_HEADERS.has(name) || name.startsWith('proxy-') || name.startsWith('sec-');
@@ -57,12 +60,14 @@ export class Bridge {
   #inflight = new Map(); // reqId -> {ctrl, ruleId, unacked, ackWaiter, idleTimer}
   #nextRuleId = BRIDGE_RULE.PER_REQUEST_MIN_ID;
   #usedRuleIds = new Set();
+  #baseInstall = null; // promise of the current base rule being installed
+  #adoptedUA = false; // the base rule carries an engine-sent UA
 
   /**
    * @param {object} engine bytes/strings engine interface (header comment)
    * @param {{
    *   capture: import('./redirect-capture.mjs').RedirectCapture,
-   *   userAgent: string,
+   *   userAgent?: string, // wire UA until the engine sends one (tests)
    *   chromeApi?: typeof chrome,
    *   guardOpts?: {allowPrivateNetwork?: boolean},
    *   maxResponseBytes?: number,
@@ -73,7 +78,7 @@ export class Bridge {
   constructor(engine, opts) {
     this.engine = engine;
     this.capture = opts.capture;
-    this.userAgent = opts.userAgent;
+    this.userAgent = opts.userAgent ?? null;
     // 2.4 sandboxed->native boundary: called with the URL of every http(s)
     // TOP-LEVEL document request ("main":1 from the engine); returning
     // 'native' cancels the request engine-side and fires onNativeNavigation
@@ -99,10 +104,26 @@ export class Bridge {
 
   async init() {
     this.capture.start(new URL(this.chrome.runtime.getURL('')).origin, this.chrome);
-    await this.chrome.declarativeNetRequest.updateSessionRules({
-      removeRuleIds: baseSessionRules(this.extId, { userAgent: this.userAgent }).map((r) => r.id),
-      addRules: baseSessionRules(this.extId, { userAgent: this.userAgent }),
+    await this.#installBase();
+  }
+
+  #installBase() {
+    const rules = baseSessionRules(this.extId, { userAgent: this.userAgent });
+    this.#baseInstall = this.chrome.declarativeNetRequest.updateSessionRules({
+      removeRuleIds: rules.map((r) => r.id),
+      addRules: rules,
     });
+    return this.#baseInstall;
+  }
+
+  // Engine-sent UA: the first one becomes the base rule's; returns the
+  // install to await, or null when the UA must ride the per-request rule.
+  #adoptUA(ua) {
+    if (ua === this.userAgent) return this.#baseInstall;
+    if (this.#adoptedUA) return null;
+    this.#adoptedUA = true;
+    this.userAgent = ua;
+    return this.#installBase();
   }
 
   async dispose() {
@@ -199,16 +220,17 @@ export class Bridge {
       if (DNR_HEADERS.has(n)) dnr[n] = value;
       else if (!isDropped(n)) fetchHeaders.push([name, value]);
     }
+    const baseInstall = dnr['user-agent'] != null ? this.#adoptUA(dnr['user-agent']) : null;
+    if (baseInstall) delete dnr['user-agent'];
     const rule = Object.keys(dnr).length
       ? perRequestHeaderRule(this.#allocRuleId(), req.url, dnr, this.extId)
       : null;
-    if (rule) {
-      st.ruleId = rule.id;
-      try {
-        await this.chrome.declarativeNetRequest.updateSessionRules({ addRules: [rule] });
-      } catch (e) {
-        return this.#fail(id, NET_ERR.PROTOCOL, `dnr: ${e.message}`);
-      }
+    if (rule) st.ruleId = rule.id;
+    try {
+      if (baseInstall) await baseInstall;
+      if (rule) await this.chrome.declarativeNetRequest.updateSessionRules({ addRules: [rule] });
+    } catch (e) {
+      return this.#fail(id, NET_ERR.PROTOCOL, `dnr: ${e.message}`);
     }
 
     let res;

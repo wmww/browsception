@@ -683,8 +683,8 @@ async function bootEngine() {
   // engine boots and emits its first request.
   const bridge = new Bridge(link, {
     capture: new RedirectCapture(),
-    // Host UA: sites should serve the same content they'd serve this browser.
-    userAgent: navigator.userAgent,
+    // No userAgent: the wire carries the engine's own UA (bridge-rules.mjs),
+    // so it matches what guest JS reads from navigator.userAgent.
     guardOpts: { allowPrivateNetwork: listState.allowPrivateNetwork },
     // The INITIAL target is exempt: it was already dispositioned by whatever
     // opened this viewer (DNR redirect, sweep, dev/test direct-open); the

@@ -671,3 +671,26 @@ lands in the viewer, badge `S`, and after a full browser restart the catch-all i
 managed (security.md); and a fresh install has a new millisecond-scale window before `onInstalled`
 installs the rule — no navigation is in flight then, and the sweep covers it as it does the
 startup race.
+
+## 2026-09-10 — Google captcha loop: wire UA vs guest UA
+
+**Hypothesis**: Google search in a viewer tab captchas and keeps refusing after the captcha is
+solved. The bridge's base DNR rule stamped the host's `navigator.userAgent` (Chrome/Firefox on
+Linux) on every request and stripped `sec-ch-ua*`, while guest JS reports the engine's
+`standardUserAgent()` (Safari 17 / X11). Header-vs-fingerprint mismatch is a classic bot score.
+
+**What ran**: `user-agent` moved from the bridge's DROP set to the DNR-carried set; first
+engine-sent UA re-installs the base rule with it (`Bridge#adoptUA`), differing ones ride the
+per-request rule; viewer stops passing the host UA. Scratch probe (headless Chromium 152, real
+engine): fixture oracle wire UA, guest `navigator.userAgent`, then
+`https://www.google.com/search?q=browsception+webkit+wasm`; same script re-run on the stashed
+old code from the same IP within minutes.
+
+**Numbers / results**: new code: wire UA == guest UA (`…AppleWebKit/605.1.15 … Version/17.0
+Safari/605.1.15`), Google → results page, title "… - Google Search", no captcha, twice. Old code:
+wire UA `HeadlessChrome/152` → `/sorry/index` ("unusual traffic") on the FIRST request. Side
+probe: a DNR session rule CAN set `sec-fetch-mode/dest/site/user` on bridge fetches (Chrome).
+Tier-0/1 35, tier-2 Chrome 38, Firefox 8/9 (known crash-reload).
+
+**Decision**: shipped. Sec-Fetch fidelity filed as issues/sec-fetch-fidelity.md — not needed for
+Google from this IP, but it's the remaining fetch-vs-navigation tell.

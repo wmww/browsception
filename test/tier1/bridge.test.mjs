@@ -91,6 +91,28 @@ test('engine-sent Cookie/Referer/Origin ride via per-request DNR rule; rule clea
   );
 });
 
+test('engine-sent UA: first one becomes the base rule, a differing one rides per-request', async () => {
+  const ENGINE_UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 Safari/605.1.15';
+  const ua = async (headers) => {
+    const t = await request({ url: 'https://app.bstest/echo-headers', headers });
+    return JSON.parse(t.bodyText)['user-agent'];
+  };
+  assert.equal(await ua([['User-Agent', ENGINE_UA]]), ENGINE_UA);
+  let rules = await page.evaluate(() => chrome.declarativeNetRequest.getSessionRules());
+  const base = rules.find((r) => r.id === 9001);
+  assert.equal(base.action.requestHeaders.find((o) => o.header === 'user-agent').value, ENGINE_UA);
+  assert.deepEqual(rules.filter((r) => r.id >= 10000), [], 'adopted UA needs no per-request rule');
+  // Same UA again: no rule churn; a differing one rides per-request and is cleaned up.
+  assert.equal(await ua([['User-Agent', ENGINE_UA]]), ENGINE_UA);
+  assert.equal(await ua([['User-Agent', 'Quirk/1']]), 'Quirk/1');
+  rules = await page.evaluate(() => chrome.declarativeNetRequest.getSessionRules());
+  assert.equal(rules.find((r) => r.id === 9001).action.requestHeaders.find((o) => o.header === 'user-agent').value, ENGINE_UA);
+  assert.deepEqual(rules.filter((r) => r.id >= 10000), []);
+  // No engine UA: the base rule's rides.
+  assert.equal(await ua([]), ENGINE_UA);
+  await boot({}); // back to the suite's default UA
+});
+
 test('POST body reaches the wire intact', async () => {
   const t = await request({
     url: 'https://app.bstest/echo-body',

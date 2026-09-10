@@ -25,8 +25,10 @@ Tradeoffs to be aware of:
   protocols) is out of scope. WebSocket: bridge engine WebSocket to a host `WebSocket` — the
   extension origin can open cross-origin WS connections. (MVP: defer.)
 - Request fidelity: `fetch()` can't set forbidden headers; a scoped DNR `modifyHeaders` rule
-  rewrites UA/Cookie/Referer/Origin on bridge requests (see extension-platform.md). We control UA
-  string per-profile.
+  rewrites UA/Cookie/Referer/Origin on bridge requests (see extension-platform.md). The wire UA
+  is the ENGINE's (`UserAgentEmscripten.cpp`, a Safari-17-on-Linux string like WebKitGTK's),
+  never the host browser's: it must match guest `navigator.userAgent` or sites score the
+  mismatch as a bot (Google captcha-looped on it — experiment-log 2026-09-10).
 
 ## Where the boundary sits (important)
 
@@ -113,8 +115,10 @@ Implementation notes: `cache:'no-store'` on bridge fetches (a host-cache hit wou
 and lose Set-Cookie capture; engine has its own HTTP cache anyway); `referrer:''` + base DNR rule
 strips Origin/Referer/sec-ch-ua* so the extension origin and host browser never leak when the
 engine didn't send those headers; per-request DNR session rule (priority 2, exact urlFilter)
-carries engine-sent Cookie/Referer/Origin and beats the base strips; webRequest capture matches on
-`initiator` only (extension-page fetches carry the tab's id, so never filter on tabId).
+carries engine-sent Cookie/Referer/Origin and beats the base strips; the engine's User-Agent is
+DNR-carried too, but the first one seen is adopted into the base rule (one install per viewer, no
+per-request churn — `Bridge#adoptUA`) and only a differing UA rides per-request; webRequest
+capture matches on `initiator` only (extension-page fetches carry the tab's id, so never filter on tabId).
 
 Redirect capture, per browser (redirect-capture.mjs feature-detects; verified 2026-09-09):
 

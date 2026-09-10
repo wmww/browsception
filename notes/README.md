@@ -293,7 +293,15 @@ pack-ext → zip, each already idempotent, so a re-run is ~7 s and never rebuild
 Chrome's own `_metadata/`), and `scripts/lib/zip.mjs` writes reproducible archives with no npm
 dep and no `zip` binary. [release.md](release.md).
 
-Open issues in issues/ (guest-JS wedge, rcap dynamic budget, host-present ceiling at large
+*Wire UA = engine UA* (2026-09-10) — the bridge stamped the HOST browser's `navigator.userAgent`
+on every request while guest JS read WebKit's own Safari-17-on-Linux string, and the base rule
+strips `sec-ch-ua*`: "Chrome with no client hints, whose JS says Safari". Google's sorry page
+looped on exactly that (A/B: old headers → `/sorry/index` on first load, new → results). The
+engine's User-Agent now rides DNR like Cookie/Referer, adopted into the base rule on first sight
+(networking.md). Remaining second-order tell: `Sec-Fetch-Mode: cors`/`Dest: empty` on document
+loads — DNR can rewrite those (verified), issues/sec-fetch-fidelity.md.
+
+Open issues in issues/ (guest-JS wedge, rcap dynamic budget, sec-fetch fidelity, host-present ceiling at large
 framebuffers, CLoop `join` returned a non-string, Firefox tier-2 crash-reload scenario). Next
 work: [roadmap.md](roadmap.md).
 

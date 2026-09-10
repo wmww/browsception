@@ -23,6 +23,18 @@ test('base rule sets UA, strips client hints and origin/referer, scoped to bridg
   assert.deepEqual(removed, ['origin', 'referer', ...CLIENT_HINT_HEADERS]);
 });
 
+test('base rule without a UA leaves user-agent alone (host string rides)', () => {
+  const [rule] = baseSessionRules(EXT);
+  assert.ok(!rule.action.requestHeaders.some((o) => o.header === 'user-agent'));
+});
+
+test('per-request rule carries a differing engine UA', () => {
+  const rule = perRequestHeaderRule(10001, 'https://a.bstest/', { 'user-agent': 'Quirk/1' }, EXT);
+  assert.deepEqual(rule.action.requestHeaders, [
+    { header: 'user-agent', operation: 'set', value: 'Quirk/1' },
+  ]);
+});
+
 test('per-request rule carries exactly the engine-sent forbidden headers, exact-URL scoped', () => {
   const url = 'https://app.bstest/a?b=c&d=e';
   const rule = perRequestHeaderRule(10001, url, { cookie: 'a=1; b=2', origin: 'https://x.y' }, EXT);

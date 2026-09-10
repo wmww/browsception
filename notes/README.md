@@ -308,7 +308,9 @@ found two more (cache headers, Accept-Language); all captured in plans/wire-head
 
 Open issues in issues/ (guest-JS wedge, rcap dynamic budget, host-present ceiling at large
 framebuffers, CLoop `join` returned a non-string, Firefox tier-2 crash-reload scenario). Plans in
-plans/ (wire-header fidelity, WebSocket bridge, permission trim). Next work: [roadmap.md](roadmap.md).
+plans/, in intended order: permission trim (small, changes the manifest the others test against),
+wire-header fidelity (settles the DNR rule shape the WebSocket rules reuse), WebSocket bridge
+(largest; nothing waits on it). Next work: [roadmap.md](roadmap.md).
 
 ## Key decisions
 

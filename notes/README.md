@@ -42,6 +42,8 @@ surface for speed (no WebGPU for the nested engine, no nested-wasm-runs-natively
 
 ## Status
 
+**v1 released** (2026-09-09) — the first public packages: [releases/tag/v1](https://github.com/wmww/browsception/releases/tag/v1), Chrome zip + Firefox xpi, 33.5 MB each, both browsers from one build. Checklist in [releasing.md](releasing.md).
+
 **MVP complete** (2026-08-10, all gates passed). The MVP plan is retired; its surviving content
 lives in [roadmap.md](roadmap.md). Phase summaries:
 
@@ -68,7 +70,7 @@ lives in [roadmap.md](roadmap.md). Phase summaries:
   sweep (experiment-log.md 2026-08-10).
 
 Tests: `npm test` = tiers 0–1, pure headless, per-commit. `npm run test:tier2` = 29 Chrome
-scenarios (incl. 6 HiDPI at dpr 2/1.5) + a 7-scenario Firefox subset (`test/tier2/firefox.test.mjs`,
+scenarios (incl. 6 HiDPI at dpr 2/1.5) + a 9-scenario Firefox subset (`test/tier2/firefox.test.mjs`,
 system Firefox over BiDi) against the staged engine artifact (~2 min; restage with
 scripts/stage-engine.mjs after engine rebuilds — it also stages the extension's host-root assets;
 src/engine/, src/vendor/ and the two injection payloads are gitignored). Engine iteration is
@@ -259,7 +261,7 @@ three feature-detected differences: the catch-all is a **dynamic** rule there (p
 `originUrl`/no-`extraHeaders` in the capture. Probed 2026-09-09 on Firefox 155 (open-questions #13):
 DNR redirect/allow/session rules, session `modifyHeaders`, webRequest capture, OPFS, 4 GB
 non-shared memory in a worker, WebGL2 presenter all work. Tier-2: 29 Chrome scenarios + the
-7-scenario Firefox subset green from one tree (testing.md); bench A/B in experiment-log.md.
+9-scenario Firefox subset green from one tree (testing.md); bench A/B in experiment-log.md.
 Scenario 21 retired (tearing is structurally impossible now).
 
 *Firefox on real sites* (2026-09-09, later) — `http://google.com/` failed on Firefox with a bare

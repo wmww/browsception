@@ -18,3 +18,7 @@ than the viewer; Chrome's equivalent scenario passes.
 
 First step: have `page.reload()`/`waitForFunction` pin the realm or wait for a navigation event
 before polling, then re-run. Cheap to confirm — 0.5 s to failure.
+
+Update (2026-09-09, later): passed (1.1 s) in a full `npm run test:tier2` run on the same host
+— so it is flaky, not deterministic. Releases gate on tier 2 (notes/releasing.md); if it
+recurs there, rerun once, then fix the harness realm handling rather than skipping it.

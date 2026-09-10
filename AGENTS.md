@@ -13,6 +13,9 @@ Issues live in `issues/`. Do not solve them unless asked or the fix falls out of
 ## Plans
 Future plans live in `plans/`. Do not execute them unless asked, or write new plans unless asked. Like issues, delete them and integrate their contents into your notes when they are complete.
 
+## Releases
+"Make a release" means follow `notes/releasing.md` step by step. That request is the approval to push and to create the GitHub release; stop and ask whenever a step's check doesn't come out as described.
+
 ## Workflow
 - This project is agent-built, you own the code.
 - Refactor freely as needed. don't trust that existing code/comments/notes are necessarily correct, or existing design decisions are optimal.

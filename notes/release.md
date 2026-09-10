@@ -21,30 +21,11 @@ Outputs: `dist/<target>/` (loadable unpacked) and `dist/browsception-<version>-c
 
 One number, `VERSION` in `scripts/lib/manifest.mjs`, plain integers (v1, v2, …): nothing has a
 stable API, and manifests only need 1–4 dot-separated integers that increase. package.json is
-`private` with no version field so nothing can drift. Cutting a release: bump `VERSION`,
-commit, `git tag v<N>`, `npm run release`, attach `dist/*.zip` + `*.xpi` to a GitHub release
-on that tag. release.mjs prints the version + short SHA and **warns** (start and end, never
-fails) when the tree has uncommitted tracked changes or HEAD isn't tagged `v<VERSION>` — the
-archives are byte-reproducible, so a tagged clean build is what makes an asset verifiable.
+`private` with no version field so nothing can drift. release.mjs prints the version + short
+SHA and **warns** (start and end, never fails) when the tree has uncommitted tracked changes or
+HEAD isn't tagged `v<VERSION>` — the archives are byte-reproducible, so a tagged clean build is
+what makes an asset verifiable.
 
-## Packaging
+## Cutting a release
 
-`scripts/pack-ext.mjs <target>` assembles `dist/<target>/` as hardlinks into `src/` (the 100 MB
-engine costs nothing) minus what the other browser owns, plus that browser's manifest:
-
-- **chrome** — `src/manifest.json` verbatim (gen-ext owns it), minus `ext/background.html`.
-  Chrome also loads `src/` directly; the dist tree exists so the package excludes `_metadata/`,
-  which Chrome itself writes into an unpacked root.
-- **firefox** — manifest from `scripts/lib/manifest.mjs`. This is what the tier-2 Firefox harness
-  installs.
-
-Neither package pins an extension id: no `key`, no static rulesets, nothing that bakes an
-absolute `chrome-extension://…` URL. Every DNR rule is installed at runtime, so a store-assigned
-id works unchanged (notes/distribution.md).
-
-`scripts/lib/zip.mjs` is a ~90-line zip writer (no npm dep, no `zip` binary): sorted entries,
-fixed 1980 timestamps and permissions, so identical inputs give a byte-identical archive —
-verified identical across two checkouts. Plain zip32; our largest member is the 100 MB wasm,
-nowhere near the 4 GB zip64 line.
-
-Not run by release: tests. A release build is a build, not a gate.
+See [releasing.md](releasing.md) — the step-by-step checklist for "make a release".

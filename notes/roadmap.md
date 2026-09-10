@@ -51,7 +51,7 @@ Never: printing, DRM, nested GPU/JIT.
 |---|---|---|
 | CLoop too slow for heavy sites | real-site browsing | Accept + document; long-term AOT research (weval-style). Switching to Gecko does NOT buy JS speed — its PBL measured slower than CLoop (engine.md) |
 | Per-instance memory blows past ~2 GB | usage measurement | WebKit cache tuning, single-tab-at-a-time mode, tab discard |
-| Store review rejects broad permissions | submission | Ship allowlist/per-site-activation build; self-host crx/unpacked |
+| Store review rejects broad permissions | submission | Ship allowlist/per-site-activation build; GitHub release + load-unpacked / AMO-unlisted xpi (distribution.md) |
 
 ## Working agreements (from the MVP plan)
 

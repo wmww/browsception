@@ -145,7 +145,8 @@ result appended here (keep the question, add `**Answer (date):**`).
 17. **Store review risk.** A `<all_urls>` + DNR-redirect-everything extension with a 100+ MB wasm
     blob will get human review. Prepare: clear listing, source availability, scoped-permission
     onboarding (per-site activation mode as the store-friendly default?). CheerpJ's MV3 postmortem
-    is the cautionary tale.
+    is the cautionary tale. Channels, requirements and the checklist: distribution.md;
+    the id pin that would break a store install: plans/dynamic-id.md.
 18. **POST-navigation loss** (MV3 can't recover top-level POST bodies): quantify how often this
     bites real flows; possible mitigations inside the engine (most form posts originate inside the
     nested world and never hit the limitation).

@@ -14,13 +14,14 @@ Why:
 
 ## How it works
 
-The extension (Chrome MV3) intercepts navigations with declarativeNetRequest and redirects
-them to its viewer page. The viewer boots a ~100 MB wasm build of WebKit (WebCore + JSC in
-CLoop interpreter mode, Skia CPU raster) and drives it through a small versioned ABI
-(`src/abi/bib_abi.h`): frames come out through a shared-memory framebuffer, input events go
-in, and all networking rides the extension's own CORS-exempt `fetch()` — no external proxy
-servers, TLS terminates in the host browser. Cookies/localStorage persist to OPFS. The
-engine's history mirrors into real tab history, so back/forward/reload just work.
+The extension intercepts navigations with declarativeNetRequest and redirects them to its
+viewer page. The viewer boots a ~100 MB wasm build of WebKit (WebCore + JSC in CLoop
+interpreter mode, Skia CPU raster) and drives it through a small versioned ABI
+(`src/abi/bib_abi.h`): the engine runs in a dedicated Worker, frames come out as a
+transferred pixel band per present, input events go in, and all networking rides the
+extension's own CORS-exempt `fetch()` — no external proxy servers, TLS terminates in the host
+browser. Cookies/localStorage persist to OPFS. The engine's history mirrors into real tab
+history, so back/forward/reload just work.
 
 Two modes: **whitelist** (default — everything runs sandboxed except domains you trust) and
 **blacklist** (everything native except listed domains).
@@ -87,7 +88,7 @@ costs the ~1.5 h / ~12 GB below.
 bash scripts/build-engine.sh     # one-time ~1.5 h: fetches pinned WebKit + emsdk,
                                  # builds ~12 GB of deps, then the engine (Linux host)
 node scripts/stage-engine.mjs    # hardlink engine artifacts into src/engine/
-node scripts/gen-ext.mjs         # generate manifest + DNR rulesets
+node scripts/gen-ext.mjs         # generate the manifest
 # then load src/ as an unpacked extension (chrome://extensions, Developer mode)
 node scripts/pack-ext.mjs firefox   # Firefox needs its own manifest: dist/firefox/
 ```

@@ -22,3 +22,8 @@ before polling, then re-run. Cheap to confirm — 0.5 s to failure.
 Update (2026-09-09, later): passed (1.1 s) in a full `npm run test:tier2` run on the same host
 — so it is flaky, not deterministic. Releases gate on tier 2 (notes/releasing.md); if it
 recurs there, rerun once, then fix the harness realm handling rather than skipping it.
+
+Update (2026-09-09, v1 release): passed in both full tier-2 runs of the release checklist
+(1.1 s, 1.1 s). Now 3 consecutive passes in a full run vs 2 failures in the firefox-only run —
+the realm race is real but only bites `test:tier2:firefox` on its own so far. Still worth the
+harness fix; not a release blocker.

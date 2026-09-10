@@ -93,8 +93,14 @@ since both checkouts' objects stay in the graph).
    neighbour's engine because stamps looked alike, 2026-08-14):
    - stamps carry the builder: `<time>-<sha>[-dirty]-<checkout>`; `--list` shows every
      snapshot's branch/checkout/source_hash and which is staged/matching.
-   - every staging action prints one provenance line (stamp, branch, checkout, source_hash),
-     and engine-backed tests/probes print it at startup, so measurement logs self-attribute.
+   - **a stamp is a name, not provenance.** It records the *first* build that produced those
+     bytes; a later build from different-but-equivalent sources dedupes onto that snapshot and
+     only appends to `also_source_hashes`. So a `-dirty` stamp on another branch can still be an
+     exact match for your clean checkout. Only the hash comparison answers "built from my
+     sources" — which is what the staging line now states outright ("sources <hash> = this
+     checkout"), after a stamp was misread as provenance and stalled the v1 release (2026-09-09).
+   - every staging action prints one provenance line (attribution + stamp), and engine-backed
+     tests/probes print it at startup, so measurement logs self-attribute.
      They also warn if an engine build is running (concurrent ninja skews timings).
    - `--from <stamp>` pins explicitly (`--from mine` = newest built from this checkout); pinning
      another checkout's artifact is allowed — that's the A/B case — but warns by name. A pin is

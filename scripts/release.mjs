@@ -28,13 +28,16 @@
 //
 // Provenance: the version is scripts/lib/manifest.mjs VERSION, and a published
 // archive should come from a clean checkout tagged `v<VERSION>` so it can be
-// rebuilt byte-for-byte (zip.mjs is deterministic). A dirty tree or a missing
-// tag is a warning, not an error — dev builds are the common case.
+// rebuilt byte-for-byte (zip.mjs is deterministic). After staging, this also
+// checks that the packaged ENGINE is attributed to this checkout's committed
+// engine sources — the one provenance fact a stamp cannot tell you. All of
+// these are warnings, not errors: dev builds are the common case.
 
 import { spawnSync } from 'node:child_process';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { checkoutRoot } from './lib/paths.mjs';
+import { engineSrcHash } from './lib/engine-src-hash.mjs';
 import { VERSION } from './lib/manifest.mjs';
 import { packExt, TARGETS } from './pack-ext.mjs';
 import { writeZip } from './lib/zip.mjs';
@@ -79,6 +82,7 @@ function entries(dir, rel = '') {
 // Provenance warnings, printed now and again at the end (the top scrolls away).
 const git = (...a) => spawnSync('git', a, { cwd: checkoutRoot, encoding: 'utf8' }).stdout ?? '';
 const warnings = [];
+const engineDirty = !!git('status', '--porcelain', '--untracked-files=no', '--', 'engine/').trim();
 if (git('status', '--porcelain', '--untracked-files=no').trim()) {
   warnings.push('working tree has uncommitted changes');
 }
@@ -101,6 +105,23 @@ run('node', ['scripts/wt-setup.mjs', '--quiet']);
 
 heading('stage — scripts/stage-engine.mjs');
 run('node', ['scripts/stage-engine.mjs']);
+// The provenance question a published package must answer is "was this engine
+// built from the sources at this commit?". Answer it here, from the hashes
+// stage-engine recorded — NOT from the snapshot's stamp, whose sha and -dirty
+// name only the first build that produced these bytes (see stage-engine.mjs).
+{
+  // No .staged-meta.json means stage-engine copied raw build output: unattributed.
+  let staged = {};
+  try { staged = JSON.parse(readFileSync(join(checkoutRoot, 'src/engine/.staged-meta.json'), 'utf8')); } catch {}
+  const mine = engineSrcHash(checkoutRoot);
+  if (!(staged.source_hashes ?? []).includes(mine))
+    warnings.push(`the staged engine is NOT attributed to this checkout's engine sources (${mine});` +
+      ` it is ${staged.stamp ?? 'unattributed raw build output'}. Build it: bash scripts/build-engine.sh`);
+  else if (engineDirty)
+    warnings.push('engine/ has uncommitted changes, so the packaged engine is not rebuildable from any commit');
+  else
+    console.log(`engine sources ${mine} are committed and match the staged artifact`);
+}
 
 if (targets.includes('chrome')) {
   heading('manifest — scripts/gen-ext.mjs');

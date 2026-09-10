@@ -56,6 +56,9 @@ const allowProxy = process.argv.includes('--allow-proxy');
 const readJson = (p) => {
   try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return {}; }
 };
+// Hashing the engine sources walks a large tree; every caller wants one answer.
+let srcHashCache = null;
+const srcHash = () => (srcHashCache ??= engineSrcHash(checkoutRoot));
 const readMeta = (dir) => readJson(join(dir, 'meta.json'));
 const snapshotHashes = (dir) => {
   const m = readMeta(dir);
@@ -94,11 +97,23 @@ const stagedStillMatches = (hash) => {
   return (m.source_hashes ?? []).includes(hash)
     && ['embedder.js', 'embedder.wasm', CONFIG].every((f) => existsSync(join(OUT, f)));
 };
+// What the identity line must answer is "were these bits built from THIS
+// checkout's engine sources?" — which the stamp does not say. A stamp records
+// the FIRST build that produced these bytes (its sha, its -dirty state); a
+// later build from different-but-equivalent sources dedupes onto it and only
+// adds a hash to also_source_hashes. So print the attribution, not the name:
+// reading `-dirty` in a stamp as "not built from this commit" once stalled a
+// release whose artifact was an exact match (2026-09-09).
 const identityLine = (src, mode) => {
   if (mode !== 'link') return `engine: raw build output from ${src} (unattributed — prefer snapshots)`;
   const m = readMeta(src);
-  return `engine: ${basename(src)} — branch ${m.branch ?? '?'}, checkout ${basename(m.checkout ?? '?')},` +
-    ` source_hash ${m.source_hash ?? '?'}`;
+  const mine = srcHash();
+  const attribution = snapshotHashes(src).includes(mine)
+    ? `sources ${mine} = this checkout`
+    : `sources ${m.source_hash ?? '?'} — NOT this checkout (${mine})`;
+  return `engine: ${basename(src)} — ${attribution}` +
+    ` (stamp: branch ${m.branch ?? '?'}, checkout ${basename(m.checkout ?? '?')},` +
+    ` sha ${m.sha ?? '?'}${m.dirty ? '-dirty' : ''} — names the first build of these bytes)`;
 };
 const isStagedFrom = (dir) => {
   try { return statSync(join(dir, 'embedder.wasm')).ino === statSync(join(OUT, 'embedder.wasm')).ino; }
@@ -106,7 +121,7 @@ const isStagedFrom = (dir) => {
 };
 
 if (listMode) {
-  const hash = engineSrcHash(checkoutRoot);
+  const hash = srcHash();
   const staged = readJson(STAGED_META);
   console.log(`this checkout: ${basename(checkoutRoot)} (source_hash ${hash})` +
     (staged.pinned ? ` — PINNED to ${staged.stamp}` : ''));
@@ -159,7 +174,7 @@ function stageOnce() {
       process.exit(1);
     }
   } else {
-    const hash = engineSrcHash(checkoutRoot);
+    const hash = srcHash();
     const match = snapshots().find((d) => snapshotHashes(d).includes(hash) && stageable(d));
     if (match) {
       src = match;

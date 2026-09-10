@@ -31,7 +31,7 @@ git log --oneline v<prev>..HEAD         # what's going in (first release: whole 
 
 New version is `<prev> + 1`. Read the log and `git diff --stat v<prev>..HEAD`; you will need
 it for the notes, and it tells you whether anything under `engine/`, `src/shim/` or `src/abi/`
-changed (the engine gets rebuilt in step 4 either way — just know whether to expect that).
+changed — i.e. whether step 4 will actually recompile (~1.5 h) or no-op in seconds.
 
 If the tag list and GitHub's release list disagree, or a `v<N>` tag already exists for the
 version you're about to cut, ask.
@@ -55,7 +55,7 @@ come back.
 
 ## 4. Bump and build
 
-1. Set `VERSION` in `scripts/lib/manifest.mjs` to `<N>`.
+1. Set `VERSION` in `scripts/lib/manifest.mjs` to `<N>` (already `<N>`: nothing to bump, not a surprise).
 2. If a fact in README (status, install steps) or notes/distribution.md changed with this
    release, update it now — those edits ship with the release commit.
 3. Commit: `release: v<N>`.
@@ -66,9 +66,21 @@ npm run release               # both browsers; ~1.5 h if the engine has never be
 ```
 
 Expect: `browsception v<N> (<sha>)` at the top, one warning (`HEAD is not tagged v<N>`, that
-comes next), **no** dirty-tree warning, `dist/browsception-<N>-chrome.zip` and
-`-firefox.xpi` listed at the end, each ~35 MB. A stage line mentioning `-dirty` or a
-different branch means the engine snapshot didn't come from this commit — ask.
+comes next), **no** dirty-tree warning, and after the stage step
+
+```
+engine sources <hash> are committed and match the staged artifact
+```
+
+then `dist/browsception-<N>-chrome.zip` and `-firefox.xpi` at the end, each ~34 MB.
+
+That one line is the whole engine-provenance check; if it is missing, the build says why in a
+warning instead — stop and ask. **Ignore the snapshot's stamp** (`…-<sha>-dirty-<checkout>`):
+it names the *first* build that produced those bytes, so a stamp can read `-dirty`, or carry
+another branch or checkout, while the artifact is an exact match for this commit — identical
+sources dedupe onto the existing snapshot and only add a hash to it. Reading a stamp as
+provenance stalled the v1 release (2026-09-09); the hash line exists so that cannot recur, and
+nothing here is worth a 1.5 h WebKit rebuild that would emit the same bytes.
 
 If step 3 ran before the bump commit (normal), that's fine: tests cover code, not the version
 string. If anything other than `VERSION` and docs changed since the tests ran, rerun step 3.
@@ -100,7 +112,7 @@ git push origin main
 git push origin v<N>
 gh release create v<N> dist/browsception-<N>-chrome.zip dist/browsception-<N>-firefox.xpi \
   --title v<N> --notes-file <scratch notes> --verify-tag
-gh release view v<N>          # both assets listed, sizes ~35 MB, notes rendered
+gh release view v<N>          # both assets listed, sizes ~34 MB, notes rendered
 ```
 
 Run the pushes in the foreground with a generous timeout: they can stall on an ssh/gh auth

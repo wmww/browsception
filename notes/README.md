@@ -303,12 +303,12 @@ engine's User-Agent now rides DNR like Cookie/Referer, adopted into the base rul
 (networking.md). The remaining `Sec-Fetch-*` infidelity is NOT second-order: Chrome stamps
 extension-page fetches `sec-fetch-site: none` where Firefox says `same-origin`, and GitHub's
 `/_graphql` 422s on `none` — the issues page shows GitHub's error boundary on Chrome and works
-on Firefox. DNR can rewrite all four headers (verified both as fix and as cause);
-issues/sec-fetch-fidelity.md.
+on Firefox. DNR can rewrite all four headers (verified both as fix and as cause). The 2026-09-10 wire audit
+found two more (cache headers, Accept-Language); all captured in plans/wire-header-fidelity.md.
 
-Open issues in issues/ (guest-JS wedge, rcap dynamic budget, sec-fetch fidelity, host-present ceiling at large
-framebuffers, CLoop `join` returned a non-string, Firefox tier-2 crash-reload scenario). Next
-work: [roadmap.md](roadmap.md).
+Open issues in issues/ (guest-JS wedge, rcap dynamic budget, host-present ceiling at large
+framebuffers, CLoop `join` returned a non-string, Firefox tier-2 crash-reload scenario). Plans in
+plans/ (wire-header fidelity, WebSocket bridge, permission trim). Next work: [roadmap.md](roadmap.md).
 
 ## Key decisions
 

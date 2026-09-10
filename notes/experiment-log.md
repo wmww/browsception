@@ -694,3 +694,23 @@ Tier-0/1 35, tier-2 Chrome 38, Firefox 8/9 (known crash-reload).
 
 **Decision**: shipped. Sec-Fetch fidelity filed as issues/sec-fetch-fidelity.md — not needed for
 Google from this IP, but it's the remaining fetch-vs-navigation tell.
+
+## 2026-09-10 — Wire-header audit through the real extension
+
+**Hypothesis**: after the UA fix, what else on the wire differs from what the engine asked for?
+
+**What ran**: scratch probe — headless Chromium 152 + real extension, fixture oracle
+`/__requests` for the wire side, a wrapper on `__bs.link.onNetBegin` for the engine side;
+navigation, same-origin fetch/XHR, cross-site cors/no-cors fetch, `<img>`, `<script>`, POST,
+reload, http target.
+
+**Results**: UA, Cookie, Referer (policy-correct), Origin (POST/cors only), Accept (engine's),
+Upgrade-Insecure-Requests all right. Wrong: (1) Sec-Fetch-* — engine emits spec-correct
+dest/mode/site on every https request, bridge drops them (`sec-` prefix), Chrome stamps
+`none/cors/empty`; (2) `Pragma`/`Cache-Control: no-cache` on every request from
+`cache:'no-store'`, overriding the engine's own (`max-age=0` on reload); (3) `Accept-Language`
+is the host's while guest `navigator.language` is the engine's `en-US`. Also
+`navigator.platform` is `''`.
+
+**Decision**: captured in plans/wire-header-fidelity.md (issues/sec-fetch-fidelity.md retired — the
+"engine must send its destination over the ABI" plan there was wrong; it already does).

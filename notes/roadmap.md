@@ -28,10 +28,6 @@ Never: printing, DRM, nested GPU/JIT.
 
 ## Cleanups & untested corners
 
-- WebSocket bridging (engine-side, over a host WS) — after the curl cut this is the ONLY
-  possible guest-WS path; today `new WebSocket()` fails cleanly everywhere. Design sketch in
-  networking.md; WebCore's WebSocketHandshake/Frame/DeflateFramer are still compiled in, so a
-  channel replacing `BibWebSocketChannel` can reuse them.
 - Optional: drop libcrypto too, if PAL's CryptoDigest gets a small vendored SHA/MD5 backend —
   it is the last piece of the old TLS tier still on the link.
 - Flatten `engine/WebkitWasm/` → `engine/` — cosmetic; only with an intentional from-scratch

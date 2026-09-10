@@ -92,8 +92,9 @@ builds, and documented RAM needs. Until then, unlisted signing is the Firefox ch
 ## Checklist to first public release
 
 1. Icons (`icons` in COMMON manifest, files under `src/ext/`).
-2. `PRIVACY.md` in the repo (served via GitHub Pages or raw URL) and a short reviewer note
-   (`docs/store-notes.md` or in README) describing the model and permissions.
+2. ~~`PRIVACY.md`~~ (done 2026-09-10; use its raw GitHub URL as the store's privacy-policy
+   link) and a short reviewer note (`docs/store-notes.md` or in README) describing the model
+   and permissions.
 3. AMO account, unlisted sign the xpi, attach both packages to a GitHub release with the
    install steps above. Optionally `update_url` + `updates.json` for Firefox auto-update.
 4. Chrome Web Store account, upload, justifications, publish. Then Edge if wanted.

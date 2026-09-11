@@ -101,16 +101,12 @@ not prevent.
   skipped when `base != lastEmittedSeq`; `copy`/`cut`/`paste` → clipboard.md. Every op bumps
   `seq` and dirties the state. Ops with no editable focused (composition after focus moved) are
   dropped, not errors.
-- **IME-handled keys** — `bib_key` gains a modifier bit `BIB_MOD_IME` (16). In
-  `BibEditorClient::handleInputMethodKeydown` (empty today), `event.setDefaultHandled()` when the
-  underlying platform event carries it: WebCore then re-dispatches the keydown with keyCode 229
-  and skips keypress/default editing — exactly what the guest sees in Chrome/Firefox during
-  composition. Carrying the flag: extend the `m_handledByInputMethod` guard in
-  `PlatformKeyboardEvent.h` to `__EMSCRIPTEN__` (one-line patch; the member is protected, an
-  embedder subclass sets it), or a scoped static around the synchronous `keyEvent()` call —
-  either, pick the patch.
-- **ABI** — `bib_abi.h`: `bib_edit`, `BIB_MOD_IME`, `bibChrome` kind `"editor"` replacing the
-  reserved `"caret"`. `abi.mjs` mirror + tier-0 `abi.test.mjs`.
+- **IME-handled keys** need nothing engine-side: the viewer forwards them as they arrive
+  (`key` `'Process'`/`'Dead'`/the raw key, `keyCode` 229, **no CHAR**), nothing in the key map
+  matches them, so the editor inserts nothing and the guest sees the same keydown a real
+  browser shows during composition. `handleInputMethodKeydown` stays empty.
+- **ABI** — `bib_abi.h`: `bib_edit`, `bibChrome` kind `"editor"` replacing the reserved
+  `"caret"`. `abi.mjs` mirror + tier-0 `abi.test.mjs`.
 
 ### Viewer: the mirror and the input controller (`src/ext/text-input.mjs`, pure; ~350 lines)
 
@@ -119,9 +115,10 @@ not prevent.
   viewer focuses the mirror (`focus({preventScroll: true})`); `editable: false` refocuses the
   canvas. A focus *change* is what raises an OSK on every platform; the `Element.focus()` call
   lands ~10–50 ms after the tap that caused it, inside Chrome's transient-activation window and
-  Gecko's `IsHandlingUserInput` grace (1 s) — probe (b) checks both hosts. Page focus for
-  `bib_set_focus` becomes "activeElement is canvas or mirror", settled per microtask so the
-  canvas→mirror hop is not a blur/focus pair the guest can see.
+  Gecko's `IsHandlingUserInput` grace (1 s) — probe (b) checks both hosts. Both sinks live in
+  the canvas box; `bib_set_focus` moves from the canvas's focus/blur to the box's
+  `focusin`/`focusout`, ignoring a `focusout` whose `relatedTarget` is inside the box — so the
+  hop is invisible to the guest. Key and clipboard listeners sit on the box too (clipboard.md).
 - **Mirror** — `<textarea id=sink>` inside the canvas box, `position:absolute`, 1 × line-height,
   `opacity:0`, `resize:none`, `autocomplete=off`, `tabindex=-1`, moved to `caret` (device →
   CSS px by the live backing/CSS ratio, clamped into the canvas rect — an owned engine may not
@@ -146,13 +143,12 @@ not prevent.
   1. `hostKey(e)` — the host owns it: F5, Alt+←/→, Ctrl/Cmd+{L,T,W,N,R,Tab,digits,Shift+T},
      F12/Ctrl+Shift+{I,J,C}. Not forwarded, not prevented.
   2. `imeKey(e)` — `e.isComposing || e.keyCode === 229 || e.key === 'Process' || e.key === 'Dead'`.
-     Forwarded with `BIB_MOD_IME`, no CHAR, **not prevented** (the host must run its composition
-     on the mirror).
-  3. `hostClipboardKey(e)` — clipboard.md's three-line list. Forwarded, not prevented.
+     Forwarded as-is, no CHAR, **not prevented** (the host must run its composition on the
+     mirror).
+  3. `hostPasteKey(e)` — clipboard.md's two-line list. Forwarded, not prevented.
   4. Everything else: forwarded (+ CHAR as today), prevented.
-  Keyup mirrors keydown's IME flag.
-- **OSK geometry** — `viewer.html` gets `<meta name="viewport" content="…, interactive-widget=resizes-content">`
-  so an OSK shrinks the *layout* viewport (Chrome ≥ 108 defaults to resizing only the visual
+- **OSK geometry** — append `interactive-widget=resizes-content` to the viewport meta
+  touch-input.md adds, so an OSK shrinks the *layout* viewport (Chrome ≥ 108 defaults to resizing only the visual
   viewport, which would leave the canvas half covered and fire no `ResizeObserver`). The existing
   resize path then shrinks the engine viewport and WebCore's own `revealSelection` scrolls the
   caret into view. Fallback for a host without `interactive-widget` (probe (d)): set the canvas
@@ -224,8 +220,7 @@ not prevent.
   is host→engine input like keys; paste payload only ever originates from a paste event.
 - rendering-input.md: § IME/composition and § Keyboard replaced by this design (the routing
   function, the two sinks, the sync rules); § Touch gets the OSK viewport note.
-  roadmap.md fast-follow 2 struck. engine-internals.md: the `handledByInputMethod` guard
-  extension (re-bites on rebase). Delete this plan; distil the sync rules into
+  roadmap.md fast-follow 2 struck. Delete this plan; distil the sync rules into
   rendering-input.md.
 
 ## Order and dependencies
@@ -236,10 +231,10 @@ not prevent.
    broken for every non-US-ASCII typist today.
 2. **Stage B — clipboard verbs** land in clipboard.md's own steps (its ClipboardEvent listeners
    attach to "the current sink", so they need nothing from here).
-3. **Stage C — touch hosts**: probes (b)–(d), the viewport meta, the Firefox Android smoke.
-   Prerequisite outside this plan: issues/touch-input.md — the viewer has only mouse listeners,
-   so a touch host today gets synthesized taps and **no scrolling**; a phone cannot reach the
-   field to type into. Do that issue before stage C, not inside it.
+3. **Stage C — touch hosts**: probes (b)–(d), the `interactive-widget` viewport addition, the
+   Firefox Android smoke. Prerequisite: plans/touch-input.md (pointer events, drag-to-scroll,
+   fling) — today a phone gets synthesized taps and no scrolling, so it cannot reach a field to
+   type into. Do that plan before stage C, not inside it.
 
 ## Not in this plan
 

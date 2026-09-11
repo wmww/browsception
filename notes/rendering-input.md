@@ -172,8 +172,8 @@ boot-size, grow, shrink, and post-resize input.
   keys); today every Ctrl/Meta combo is dropped, which is wrong for editing. Planned routing
   (plans/clipboard.md, plans/text-input.md): a **deny list** of host-owned keys (F5, Alt+←/→,
   Ctrl/Cmd+L/T/W/N/R/Tab/digits, devtools) is neither forwarded nor prevented; everything else
-  is forwarded and prevented, except IME-handled keys and the host's clipboard keys, which are
-  forwarded but left unprevented so the host runs its composition / fires its ClipboardEvent.
+  is forwarded and prevented, except IME-handled keys and the host's paste keys, which are
+  forwarded but left unprevented so the host runs its composition / fires its paste event.
   The engine's key map decides what a combo *means*; the viewer never does.
 - **Text input / IME / OSK — designed, not built**: plans/text-input.md. The Wayland
   text-input dance one hop up: the engine reports editor state (editable, surrounding text +
@@ -183,8 +183,10 @@ boot-size, grow, shrink, and post-resize input.
   caret-relative edit ops (`bib_edit`: composition/commit/delete/select). Keys stay keys — the
   engine performs key defaults so guest `preventDefault` still works; the mirror only carries
   what never arrives as a key.
-- **Touch**: not forwarded at all today (issues/touch-input.md — taps work via synthesized mouse
-  events, drags scroll nothing). Plan: pointer events + drag→wheel with fling, pinch→zoom; real
+- **Touch**: not forwarded at all today (plans/touch-input.md — taps work via synthesized mouse
+  events, drags scroll nothing; viewer.html has no viewport meta). Plan: pointer events for
+  every pointer type with a viewer-side recognizer — tap → mouse click, drag → wheel deltas,
+  release → fling; nothing touch-shaped crosses the ABI. Pinch waits on engine page zoom; real
   TouchEvents only if a site needs them. OSK viewport: `interactive-widget=resizes-content` so the
   canvas shrinks and the engine reveals the caret itself (text-input.md § OSK geometry).
 - **Cursor**: engine reports CSS cursor → set `canvas.style.cursor`.
@@ -208,12 +210,13 @@ boot-size, grow, shrink, and post-resize input.
 - **File upload**: engine requests file picker → viewer opens real `<input type=file>` (needs the
   user gesture we already have from the click) → File bytes copied into engine, engine fakes the
   FileList. MVP: single files, no directories.
-- **Clipboard** (designed, not built — plans/clipboard.md): in-engine pasteboard store; the
-  verbs are the host's `copy`/`cut`/`paste` **events** on the sink (whatever key, menu or OSK
-  button the host binds to them), each one `bib_edit` op — `paste` carries `clipboardData`
-  (gesture-gated, no permission), copy/cut run the engine's editor and the store change comes
-  back as `bibChrome("clipboard")` for a transient-activation-gated async-Clipboard write. No
-  clipboard key map on either side; no `clipboardRead` (DOM-initiated reads stay denied).
+- **Clipboard** (designed, not built — plans/clipboard.md): in-engine pasteboard store. Copy
+  and cut are engine editor commands, reached from the engine key map (Ctrl/Cmd+C/X, prevented
+  on the host) and from the host's `copy`/`cut` events (menus, OSK buttons); paste is the host's
+  `paste` **event** only, since `clipboardData` is the one permission-free way in — so the paste
+  keys are the one forwarded-but-unprevented combo. Store changes come back as
+  `bibChrome("clipboard")` for a user-activation-gated async-Clipboard write. No
+  `clipboardRead` (DOM-initiated reads stay denied).
 - **Popups / window.open / target=_blank**: engine policy delegate → viewer opens a new
   `viewer.html?url=…` tab via `chrome.tabs.create`. Popup blocking = engine's own logic + a
   viewer-side allowlist. `window.opener` relationships across viewer tabs: unsupported initially

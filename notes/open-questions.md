@@ -170,10 +170,10 @@ result appended here (keep the question, add `**Answer (date):**`).
     import would leak outside disposable profiles anyway. Keep the planned one
     real-TLS-trust test for tier 2.
 21. **Clipboard host facts** (plans/clipboard.md step 0): on a focused non-editable canvas in an
-    extension page, do Ctrl+C/X/V fire `copy`/`cut`/`paste` with readable `clipboardData` and no
-    prompt — Chrome expected yes for all three regardless of selection, Firefox unverified for
-    copy/cut with a collapsed selection and paste on a non-editable target (fallback: a
-    readonly hidden textarea sink); does `navigator.clipboard.write` succeed from transient
+    extension page, does Ctrl+V fire `paste` with readable `clipboardData` and no prompt —
+    Chrome expected yes, Firefox unverified for a non-editable target (fallback: a readonly
+    hidden textarea sink; copy/cut go through the engine key map and need no probe); does
+    `navigator.clipboard.write` succeed from transient
     activation without `clipboardWrite` on Firefox; do headless Chrome/Firefox clipboards
     round-trip through one page (tier-2 feasibility). Unanswered.
 22. **IME / on-screen-keyboard host facts** (plans/text-input.md § Probes): does an unprevented

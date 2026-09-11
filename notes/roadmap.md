@@ -8,7 +8,7 @@ plans/mvp.md plus loose ends carried out of Phases 1–2.
 1. Clipboard (plans/clipboard.md), find bar (engine findString), file upload, downloads.
 2. Text input: IME/composition, on-screen keyboards, the host editable proxy
    (plans/text-input.md) — the big input investment. Touch hosts first need
-   issues/touch-input.md.
+   plans/touch-input.md (viewer-only: pointer events, drag-to-scroll, fling).
 3. Popups/window.open → new viewer tabs; dialogs (alert/confirm/prompt/auth) as viewer modals.
 4. Audio via AudioWorklet ring buffer.
 5. Session restore, history, list import/export polish.

@@ -95,8 +95,8 @@ unresolved). Consequences:
   tab, SW) with `host_permissions` still bypass CORS entirely
   (chromium.org: "extension-content-script-fetches"). Same model in Firefox.
 - We request `<all_urls>` host permissions. Note CheerpJ's MV3 lesson: Chrome may soften install-time
-  host grants into per-site activation UX; design the viewer to degrade gracefully if a host grant
-  is missing (show "click to allow" instead of broken page).
+  host grants into per-site activation UX, and both browsers already let the user revoke them
+  (§ Permissions).
 - Forbidden headers (`User-Agent`, `Cookie`, `Referer`, `Origin`, `Sec-*`): `fetch()` can't set
   them, but **DNR `modifyHeaders`** can set/remove/append them on our own requests (the allowlist
   for append explicitly includes cookie & user-agent). Firefox: blocking `onBeforeSendHeaders`.
@@ -131,13 +131,24 @@ Worker, frames and bytes cross by transfer. What the platform offers, for the re
   need the SW awake — dynamic DNR rules persist across SW and browser restarts, so the SW only
   reconciles state changes.
 
-## Permissions manifest (draft)
+## Permissions
 
-```
-"permissions": ["declarativeNetRequest", "storage", "downloads", "cookies"(?), "clipboardRead", "clipboardWrite"],
-"host_permissions": ["<all_urls>"],
-"cross_origin_embedder_policy": { "value": "require-corp" },
-"cross_origin_opener_policy": { "value": "same-origin" },
-"web_accessible_resources": [viewer.html + engine assets]
-```
-(`cookies` only if/when we implement host-jar import; default is the isolated jar.)
+Source: `scripts/lib/manifest.mjs` (both browsers, identical list); tier-0 `manifest.test.mjs`
+pins the exact set, so adding one is a visible diff.
+
+| Entry | Why |
+|---|---|
+| `<all_urls>` (host) | CORS-exempt bridge `fetch()` to any site; DNR redirect/modifyHeaders act only on hosts we hold; tab URL visibility for http(s) tabs |
+| `declarativeNetRequestWithHostAccess` | catch-all main_frame redirect, whitelist allows, escape-hatch session rules, bridge header rules. Same API as plain `declarativeNetRequest` for hosts we hold (all of them); minus plain DNR's "Block content on any page" warning (Chrome details page, Firefox). Allow rules now also need host access — same check the redirect already needed, so no request can see one without the other |
+| `webRequest` | non-blocking capture of Set-Cookie + 3xx on bridge fetches (`redirect:'error'` hides them from fetch). No `webRequestBlocking` |
+| `storage` | `storage.sync` state, `storage.session` escape-grant mirror |
+| `tabs` | the sweep/badge/popup read viewer tabs' own URLs. **Chrome hides own `chrome-extension://` tab URLs without it** (url/pendingUrl undefined in `tabs.query`, no `changeInfo.url` in `onUpdated`, incl. pushState); Firefox shows own `moz-extension://` URLs via host permission alone. Probed 2026-09-10, Chrome 152 / Firefox 155. Kept on both (Chrome needs it; Chrome's install prompt folds it into `<all_urls>` anyway) |
+
+Warnings each browser shows: distribution.md § Permission warnings. Features that WOULD add
+permissions: host-cookie import (`cookies`), native download shelf (`downloads` — avoidable: a
+blob link on the viewer page), clipboard read (`clipboardRead`; write needs none on extension
+pages). Optional/per-site host permissions would be a product change (roadmap.md risk row).
+
+**Host access is user-revocable after install** on both browsers (Firefox MV3 shows
+`<all_urls>` as an "Optional" toggle; Chrome's "Site access" menu). Revoked, DNR redirects stop
+applying and navigations go native silently — issues/host-access-revocation.md.

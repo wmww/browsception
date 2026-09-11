@@ -200,8 +200,9 @@ boot-size, grow, shrink, and post-resize input.
 - **File upload**: engine requests file picker → viewer opens real `<input type=file>` (needs the
   user gesture we already have from the click) → File bytes copied into engine, engine fakes the
   FileList. MVP: single files, no directories.
-- **Clipboard**: viewer uses async Clipboard API (`clipboardRead`/`clipboardWrite` permissions;
-  gesture-gated reads). Engine copy → host clipboard write. Host paste → inject into engine on
+- **Clipboard** (not built): viewer uses async Clipboard API (write needs no permission on
+  extension pages; read needs `clipboardRead`, a new install warning — extension-platform.md
+  § Permissions). Engine copy → host clipboard write. Host paste → inject into engine on
   Ctrl/Cmd+V. Rich-text/image clipboard post-MVP.
 - **Popups / window.open / target=_blank**: engine policy delegate → viewer opens a new
   `viewer.html?url=…` tab via `chrome.tabs.create`. Popup blocking = engine's own logic + a

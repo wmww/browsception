@@ -174,10 +174,13 @@ export async function launchFirefox(opts = {}) {
     '--new-instance',
     'about:blank',
   ];
-  const proc = spawn(FIREFOX_BIN, args, {
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, MOZ_HEADLESS: headless ? '1' : '', MOZ_DISABLE_CONTENT_SANDBOX: '' },
-  });
+  // Firefox tests these for presence, not value: an empty MOZ_HEADLESS still
+  // means headless, so unset rather than blank them.
+  const env = { ...process.env };
+  delete env.MOZ_HEADLESS;
+  delete env.MOZ_DISABLE_CONTENT_SANDBOX;
+  if (headless) env.MOZ_HEADLESS = '1';
+  const proc = spawn(FIREFOX_BIN, args, { stdio: ['ignore', 'pipe', 'pipe'], env });
   const stderrLines = [];
   const stdoutLines = [];
   let wsUrl = null;

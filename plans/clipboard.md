@@ -243,7 +243,6 @@ worktrees.md § WebKit-tree changes (edit under the main checkout's tree, re-exp
 
 ## Interaction with the other plans
 
-No permission change, no DNR involvement. Order relative to the permission trim does not
-matter unless probe (b) forces `clipboardWrite`, in which case land the trim first so its
-manifest-permission tier-0 test records the addition. The IME plan will move the key sink off
+No permission change, no DNR involvement. If probe (b) forces `clipboardWrite`, add it to the
+tier-0 `manifest.test.mjs` permission set. The IME plan will move the key sink off
 the canvas; step 2 keeps the paste listener element-agnostic for that reason.

@@ -95,7 +95,10 @@ The shim never re-implements web security; it implements *capability* security.
 
 - The extension holds `<all_urls>` — the extension itself is a high-value target. No remote code,
   no analytics, no third-party JS in the viewer. CSP on viewer.html: self only, wasm-unsafe-eval
-  as required for wasm, nothing else.
+  as required for wasm, nothing else. Permission set and per-entry reasons:
+  extension-platform.md § Permissions.
+- Host access is user-revocable on both browsers, and revoking it turns sandboxing off with no
+  signal (DNR redirects need it) — issues/host-access-revocation.md.
 - DNR header-rewrite rules must be scoped so they can't be used to strip CSP / rewrite headers of
   *real* browsing (marker-header + initiator scoping; test this).
 - Phishing consideration: our viewer intentionally looks like a browser. The real omnibox showing

@@ -94,7 +94,8 @@ Tier-2 scenario 12 asserts both halves (crashed UI *and* a named stack).
   start inside a sandboxed agent shell: run it unsandboxed. Its `page` API is deliberately Playwright-shaped
   (`goto`/`evaluate(fn, jsonArg)`/`waitForFunction(exprString)`/`url()`), but `evaluate` round-trips
   through JSON and console capture needs `page.hookConsole()` on extension pages
-  (extension-platform.md § Firefox).
+  (extension-platform.md § Firefox). `launchFirefox({headless: false})` run under a sourced
+  guibox env gives a real window with the extension installed (about:addons screenshots).
 - **Agent GUI sessions**: the gui-testing skill's `guibox` — headless sway compositor, real
   windowed Chromium, `grim` screenshots, `wdotool` input. For anything CDP can't reach or fakes:
   the real omnibox, the toolbar popup, actual user-gesture semantics, focus/IME quirks, "does it
@@ -121,6 +122,9 @@ Pure-function tests, Node + vitest (or similar):
    system `unzip` (an independent implementation — our own reader proves nothing about a
    hand-rolled binary format) plus the determinism the release build promises. Skips without
    `unzip`.
+6. **Permission surface** (`manifest.test.mjs`): both generated manifests request exactly the
+   intended permissions (a new one must be a deliberate diff), and the tracked
+   `src/manifest.json` matches `gen-ext` output.
 
 ### Tier 1 — bridge integration, no engine (<30 s, per-commit)
 Headless Chromium + extension + fixture server + a **stub engine** (src/shim/engine-stub.mjs,

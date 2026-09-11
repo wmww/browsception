@@ -4,7 +4,7 @@
  "version": "1",
  "description": "Runs websites inside a nested wasm browser engine.",
  "permissions": [
-  "declarativeNetRequest",
+  "declarativeNetRequestWithHostAccess",
   "webRequest",
   "storage",
   "tabs"

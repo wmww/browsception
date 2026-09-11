@@ -12,8 +12,9 @@ What the extension stores, all locally:
 - Cookies and site data belonging to sandboxed pages, kept in the nested engine's own store,
   separate from your browser's cookies.
 
-The `<all_urls>`, `webRequest` and `declarativeNetRequest` permissions are used only to route
-navigations into the sandboxed engine and to pass its requests through. No request content is
-inspected, logged, or sent anywhere else.
+The `<all_urls>`, `webRequest`, `declarativeNetRequestWithHostAccess` and `tabs` permissions are
+used only to route navigations into the sandboxed engine, to pass its requests through, and to
+tell which open tabs are sandboxed. No request content or tab URL is logged or sent anywhere
+else.
 
 Source: https://github.com/wmww/browsception

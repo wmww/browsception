@@ -65,8 +65,9 @@ Effectively mandatory for non-technical Chrome users (see CRX note above).
 - **Privacy policy URL** is required for `<all_urls>`; the dashboard's data-use disclosures
   and the manifest permissions must agree with it. Ours is easy to state: no servers, no data
   leaves the browser, nothing collected.
-- **Permission justifications** (dashboard fields): `<all_urls>` + `webRequest` +
-  `declarativeNetRequest` redirecting every main frame triggers the "may require in-depth
+- **Permission justifications** (dashboard fields): one line per entry is in the
+  extension-platform.md § Permissions table — quote it. `<all_urls>` + `webRequest` +
+  DNR redirecting every main frame triggers the "may require in-depth
   review" warning and a human reviewer. Explain the sandbox model up front; point at the
   repo; mention that `eval` in `wasm-polyfill.js` runs inside the nested engine, not on the
   host page. Standing risk (roadmap.md): a rejection of the redirect-everything default would
@@ -88,6 +89,25 @@ environment: Ubuntu 24.04, Node 24, 10 GB RAM, 6 vCPU, 35 GB disk. Our engine bu
 byte-deterministic is unknown (open question). Prerequisites before attempting: the
 fresh-clone bootstrap verification (roadmap.md cleanups), a determinism check of two clean
 builds, and documented RAM needs. Until then, unlisted signing is the Firefox channel.
+
+## Permission warnings (what users see)
+
+Measured 2026-09-10 (Chrome 152, Firefox 155), after the `declarativeNetRequestWithHostAccess`
+swap. Neither install dialog was reachable for a screenshot here (unpacked/temporary installs
+don't prompt; release Firefox refuses unsigned xpis), so Chrome's prompt text comes from
+`chrome.management.getPermissionWarningsByManifest` (the dialog's own message provider) and
+Firefox's from about:addons → Permissions and data.
+
+| Where | Before (plain DNR) | Now |
+|---|---|---|
+| Chrome install prompt | "Read and change all your data on all websites" | same — `<all_urls>` absorbs both the DNR and `tabs` warnings (with or without either) |
+| Chrome extension details | "Read your browsing history", "Block content on any page" + Site access "On all sites" | "Read your browsing history" + Site access |
+| Firefox about:addons | Required: "Block content on any page", "Access browser tabs"; Optional (on): "Access your data for all websites", (off) "Access local files" | Required: "Access browser tabs"; Optional unchanged |
+
+So the trim is a Firefox win and a Chrome details-page tidy-up; Chrome's install prompt was
+already one line. Dropping `tabs` on Firefox only would clear its last Required line
+(it's not needed there — extension-platform.md § Permissions) at the cost of a manifest
+divergence; not done.
 
 ## Checklist to first public release
 

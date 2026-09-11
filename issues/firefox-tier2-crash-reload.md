@@ -27,3 +27,7 @@ Update (2026-09-09, v1 release): passed in both full tier-2 runs of the release 
 (1.1 s, 1.1 s). Now 3 consecutive passes in a full run vs 2 failures in the firefox-only run —
 the realm race is real but only bites `test:tier2:firefox` on its own so far. Still worth the
 harness fix; not a release blocker.
+
+Update (2026-09-10): firefox-only runs now 2 pass / 1 fail (same 0.5 s `__bs is not defined`),
+after the harness stopped exporting blank `MOZ_HEADLESS`/`MOZ_DISABLE_CONTENT_SANDBOX` — so
+not that; a timing race, as suspected.

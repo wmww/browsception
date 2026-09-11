@@ -714,3 +714,25 @@ is the host's while guest `navigator.language` is the engine's `en-US`. Also
 
 **Decision**: captured in plans/wire-header-fidelity.md (issues/sec-fetch-fidelity.md retired — the
 "engine must send its destination over the ABI" plan there was wrong; it already does).
+
+## 2026-09-10 — Permission trim: which entries buy only warnings?
+
+**Hypothesis**: `declarativeNetRequest` → `…WithHostAccess` is free under `<all_urls>`; `tabs` is
+redundant with `<all_urls>` if viewer tabs' own extension URLs stay visible.
+
+**What ran**: throwaway probe extension (no `tabs`, WithHostAccess DNR) on Chrome 152 (Playwright)
+and Firefox 155 (BiDi harness): `tabs.query` from the background and from an extension page with
+a direct viewer tab, a DNR-redirected viewer tab, a native http tab, about:blank, a pre-commit
+tab; `onUpdated` across load + `pushState`. Install-prompt text via
+`chrome.management.getPermissionWarningsByManifest`; details pages via guibox.
+
+**Results**: WithHostAccess redirect + allow rules work on both. Chrome without `tabs`: own
+`chrome-extension://` tabs have no `url`/`pendingUrl`/`title` and `onUpdated` carries no
+`changeInfo.url` for them; http tabs (incl. pre-commit `pendingUrl`) visible. Firefox without
+`tabs`: own `moz-extension://` URLs visible everywhere incl. pushState; about:blank / pre-commit
+hidden. Chrome's install prompt is "Read and change all your data on all websites" for every
+combination; the savings show only on its details page and in Firefox. Side finding: revoking
+host access (Firefox toggle) silently disables the redirect, with either DNR permission.
+
+**Decision**: swap to WithHostAccess, keep `tabs` on both (Chrome needs it). Tier-0/1 106,
+tier-2 38/38. Warnings table in distribution.md; revocation → issues/host-access-revocation.md.

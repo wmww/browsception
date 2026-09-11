@@ -26,7 +26,12 @@ const COMMON = {
   name: 'browsception',
   version: VERSION,
   description: 'Runs websites inside a nested wasm browser engine.',
-  permissions: ['declarativeNetRequest', 'webRequest', 'storage', 'tabs'],
+  // Exactly this set (tier-0 manifest.test.mjs pins it; justification per
+  // entry in notes/extension-platform.md § Permissions). WithHostAccess, not
+  // plain declarativeNetRequest: same API under <all_urls>, no "block
+  // content" install warning. `tabs` stays: Chrome hides viewer tabs' own
+  // chrome-extension:// URLs from the sweep without it.
+  permissions: ['declarativeNetRequestWithHostAccess', 'webRequest', 'storage', 'tabs'],
   host_permissions: ['<all_urls>'],
   action: { default_popup: 'ext/popup.html', default_title: 'browsception' },
   options_ui: { page: 'ext/options.html', open_in_tab: true },

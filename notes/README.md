@@ -306,13 +306,20 @@ extension-page fetches `sec-fetch-site: none` where Firefox says `same-origin`, 
 on Firefox. DNR can rewrite all four headers (verified both as fix and as cause). The 2026-09-10 wire audit
 found two more (cache headers, Accept-Language); all captured in plans/wire-header-fidelity.md.
 
+*Permission trim* (2026-09-10) — `declarativeNetRequest` → `declarativeNetRequestWithHostAccess`
+(same API under `<all_urls>`, drops "Block content on any page"); `tabs` stays because Chrome
+hides the viewer tabs' own `chrome-extension://` URLs from the sweep without it. Chrome's install
+prompt was and is the single `<all_urls>` line; the gain is Firefox's list and Chrome's details
+page. Tier-0 `manifest.test.mjs` pins the set (extension-platform.md § Permissions,
+distribution.md § Permission warnings).
+
 Open issues in issues/ (guest-JS wedge, rcap dynamic budget, host-present ceiling at large
-framebuffers, CLoop `join` returned a non-string, Firefox tier-2 crash-reload scenario). Plans in
-plans/, in intended order: permission trim (small, changes the manifest the others test against),
-wire-header fidelity (settles the DNR rule shape the WebSocket rules reuse), WebSocket bridge
-(largest; nothing waits on it), clipboard (independent coupled engine+JS change: in-engine
-pasteboard store, paste-event-fed reads, gesture-gated host writes, no new permission — starts
-with two host-platform probes). Next work: [roadmap.md](roadmap.md).
+framebuffers, CLoop `join` returned a non-string, Firefox tier-2 crash-reload scenario, host
+access revocation silently un-sandboxes). Plans in plans/, in intended order: wire-header
+fidelity (settles the DNR rule shape the WebSocket rules reuse), WebSocket bridge (largest;
+nothing waits on it), clipboard (independent coupled engine+JS change: in-engine pasteboard
+store, paste-event-fed reads, gesture-gated host writes, no new permission — starts with two
+host-platform probes). Next work: [roadmap.md](roadmap.md).
 
 ## Key decisions
 

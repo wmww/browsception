@@ -99,9 +99,14 @@ unresolved). Consequences:
   (§ Permissions).
 - Forbidden headers (`User-Agent`, `Cookie`, `Referer`, `Origin`, `Sec-*`): `fetch()` can't set
   them, but **DNR `modifyHeaders`** can set/remove/append them on our own requests (the allowlist
-  for append explicitly includes cookie & user-agent). Firefox: blocking `onBeforeSendHeaders`.
-  Scope these rules tightly (e.g. `initiatorDomains` = our extension, plus a marker header the shim
-  attaches and a rule strips) so we never rewrite unrelated traffic.
+  for append explicitly includes cookie & user-agent). Verified 2026-09-10 on both browsers: a
+  session rule sets all four `sec-fetch-*` on a bridge fetch. What DNR can NOT reach: the
+  `Pragma`/`Cache-Control: no-cache` that `cache:'no-store'` adds (stamped below webRequest/DNR;
+  an explicit fetch-init Cache-Control replaces the latter, nothing removes the former). Host
+  extension-fetch defaults: Chrome `sec-fetch-site: none`, Firefox `same-origin`, both
+  `cors/empty`; neither stamps Sec-Fetch on http. Rules are scoped `initiatorDomains` = our
+  extension + `resourceTypes: ['xmlhttprequest']` (+ exact urlFilter per request), so unrelated
+  traffic is never rewritten (networking.md).
 
 ## SharedArrayBuffer / wasm threads — not used
 

@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   BRIDGE_RULE,
   CLIENT_HINT_HEADERS,
+  DNR_REQUEST_HEADERS,
   baseSessionRules,
   perRequestHeaderRule,
 } from '../../src/ext/bridge-rules.mjs';
@@ -50,4 +51,27 @@ test('per-request rule carries exactly the engine-sent forbidden headers, exact-
 
 test('no forbidden headers → no rule', () => {
   assert.equal(perRequestHeaderRule(10001, 'https://a.bstest/', {}, EXT), null);
+});
+
+test('per-request rule carries engine fetch metadata in DNR_REQUEST_HEADERS order', () => {
+  const h = {
+    'sec-fetch-user': '?1',
+    'sec-fetch-dest': 'document',
+    cookie: 'a=1',
+    'sec-fetch-mode': 'navigate',
+    'sec-fetch-site': 'none',
+  };
+  const rule = perRequestHeaderRule(10001, 'https://a.bstest/', h, EXT);
+  assert.deepEqual(
+    rule.action.requestHeaders.map((o) => o.header),
+    DNR_REQUEST_HEADERS.filter((n) => n in h),
+  );
+  assert.ok(rule.action.requestHeaders.every((o) => o.operation === 'set' && o.value === h[o.header]));
+});
+
+test('base rule leaves the host\'s Sec-Fetch-* alone (the engine omits it only for http)', () => {
+  const [rule] = baseSessionRules(EXT, { userAgent: 'UA/1' });
+  assert.ok(!rule.action.requestHeaders.some((o) => o.header.startsWith('sec-fetch-')));
+  // Cache headers are stamped below DNR (probe 2026-09-10): no rule touches them.
+  assert.ok(!rule.action.requestHeaders.some((o) => o.header === 'pragma' || o.header === 'cache-control'));
 });

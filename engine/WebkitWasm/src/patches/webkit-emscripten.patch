@@ -1228,6 +1228,23 @@ index 34cce582179..bdc65e41198 100644
  }
  
  void WorkerThreadableLoader::cancel()
+diff --git a/Source/WebCore/page/NavigatorBase.cpp b/Source/WebCore/page/NavigatorBase.cpp
+index 93720ea1fca..50987ba1edb 100644
+--- a/Source/WebCore/page/NavigatorBase.cpp
++++ b/Source/WebCore/page/NavigatorBase.cpp
+@@ -96,7 +96,11 @@ String NavigatorBase::appVersion() const
+ 
+ String NavigatorBase::platform() const
+ {
+-#if OS(LINUX)
++#if defined(__EMSCRIPTEN__)
++    // uname() yields nothing useful under wasm; match the UA's "X11; Linux
++    // x86_64" (real WebKitGTK reports the same string).
++    return "Linux x86_64"_s;
++#elif OS(LINUX)
+     static NeverDestroyed<String> platformName = [] {
+         struct utsname osname;
+         return uname(&osname) >= 0 ? makeString(unsafeSpan(osname.sysname), " "_s, unsafeSpan(osname.machine)) : emptyString();
 diff --git a/Source/WebCore/platform/Pasteboard.h b/Source/WebCore/platform/Pasteboard.h
 index 11cef75ac77..07c2bf511fa 100644
 --- a/Source/WebCore/platform/Pasteboard.h

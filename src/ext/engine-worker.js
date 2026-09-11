@@ -100,6 +100,7 @@ function boot({ engineUrl, config }) {
     bibNoBlock: !!config.noBlock,
     bibMedia: false,
     bibSeedState: config.seedState ?? null,
+    bibLanguages: config.languages ?? null,
     // Filled by the engine's pre-js (worker-scope hooks: pump, wasm2js
     // bridge, guest-injection text fetched from the host root).
     bibWasm2js: () => null,

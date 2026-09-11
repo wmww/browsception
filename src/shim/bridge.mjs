@@ -20,16 +20,24 @@
 import { NET_ERR, NET_WINDOW_BYTES } from '../abi/abi.mjs';
 import { evaluateRequest, CAPS } from './guard.mjs';
 import { isRedirectEntry, setCookiesOf } from './redirect-capture.mjs';
-import { BRIDGE_RULE, baseSessionRules, perRequestHeaderRule } from '../ext/bridge-rules.mjs';
+import {
+  BRIDGE_RULE,
+  DNR_REQUEST_HEADERS,
+  baseSessionRules,
+  perRequestHeaderRule,
+} from '../ext/bridge-rules.mjs';
 
-// Fetch-forbidden request headers the engine may legitimately send; these
-// ride via DNR instead of the fetch init. User-Agent is special: the engine
-// sends the same string on every request, so the first one seen becomes the
-// base rule's (one rule per profile, no per-request churn) and only a
-// differing one rides per-request.
-const DNR_HEADERS = new Set(['cookie', 'referer', 'origin', 'user-agent']);
+// Engine headers that ride DNR instead of the fetch init (the list and why
+// each is there: bridge-rules.mjs). User-Agent is special: the engine sends
+// the same string on every request, so the first one seen becomes the base
+// rule's (one rule per profile, no per-request churn) and only a differing
+// one rides per-request.
+const DNR_HEADERS = new Set(DNR_REQUEST_HEADERS);
 
-// Forbidden headers we silently drop (the host fetch stack owns them).
+// Forbidden headers we silently drop (the host fetch stack owns them). Of
+// the `sec-*` family only the four fetch-metadata names pass (DNR_HEADERS,
+// checked first); client hints, sec-purpose and anything newer stay the
+// host's business (the base rule strips the host's client hints).
 // prettier-ignore
 const DROP_HEADERS = new Set([
   'accept-charset', 'accept-encoding', 'access-control-request-headers',

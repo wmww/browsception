@@ -226,6 +226,7 @@ private:
         if (request.httpUserAgent().isEmpty())
             request.setHTTPUserAgent(standardUserAgent());
         appendEmbedderCookieHeader(request);
+        appendSecFetchUser(request);
         m_firstParty = request.firstPartyForCookies();
         m_responseCompleted = false;
         m_pendingComplete = false;
@@ -234,6 +235,21 @@ private:
         // the host bridge can apply its sandboxed->native boundary policy
         // (redirect hops re-enter here, so every hop keeps the flag).
         m_requestId = netBridgeStart(*this, request, m_isTopLevelDocument);
+    }
+
+    // Sec-Fetch-User, which WebCore never sets: a top-level navigation the
+    // user caused — a client load (URL bar, reload: bib_load_url/bib_reload
+    // mark theirs) or one carrying a gesture (link click, form submission,
+    // JS in a click handler); not a timer's location.href. Per hop, like
+    // WebCore's Dest/Mode/Site: an http hop has no Sec-Fetch-Mode (WebCore
+    // strips fetch metadata on a downgrade), so it gets none either.
+    void appendSecFetchUser(ResourceRequest& request)
+    {
+        if (!m_isTopLevelDocument || request.httpHeaderField(HTTPHeaderName::SecFetchMode) != "navigate"_s)
+            return;
+        RefPtr documentLoader = m_loader->documentLoader();
+        if (documentLoader && (documentLoader->isRequestFromClientOrUserInput() || documentLoader->triggeringAction().processingUserGesture()))
+            request.setHTTPHeaderField("Sec-Fetch-User"_s, "?1"_s);
     }
 
     void notifyDone()

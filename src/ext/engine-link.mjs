@@ -59,7 +59,12 @@ export class EngineLink {
     return this.#calls;
   }
 
-  /** Load the engine with the boot config (see engine-worker.js boot()). */
+  /**
+   * Load the engine with the boot config (see engine-worker.js boot()).
+   * @param {{html?: string, noBlock?: boolean, seedState?: string|null,
+   *   languages?: string[]}} config languages: BCP 47 tags, most preferred
+   *   first — the engine's navigator.language(s) (the host's list)
+   */
   boot(config) {
     this.#post({ t: 'boot', engineUrl: this.engineUrl, config });
   }

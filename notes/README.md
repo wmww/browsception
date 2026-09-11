@@ -304,7 +304,7 @@ engine's User-Agent now rides DNR like Cookie/Referer, adopted into the base rul
 extension-page fetches `sec-fetch-site: none` where Firefox says `same-origin`, and GitHub's
 `/_graphql` 422s on `none` — the issues page shows GitHub's error boundary on Chrome and works
 on Firefox. DNR can rewrite all four headers (verified both as fix and as cause). The 2026-09-10 wire audit
-found two more (cache headers, Accept-Language); all captured in plans/wire-header-fidelity.md.
+found two more (cache headers, Accept-Language); all fixed or documented since (below).
 
 *Permission trim* (2026-09-10) — `declarativeNetRequest` → `declarativeNetRequestWithHostAccess`
 (same API under `<all_urls>`, drops "Block content on any page"); `tabs` stays because Chrome
@@ -313,14 +313,21 @@ prompt was and is the single `<all_urls>` line; the gain is Firefox's list and C
 page. Tier-0 `manifest.test.mjs` pins the set (extension-platform.md § Permissions,
 distribution.md § Permission warnings).
 
+*Wire-header fidelity* (2026-09-10) — the wire now carries WebCore's own fetch metadata
+(Sec-Fetch-Dest/Mode/Site via the per-request DNR rule, one shared `DNR_REQUEST_HEADERS` list),
+URL-bar loads say `Sec-Fetch-Site: none` (`bib_load_url` is a client load) and user-caused
+top-level navigations carry an embedder-added `Sec-Fetch-User: ?1`; guest `navigator.language` is
+the host's list and `navigator.platform` `Linux x86_64`. GitHub's issues page works on Chrome
+(its `/_graphql` 422'd on the host's `none`). `Pragma`/`Cache-Control: no-cache` from
+`cache:'no-store'` are stamped below DNR — residual (networking.md § Design, experiment-log).
+
 Open issues in issues/ (guest-JS wedge, rcap dynamic budget, host-present ceiling at large
 framebuffers, CLoop `join` returned a non-string, Firefox tier-2 crash-reload scenario, host
-access revocation silently un-sandboxes). Plans in plans/, in intended order: wire-header
-fidelity (settles the DNR rule shape the WebSocket rules reuse), WebSocket bridge (largest;
-nothing waits on it), clipboard (in-engine pasteboard store; copy/cut via the engine key map and host
-copy/cut events, paste via the host's paste event only, no new permission — starts with host
-probes), touch-input (viewer-only pointer-event recognizer: tap → click, drag → wheel, fling;
-no ABI change), text-input (the host editable proxy: engine editor state → hidden mirror
+access revocation silently un-sandboxes). Plans in plans/, in intended order: WebSocket bridge
+(largest; nothing waits on it), clipboard (in-engine pasteboard store; copy/cut via the engine key
+map and host copy/cut events, paste via the host's paste event only, no new permission — starts
+with host probes), touch-input (viewer-only pointer-event recognizer: tap → click, drag → wheel,
+fling; no ABI change), text-input (the host editable proxy: engine editor state → hidden mirror
 textarea → IME/OSK/composition → caret-relative edit ops; shares `bib_edit` with clipboard,
 either order; its touch stage waits on touch-input). Next work: [roadmap.md](roadmap.md).
 

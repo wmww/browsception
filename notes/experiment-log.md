@@ -736,3 +736,49 @@ host access (Firefox toggle) silently disables the redirect, with either DNR per
 
 **Decision**: swap to WithHostAccess, keep `tabs` on both (Chrome needs it). Tier-0/1 106,
 tier-2 38/38. Warnings table in distribution.md; revocation → issues/host-access-revocation.md.
+
+## 2026-09-10 — Wire-header fidelity (plans/wire-header-fidelity.md)
+
+**Hypothesis**: the engine's own fetch metadata can replace the host's extension-fetch stamp
+through the existing DNR per-request rule; `Pragma`/`Cache-Control: no-cache` from
+`cache:'no-store'` are stamped below DNR (probe decides); a boot-time language override
+aligns guest `navigator.language` with the host's `Accept-Language`.
+
+**Probe (step 0)**: stub viewer, fixture oracle + `webRequest.onSendHeaders` (extraHeaders),
+Chrome 152 and Firefox 155. Both: `pragma: no-cache` + `cache-control: no-cache` on the wire,
+invisible to onSendHeaders, and a DNR `remove` of either changes nothing. An explicit
+`Cache-Control: max-age=0` in the fetch init (or a DNR `set`) arrives as-is and suppresses the
+host's `no-cache`; `Pragma` stays. So outcome (a), with a correction to the plan's premise —
+the engine's Cache-Control was never overwritten; the audit's reload simply sent none (below).
+Firefox: a session rule sets all four `sec-fetch-*`; no Sec-Fetch on http targets (Chrome same).
+
+**Before/after wire** (tier-2 oracle, Chrome; Firefox identical except its old `same-origin`):
+
+| request | before | after |
+|---|---|---|
+| URL-bar load (`bib_load_url`) | `none/cors/empty` | `none/navigate/document` + `User: ?1` |
+| clicked same-origin link | `none/cors/empty` | `same-origin/navigate/document` + `?1` |
+| timer `location.href` (+ each redirect hop) | `none/cors/empty` | `same-origin/navigate/document` |
+| `<img>` / same-origin `fetch()` | `none/cors/empty` | `same-origin/no-cors/image` / `same-origin/cors/empty` |
+| every hop of a redirected URL-bar load | `none/cors/empty` | `none/navigate/document` + `?1` |
+| https→http hop | host none | none (WebCore strips, embedder adds nothing) |
+| guest `navigator.language` / `.platform` | `en-US` / `''` | host's first (`de-DE`) / `Linux x86_64` |
+
+Side finding: `bib_reload` sends no Cache-Control (`FrameLoader::reload` presets
+`ReloadIgnoringCacheData`, which skips `addExtraFieldsToRequest`'s `max-age=0`; a guest
+`location.reload()` does send it). `bib_reload` has no production caller, so the wire's host
+`no-cache` there is a residual, not fixed.
+
+**Real sites** (Chrome 152, headless, real extension): github.com/wmww/browsception/issues
+renders the issue list, `/_graphql` 200 with `sec-fetch-site: same-origin`, no error boundary.
+Google `/search`: 4/5 runs results (wire `navigate/document/none` + `?1`, then `same-origin` for
+its `&sei=` follow-up); the first run of the burst got `/sorry` (429); old code from the same IP
+minutes later 2/2 results, and new code 3/3 after that — read as rate, not headers, but keep an
+eye on it. Note both old and new carry Chrome's `X-Client-Data` on google.com (a host tell DNR
+could strip; not in this plan).
+
+**Tests**: tier-0 75, tier-1 36; tier-2 Chrome 29/29 + HiDPI + Firefox 9/9 across two full
+runs, except one run each of guest-realm (stayed on the boot page 20 s; passed alone 2/2 and in
+the next full run) and the known Firefox crash-reload flake.
+
+**Decision**: shipped; plan deleted, residuals in networking.md § Design.

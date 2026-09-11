@@ -137,7 +137,10 @@ doesn't need the 100 MB engine:
    against a simultaneous native-tab fetch).
 5. Bridge semantics: chunk streaming under the credit window, redirect chain reported per chosen
    policy, Set-Cookie capture path, `credentials:'omit'` (oracle: no host-jar cookie ever
-   received), guard denials surfaced as engine-visible errors, size cap aborts.
+   received), guard denials surfaced as engine-visible errors, size cap aborts, engine-sent
+   Cookie/Referer/Origin/UA/Sec-Fetch-* arriving exactly (and the host's Sec-Fetch kept when the
+   engine sent none). The partition itself (which engine header goes to fetch init / DNR /
+   nowhere) is tier-0 `bridge.test.mjs`.
 6. Headless parity (`parity.test.mjs`): extension pages exist and Chrome's manifest COOP/COEP
    still isolates them — a platform property we no longer depend on, kept as a parity check.
 6b. Sweep (`sweep.test.mjs`): the SW's tab sweep against real Chromium tab state — a tab whose
@@ -155,7 +158,14 @@ whole machine, end to end:
 7. **Render**: navigate to `grid.bstest` → `__bs.pixels` probes match expected colors; `__bs.text`
    contains sentinel strings. (One test, several probes.)
 8. **Execute**: `app.bstest` → JS ran (text mutated by script), engine-internal fetch + cookie
-   round-trip succeeded, redirect chain landed.
+   round-trip succeeded, redirect chain landed. Wire fidelity via the oracle: the URL-bar load
+   says `document/navigate/none` + `Sec-Fetch-User: ?1`, the `<img>` `image/no-cors/same-origin`,
+   the fetch `empty/cors/same-origin`, and the chain (a timer's `location.href`) same-origin with
+   no `Sec-Fetch-User` on any hop; guest `navigator.language` is the host's (`--accept-lang=de-DE`
+   — a non-en-US language, since en-US is also the engine default), `navigator.platform`
+   `Linux x86_64`. Scenario 10 covers the other fetch-metadata cases: real click `?1`,
+   `bib_reload` and every hop of a redirected `bib_load_url` `none` + `?1`, an https→http hop
+   with no Sec-Fetch at all (needs `plain-http.bstest` in the suite blacklist).
 9. **Input**: CDP-dispatched clicks/keys/scroll on the viewer canvas → `input.bstest` colors flip
    correctly (covers DOM capture → queue → engine dispatch → page JS → repaint → blit, in one
    test).
@@ -221,7 +231,8 @@ whole machine, end to end:
     fresh-install interception through the runtime-installed dynamic catch-all (oracle sees no
     target bytes), boot + render in the worker-hosted engine (and `crossOriginIsolated === false`,
     the design premise), the app.bstest execute battery (bridge, cookie round-trip via
-    onHeadersReceived capture, pushState mirror, redirect chain), blacklist/whitelist reconcile,
+    onHeadersReceived capture, pushState mirror, redirect chain, and scenario 8's wire-fidelity
+    assertions — `intl.accept_languages` stands in for `--accept-lang`), blacklist/whitelist reconcile,
     native handoff, scheme gates, crash → reload. Same source tree as Chrome; only the manifest
     differs. Plus two stub-engine bridge cases for what only Firefox's network stack produces
     (tier 1 runs on Chrome): repeated `Set-Cookie` arriving as one newline-joined value, and an

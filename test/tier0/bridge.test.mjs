@@ -110,3 +110,58 @@ test('an ordinary 200 streams, with the captured Set-Cookie merged in', async ()
   assert.deepEqual(headers.filter(([k]) => k === 'set-cookie').map(([, v]) => v), ['a=1', 'b=2']);
   assert.ok(!headers.some(([k]) => k === 'content-length'), 'length/encoding headers stripped');
 });
+
+// The header partition: fetch metadata rides the per-request DNR rule (the
+// host would stamp its own), client hints and other sec-* never leave, and a
+// request carrying nothing DNR-bound adds no rule at all.
+async function partition(url, headers) {
+  const rules = [];
+  const inits = [];
+  const api = {
+    ...chromeApi,
+    declarativeNetRequest: {
+      updateSessionRules: async (u) => void (u.addRules && rules.push(...u.addRules)),
+    },
+  };
+  const engine = fakeEngine();
+  new Bridge(engine, { capture: fakeCapture(new Map()), chromeApi: api, userAgent: 'ua' });
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (u, init) => (inits.push(init), new Response('ok'));
+  try {
+    engine.onNetBegin({ id: 1, method: 'GET', url, headers, main: 0 }, null);
+    for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 1));
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  return { rules, fetchHeaders: inits[0].headers.map(([k]) => k.toLowerCase()) };
+}
+
+test('engine Sec-Fetch-* ride the per-request rule; sec-ch-ua*/sec-purpose/other sec-* are dropped', async () => {
+  const { rules, fetchHeaders } = await partition('https://a.example/img.png', [
+    ['Sec-Fetch-Dest', 'image'],
+    ['Sec-Fetch-Mode', 'no-cors'],
+    ['Sec-Fetch-Site', 'cross-site'],
+    ['Sec-Fetch-User', '?1'],
+    ['Sec-CH-UA', '"Chromium";v="152"'],
+    ['Sec-CH-UA-Platform', '"Linux"'],
+    ['Sec-Purpose', 'prefetch'],
+    ['Sec-Fetch-Storage-Access', 'none'],
+    ['Accept', 'image/*'],
+    ['Cache-Control', 'max-age=0'],
+  ]);
+  assert.equal(rules.length, 1);
+  assert.deepEqual(rules[0].action.requestHeaders, [
+    { header: 'sec-fetch-dest', operation: 'set', value: 'image' },
+    { header: 'sec-fetch-mode', operation: 'set', value: 'no-cors' },
+    { header: 'sec-fetch-site', operation: 'set', value: 'cross-site' },
+    { header: 'sec-fetch-user', operation: 'set', value: '?1' },
+  ]);
+  assert.equal(rules[0].condition.urlFilter, '|https://a.example/img.png|');
+  assert.deepEqual(fetchHeaders, ['accept', 'cache-control'], 'engine Cache-Control rides the fetch init');
+});
+
+test('a request with nothing DNR-bound adds no rule (plain http GET)', async () => {
+  const { rules, fetchHeaders } = await partition('http://a.example/', [['Accept', 'text/html']]);
+  assert.deepEqual(rules, []);
+  assert.deepEqual(fetchHeaders, ['accept']);
+});

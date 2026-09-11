@@ -72,6 +72,14 @@ re-bite on rebases or bound future features.
   `EmptyDatabaseProvider::idbConnectionToServerForSession` is RELEASE_ASSERT. `PlatformStrategies`
   is mandatory (`FrameLoader::pageLoadCompleted` derefs unconditionally). Never cache a
   `LocalFrameView` — `createView()` per commit or blank paint after first nav.
+- **Request headers WebCore leaves to its client/network layer.** A bare `FrameLoadRequest` is a
+  web-content load: only `setIsRequestFromClientOrUserInput()` (what `WebPage::loadRequest`
+  sets; `bib_load_url` does now) makes fetch metadata say `Sec-Fetch-Site: none`. WebCore never
+  composes `Sec-Fetch-User` (not even in `HTTPHeaderNames.in` — `BibResourceLoad` adds it) or
+  `Accept-Language` (the host's rides). `FrameLoader::reload()` presets
+  `ReloadIgnoringCacheData`, which skips `addExtraFieldsToRequest`'s `Cache-Control: max-age=0`
+  — a guest `location.reload()` gets it, `bib_reload` gets only a cache policy, and our bridge
+  ships header fields only. networking.md § Design (request fidelity).
 - **A refused navigation notifies nobody.** Blocked port / disallowed IP / local resource bail out
   of `FrameLoader::loadFrameRequest` after a console message, and a main resource the cache layer
   won't start drops `DocumentLoader::loadMainResource` into `maybeLoadEmpty()` — WebKit2 survives

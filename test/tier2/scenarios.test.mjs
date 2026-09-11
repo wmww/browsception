@@ -15,7 +15,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { launch, extensionId, requireStagedEngine, waitForFixtureServer } from '../harness/launch.mjs';
+import {
+  launch,
+  extensionId,
+  requireStagedEngine,
+  waitForFixtureServer,
+  oracleClear,
+  oracleRequests,
+} from '../harness/launch.mjs';
 
 const EXT_DIR = new URL('../../src', import.meta.url).pathname;
 requireStagedEngine(EXT_DIR); // before spawning anything — a missing engine is a setup error
@@ -24,7 +31,10 @@ const fixtures = spawn('node', [new URL('../fixtures/server.mjs', import.meta.ur
   stdio: 'ignore',
 });
 await waitForFixtureServer();
-const session = await launch({ extensionDir: EXT_DIR });
+// A non-en-US host language: the engine's own default is en-US, so only a
+// different one shows that guest navigator.language follows the host's.
+const HOST_LANGS = ['de-DE', 'de'];
+const session = await launch({ extensionDir: EXT_DIR, args: [`--accept-lang=${HOST_LANGS.join(',')}`] });
 test.after(async () => {
   await session.close();
   fixtures.kill();
@@ -44,7 +54,7 @@ const BOOT_TIMEOUT = 120000;
 // Suite posture: dev-style blacklist covering every fixture domain, so a
 // sandboxed viewer's domain always HAS sandbox disposition — required since
 // 2.4's boundary policy natives nested navigations to unlisted domains.
-const FIXTURE_BLACKLIST = ['grid.bstest', 'input.bstest', 'app.bstest', 'other.bstest', 'hostile.bstest', 'scroll.bstest', 'scroll-sticky.bstest'];
+const FIXTURE_BLACKLIST = ['grid.bstest', 'input.bstest', 'app.bstest', 'other.bstest', 'hostile.bstest', 'scroll.bstest', 'scroll-sticky.bstest', 'plain-http.bstest'];
 
 async function configure(patch, ready) {
   const cfg = await session.context.newPage();
@@ -131,6 +141,26 @@ async function evalProbe(page, js, expect, tries = 40) {
   throw new Error(`guest probe ${js} -> ${last.slice(0, 200)}`);
 }
 
+// Wire request metadata as the fixture oracle saw it: the newest request for
+// host+path, reduced to its Sec-Fetch-* headers (plus the extras asked for).
+async function wireMeta(host, path, extra = []) {
+  return pollUntil(async () => {
+    const hit = (await oracleRequests())
+      .filter((r) => r.host.split(':')[0] === host && r.path === path)
+      .at(-1);
+    if (!hit) return null;
+    return Object.fromEntries(
+      Object.entries(hit.headers).filter(([k]) => k.startsWith('sec-fetch-') || extra.includes(k)),
+    );
+  }, `oracle saw ${host}${path}`);
+}
+const fetchMeta = (dest, mode, site, user) => ({
+  'sec-fetch-dest': dest,
+  'sec-fetch-mode': mode,
+  'sec-fetch-site': site,
+  ...(user ? { 'sec-fetch-user': '?1' } : {}),
+});
+
 // --- Scenario 7: render ----------------------------------------------------
 test('render: grid.bstest squares at expected coordinates', { timeout: 300000 }, async () => {
   const page = await bootViewer('https://grid.bstest/');
@@ -150,18 +180,35 @@ test('render: grid.bstest squares at expected coordinates', { timeout: 300000 },
 
 // --- Scenario 8: execute ---------------------------------------------------
 test('execute: app.bstest JS/timer/fetch/xfetch/cookie/pushState + redirect chain', { timeout: 300000 }, async () => {
+  await oracleClear();
   const page = await bootViewer('https://app.bstest/');
   const SW = { JS: 25, TIMER: 75, FETCH: 125, XFETCH: 175, COOKIE: 225, PUSHSTATE: 275 };
   for (const [name, x] of Object.entries(SW))
     await until(page, x, 425, is([0, 255, 0]), 120000, name);
+  // Wire fidelity: the fetch metadata WebCore composed, not the host's
+  // extension-fetch stamp; a URL-bar load is `none` + user-activated.
+  assert.deepEqual(await wireMeta('app.bstest', '/'), fetchMeta('document', 'navigate', 'none', true));
+  assert.deepEqual(await wireMeta('app.bstest', '/img-probe'), fetchMeta('image', 'no-cors', 'same-origin'));
+  assert.deepEqual(await wireMeta('app.bstest', '/api/data'), fetchMeta('empty', 'cors', 'same-origin'));
+  // Guest navigator describes the same user/machine as the wire.
+  const wireLang = (await wireMeta('app.bstest', '/', ['accept-language']))['accept-language'];
+  assert.ok(wireLang.startsWith(`${HOST_LANGS[0]},`), `host Accept-Language on the wire: ${wireLang}`);
+  await evalProbe(page, 'navigator.language', new RegExp(`^${HOST_LANGS[0]} `));
+  await evalProbe(page, 'navigator.platform', /^Linux x86_64 /);
   // Guest pushState is a same-document NEW entry — the tab history mirror
   // follows it too, not just cross-document commits.
   await pollUntil(
     () => page.url().endsWith('url=https://app.bstest/pushed'),
     'tab URL follows guest pushState',
   );
-  await page.evaluate(() => __bs.eval("document.getElementById('redirlink').click()"));
+  // A timer's navigation carries no user activation: no Sec-Fetch-User on
+  // any hop of the chain.
+  await page.evaluate(() =>
+    __bs.eval("setTimeout(() => { location.href = document.getElementById('redirlink').href; }, 0)"),
+  );
   await evalProbe(page, 'location.href', /^https:\/\/app\.bstest\/final\b/);
+  for (const path of ['/redirect?to=%2Fredirect%3Fto%3D%2Ffinal', '/redirect?to=/final', '/final'])
+    assert.deepEqual(await wireMeta('app.bstest', path), fetchMeta('document', 'navigate', 'same-origin'), path);
   await page.close();
 });
 
@@ -504,6 +551,7 @@ async function pollUntil(fn, what, timeoutMs = 30000) {
 // tracks nested navigation is also the regression test for the popup escape
 // hatch, which slices the live target out of it.
 test('chrome: tab URL + native back/forward/reload drive the engine', { timeout: 300000 }, async () => {
+  await oracleClear();
   const page = await bootViewer('https://input.bstest/');
   const box = await (await page.$('#screen')).boundingBox();
   const at = (x, y) => [box.x + x, box.y + y];
@@ -522,10 +570,13 @@ test('chrome: tab URL + native back/forward/reload drive the engine', { timeout:
     'tab URL synced to the committed URL',
   );
   assert.ok(await page.evaluate(() => !document.getElementById('back')), 'no in-viewer back button');
+  assert.deepEqual(await wireMeta('input.bstest', '/'), fetchMeta('document', 'navigate', 'none', true));
 
-  // Nested link click -> new tab entry, URL bar + tab URL follow.
+  // Nested link click -> new tab entry, URL bar + tab URL follow. A real
+  // click is a user gesture: the navigation carries Sec-Fetch-User.
   await page.mouse.click(...at(320, 350));
   await until(page, 400, 300, is([102, 51, 153]), 120000, 'link nav');
+  assert.deepEqual(await wireMeta('input.bstest', '/final.html'), fetchMeta('document', 'navigate', 'same-origin', true));
   await pollUntil(async () => (await urlbar()) === 'https://input.bstest/final.html', 'urlbar follows link');
   await pollUntil(
     () => page.url() === viewerURL('https://input.bstest/final.html'),
@@ -569,6 +620,23 @@ test('chrome: tab URL + native back/forward/reload drive the engine', { timeout:
   await back();
   await until(page, 500, 100, is([0, 0, 255]), 120000, 'back after reload cold-loads the entry');
   await pollUntil(async () => (await urlbar()) === 'https://input.bstest/', 'urlbar after post-reload back');
+
+  // Engine reload: a client load like the URL bar's.
+  await oracleClear();
+  await page.evaluate(() => __bs.link.call('bib_reload'));
+  assert.deepEqual(await wireMeta('input.bstest', '/'), fetchMeta('document', 'navigate', 'none', true));
+  // Every hop of a URL-bar load stays `none` + ?1; a downgrade hop carries
+  // no fetch metadata at all (WebCore strips its own, the embedder adds none).
+  await page.evaluate(() => __bs.link.call('bib_load_url', 'https://input.bstest/redirect?to=%2Ffinal.html'));
+  assert.deepEqual(await wireMeta('input.bstest', '/final.html'), fetchMeta('document', 'navigate', 'none', true));
+  assert.deepEqual(
+    await wireMeta('input.bstest', '/redirect?to=%2Ffinal.html'),
+    fetchMeta('document', 'navigate', 'none', true),
+  );
+  await page.evaluate(() =>
+    __bs.link.call('bib_load_url', 'https://input.bstest/redirect?to=http%3A%2F%2Fplain-http.bstest%2Fdowngraded'),
+  );
+  assert.deepEqual(await wireMeta('plain-http.bstest', '/downgraded'), {});
   await page.close();
 });
 
@@ -628,7 +696,6 @@ test('boundary: nested navigation to a whitelisted domain hands the real tab the
 });
 
 // --- Scenario 11: guard-rail invariants (2.5) ------------------------------
-import { oracleClear, oracleRequests } from '../harness/launch.mjs';
 
 test('invariants: hostile.bstest — guard blocks private-network; no target document loads top-level', { timeout: 300000 }, async () => {
   await oracleClear();

@@ -3,7 +3,8 @@
      a text sentinel "<NAME>-OK"/"<NAME>-FAIL" in #status, and a 50x50 swatch
      that flips red → green (pixel probes). Swatch row at y=400, checks in
      order: JS, TIMER, FETCH, XFETCH, COOKIE, PUSHSTATE at x = 0,50,...,250.
-     Also: a redirect-chain link (#redirlink) landing on /final. -->
+     Also: a redirect-chain link (#redirlink) landing on /final, and an
+     <img> whose request the oracle checks for image fetch metadata. -->
 <html>
 <head>
   <meta charset="utf-8">
@@ -17,6 +18,7 @@
   <h1 id="title">BSTEST-APP-SENTINEL</h1>
   <ul id="status"></ul>
   <a id="redirlink" href="/redirect?to=%2Fredirect%3Fto%3D%2Ffinal">redirect chain</a>
+  <img src="/img-probe" alt="" width="1" height="1">
   <div id="swatches"></div>
   <script>
     const CHECKS = ['JS', 'TIMER', 'FETCH', 'XFETCH', 'COOKIE', 'PUSHSTATE'];

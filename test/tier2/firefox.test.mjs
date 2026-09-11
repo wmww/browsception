@@ -17,6 +17,7 @@ import { packExt } from '../../scripts/pack-ext.mjs';
 const skip = existsSync(FIREFOX_BIN) ? false : `no Firefox at ${FIREFOX_BIN} (BS_FIREFOX)`;
 const BOOT_TIMEOUT = 120000;
 const FIXTURE_BLACKLIST = ['grid.bstest', 'input.bstest', 'app.bstest', 'other.bstest', 'hostile.bstest'];
+const HOST_LANGS = ['de-DE', 'de'];
 
 let fixtures, ff, VIEWER_BASE;
 const viewerURL = (target, extra = '') => `${VIEWER_BASE}?${extra ? extra + '&' : ''}url=${target}`;
@@ -27,7 +28,9 @@ test.before(async () => {
   const dist = packExt('firefox');
   fixtures = spawn('node', [new URL('../fixtures/server.mjs', import.meta.url).pathname], { stdio: 'ignore' });
   await waitForFixtureServer();
-  ff = await launchFirefox({ extensionDir: dist });
+  // Non-en-US host language (the engine default is en-US): guest
+  // navigator.language must follow it (scenarios.test.mjs does the same).
+  ff = await launchFirefox({ extensionDir: dist, profilePrefs: { 'intl.accept_languages': HOST_LANGS.join(', ') } });
   assert.ok(ff.extensionBaseUrl, 'extension UUID discovered');
   VIEWER_BASE = `${ff.extensionBaseUrl}ext/viewer.html`;
 });
@@ -75,6 +78,31 @@ async function pollUntil(fn, what, timeoutMs = 20000) {
   throw new Error(`${what} (last: ${JSON.stringify(last)})`);
 }
 
+// Guest-JS value via the console forwarder (dev-build bib_eval).
+async function guestValue(page, js) {
+  await page.hookConsole();
+  return pollUntil(async () => {
+    const marker = `FF_${Math.random().toString(36).slice(2, 8)}`;
+    await page.evaluate((a) => __bs.eval(`console.log(${JSON.stringify(a.m)} + ':' + (${a.js}))`), { m: marker, js });
+    await new Promise((r) => setTimeout(r, 500));
+    const hit = (await page.drainConsole()).find((l) => l.text.includes(`${marker}:`));
+    return hit && hit.text.slice(hit.text.indexOf(`${marker}:`) + marker.length + 1);
+  }, `guest ${js}`);
+}
+// The oracle's newest request for host+path, reduced to its Sec-Fetch-* (+ extra).
+async function wireMeta(host, path, extra = []) {
+  return pollUntil(async () => {
+    const hit = (await oracleRequests()).filter((r) => r.host.split(':')[0] === host && r.path === path).at(-1);
+    return hit && Object.fromEntries(Object.entries(hit.headers).filter(([k]) => k.startsWith('sec-fetch-') || extra.includes(k)));
+  }, `oracle saw ${host}${path}`);
+}
+const fetchMeta = (dest, mode, site, user) => ({
+  'sec-fetch-dest': dest,
+  'sec-fetch-mode': mode,
+  'sec-fetch-site': site,
+  ...(user ? { 'sec-fetch-user': '?1' } : {}),
+});
+
 // Fresh install (whitelist mode, empty whitelist): the background script
 // installs the catch-all as a dynamic rule (the only kind on either browser —
 // a static one would have to pin the extension id). Until then nothing
@@ -117,12 +145,26 @@ test('firefox: boot + render in the worker-hosted engine', { skip, timeout: 3000
 // (3xx recovered from onHeadersReceived — Firefox has no onBeforeRedirect for
 // a redirect:'error' fetch).
 test('firefox: execute — app.bstest JS/timer/fetch/xfetch/cookie/pushState + redirect chain', { skip, timeout: 300000 }, async () => {
+  await oracleClear();
   const page = await bootViewer('https://app.bstest/');
   const SW = { JS: 25, TIMER: 75, FETCH: 125, XFETCH: 175, COOKIE: 225, PUSHSTATE: 275 };
   for (const [name, x] of Object.entries(SW)) await until(page, x, 425, [0, 255, 0], 120000, name);
+  // Wire fidelity (Chrome scenario 8 asserts the same): the engine's fetch
+  // metadata replaces Firefox's extension-fetch `same-origin/cors/empty`.
+  assert.deepEqual(await wireMeta('app.bstest', '/'), fetchMeta('document', 'navigate', 'none', true));
+  assert.deepEqual(await wireMeta('app.bstest', '/img-probe'), fetchMeta('image', 'no-cors', 'same-origin'));
+  assert.deepEqual(await wireMeta('app.bstest', '/api/data'), fetchMeta('empty', 'cors', 'same-origin'));
+  const wireLang = (await wireMeta('app.bstest', '/', ['accept-language']))['accept-language'];
+  assert.ok(wireLang.startsWith(`${HOST_LANGS[0]},`), `host Accept-Language on the wire: ${wireLang}`);
+  assert.match(await guestValue(page, 'navigator.language'), new RegExp(`^${HOST_LANGS[0]}\\b`));
+  assert.match(await guestValue(page, 'navigator.platform'), /^Linux x86_64\b/);
   await pollUntil(async () => (await page.url()).endsWith('url=https://app.bstest/pushed'), 'tab URL follows guest pushState');
-  await page.evaluate(() => __bs.eval("document.getElementById('redirlink').click()"));
+  await page.evaluate(() =>
+    __bs.eval("setTimeout(() => { location.href = document.getElementById('redirlink').href; }, 0)"),
+  );
   await pollUntil(() => page.evaluate(() => /^https:\/\/app\.bstest\/final\b/.test(__bs.state.url ?? '')), 'redirect chain landed', 60000);
+  for (const path of ['/redirect?to=%2Fredirect%3Fto%3D%2Ffinal', '/redirect?to=/final', '/final'])
+    assert.deepEqual(await wireMeta('app.bstest', path), fetchMeta('document', 'navigate', 'same-origin'), path);
   await page.close();
 });
 

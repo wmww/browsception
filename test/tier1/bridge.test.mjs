@@ -64,6 +64,35 @@ test('plain GET: status, headers, exact body; UA rewritten; no leak headers on t
     undefined,
     'client hints stripped',
   );
+  // No engine fetch metadata: the host's stays (the base rule strips none of
+  // it — the engine omits Sec-Fetch-* only for http, where hosts do too).
+  assert.equal(wire.headers['sec-fetch-mode'], 'cors');
+  assert.equal(wire.headers['sec-fetch-dest'], 'empty');
+});
+
+test('engine Sec-Fetch-* reach the wire exactly; per-request rule cleaned up', async () => {
+  const t = await request({
+    url: 'https://app.bstest/echo-headers',
+    headers: [
+      ['Sec-Fetch-Dest', 'image'],
+      ['Sec-Fetch-Mode', 'no-cors'],
+      ['Sec-Fetch-Site', 'cross-site'],
+      ['Sec-Fetch-User', '?1'],
+      ['Sec-CH-UA-Platform', '"Leak"'],
+      ['Cache-Control', 'max-age=0'],
+    ],
+  });
+  const wire = JSON.parse(t.bodyText);
+  assert.equal(wire['sec-fetch-dest'], 'image');
+  assert.equal(wire['sec-fetch-mode'], 'no-cors');
+  assert.equal(wire['sec-fetch-site'], 'cross-site');
+  assert.equal(wire['sec-fetch-user'], '?1');
+  assert.equal(wire['sec-ch-ua-platform'], undefined);
+  // The engine's own Cache-Control wins over cache:'no-store''s stamp (the
+  // Pragma: no-cache that comes with it is below DNR — a known residual).
+  assert.equal(wire['cache-control'], 'max-age=0');
+  const rules = await page.evaluate(() => chrome.declarativeNetRequest.getSessionRules());
+  assert.deepEqual(rules.filter((r) => r.id >= 10000), [], 'per-request rules cleaned up');
 });
 
 test('engine-sent Cookie/Referer/Origin ride via per-request DNR rule; rule cleaned up', async () => {

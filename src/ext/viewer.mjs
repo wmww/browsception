@@ -706,6 +706,9 @@ async function bootEngine() {
     html: bootHTML,
     noBlock: params.get('noblock') === '1',
     seedState: await persistSeedReady,
+    // Guest navigator.language must match the Accept-Language the host
+    // derives from this same list and puts on the wire.
+    languages: [...navigator.languages],
   });
 }
 

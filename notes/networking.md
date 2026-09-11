@@ -24,11 +24,31 @@ Tradeoffs to be aware of:
 - The engine no longer sees raw sockets → anything needing non-HTTP TCP/UDP (WebRTC, custom
   protocols) is out of scope. WebSocket: bridge engine WebSocket to a host `WebSocket` — the
   extension origin can open cross-origin WS connections. (MVP: defer.)
-- Request fidelity: `fetch()` can't set forbidden headers; a scoped DNR `modifyHeaders` rule
-  rewrites UA/Cookie/Referer/Origin on bridge requests (see extension-platform.md). The wire UA
-  is the ENGINE's (`UserAgentEmscripten.cpp`, a Safari-17-on-Linux string like WebKitGTK's),
-  never the host browser's: it must match guest `navigator.userAgent` or sites score the
-  mismatch as a bot (Google captcha-looped on it — experiment-log 2026-09-10).
+- Request fidelity: a bridge request must look on the wire like the one the engine composed, or
+  servers score the mismatch as a bot / serve the wrong thing. `fetch()` can't set forbidden
+  headers, and the host overwrites some it can; scoped DNR `modifyHeaders` rules carry
+  `DNR_REQUEST_HEADERS` (bridge-rules.mjs: Cookie, Referer, Origin, User-Agent, Sec-Fetch-
+  Dest/Mode/Site/User) instead (extension-platform.md). The wire UA is the ENGINE's
+  (`UserAgentEmscripten.cpp`, a Safari-17-on-Linux string like WebKitGTK's): it must match guest
+  `navigator.userAgent` (Google captcha-looped on the host's — experiment-log 2026-09-10). Fetch
+  metadata is WebCore's own (`CachedResourceLoader::updateRequestFetchMetadataHeaders`); left to
+  the host, every request said Chrome's extension-fetch `none/cors/empty` and GitHub's
+  `/_graphql` 422'd on `sec-fetch-site: none`. The embedder owns the two parts WebCore leaves to
+  its client: `bib_load_url` marks its load `isRequestFromClientOrUserInput` (what
+  `WebPage::loadRequest` does — WebCore then says `Sec-Fetch-Site: none` on every hop, like an
+  address-bar load), and `BibResourceLoad::appendSecFetchUser` adds `Sec-Fetch-User: ?1` per hop
+  to a main-frame `navigate` request whose DocumentLoader is a client load or carries a gesture
+  (link click, form submit; not a timer's `location.href`; an https→http hop has no
+  `Sec-Fetch-Mode`, so gets none). Guest `navigator.language(s)` is the host's list
+  (`link.boot({languages})` → `Module.bibLanguages` → `overrideUserPreferredLanguages`), so it
+  matches the host's wire `Accept-Language`; `navigator.platform` is `Linux x86_64` (patch).
+  Residuals: `Pragma: no-cache` on every request, and `Cache-Control: no-cache` wherever the
+  engine sent no Cache-Control (incl. `bib_reload` and every engine reboot) — `cache:'no-store'`
+  stamps them below the extension layer, where DNR can't remove them; the engine's own
+  Cache-Control (e.g. a guest `location.reload()`'s `max-age=0`) rides the fetch init and wins.
+  Two in-flight requests for the same URL match each other's per-request rule (one may get the
+  other's Sec-Fetch-Dest). Out of scope: Accept-Encoding, HTTP version and TLS fingerprint (the
+  host's), `Sec-Fetch-User` on subframe navigations.
 
 ## Where the boundary sits (important)
 
@@ -114,8 +134,12 @@ engine-stub.mjs); asserted by test/tier1/bridge.test.mjs against the real extens
 Implementation notes: `cache:'no-store'` on bridge fetches (a host-cache hit would skip webRequest
 and lose Set-Cookie capture; engine has its own HTTP cache anyway); `referrer:''` + base DNR rule
 strips Origin/Referer/sec-ch-ua* so the extension origin and host browser never leak when the
-engine didn't send those headers; per-request DNR session rule (priority 2, exact urlFilter)
-carries engine-sent Cookie/Referer/Origin and beats the base strips; the engine's User-Agent is
+engine didn't send those headers (it strips no Sec-Fetch-*: the engine omits those only for http,
+where neither host stamps them); per-request DNR session rule (priority 2, exact urlFilter)
+carries the engine-sent `DNR_REQUEST_HEADERS` and beats the base strips — with fetch metadata on
+every https request, that is one rule add + remove per https request (5000-session-rule ceiling
+on both browsers, unreachable through the credit window; an add that fails fails the request);
+other `sec-*` headers are dropped; the engine's User-Agent is
 DNR-carried too, but the first one seen is adopted into the base rule (one install per viewer, no
 per-request churn — `Bridge#adoptUA`) and only a differing UA rides per-request; webRequest
 capture matches on `initiator` only (extension-page fetches carry the tab's id, so never filter on tabId).

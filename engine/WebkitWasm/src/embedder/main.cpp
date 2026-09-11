@@ -71,6 +71,7 @@
 #include <emscripten/threading.h>
 #include <pal/SessionID.h>
 #include <wtf/JSONValues.h>
+#include <wtf/Language.h>
 #include <wtf/MainThread.h>
 #include <wtf/Assertions.h> // WTFLogAlways — perf-log breakdown from the engine thread
 #include <wtf/MonotonicTime.h>
@@ -1921,6 +1922,10 @@ EMSCRIPTEN_KEEPALIVE void bib_load_url(const char* url)
         return;
     WebCore::ResourceRequest request { URL { String::fromUTF8(url) } };
     WebCore::FrameLoadRequest frameLoadRequest { *g_engine->mainFrame, WTF::move(request) };
+    // A URL-bar load, as WebPage::loadRequest marks its own: WebCore then
+    // says Sec-Fetch-Site: none on every hop and the embedder adds
+    // Sec-Fetch-User (EmbedderStrategies.cpp).
+    frameLoadRequest.setIsRequestFromClientOrUserInput();
     printf("EMBEDDER: loading %s\n", url);
     g_engine->mainFrame->loader().load(WTF::move(frameLoadRequest));
 }
@@ -2093,6 +2098,21 @@ int main()
         printf("EMBEDDER: media bridge ENABLED (audio-only, bridge-fetched)\n");
 
     printf("EMBEDDER: init OK\n");
+
+    // Host languages (Module.bibLanguages, the viewer's navigator.languages):
+    // guest navigator.language must describe the user whose Accept-Language
+    // the host puts on the wire. The platform fallback is effectively en-US.
+    {
+        int langBytes = MAIN_THREAD_EM_ASM_INT({ return Array.isArray(Module.bibLanguages) ? lengthBytesUTF8(Module.bibLanguages.join(',')) + 1 : 0; });
+        if (langBytes > 1) {
+            char* langs = static_cast<char*>(malloc(langBytes));
+            if (langs) {
+                MAIN_THREAD_EM_ASM({ stringToUTF8(Module.bibLanguages.join(','), $0, $1); }, langs, langBytes);
+                WTF::overrideUserPreferredLanguages(String::fromUTF8(langs).split(','));
+                free(langs);
+            }
+        }
+    }
 
     // PageIdentifier: the empty-clients recipe (SVGImage) passes nullopt,
     // but Page::mediaSessionManager() hard-returns null for identifier-less

@@ -138,7 +138,7 @@ not prevent.
   `delete{before,after}` + `commit{text}` (or `composition{text,…}` while composing). Diffing
   is what survives every IME and OSK; `beforeinput.inputType` is consulted only to *ignore*
   `insertFromPaste`/`insertFromDrop` (the paste event owns those) and
-  `historyUndo/Redo` (Undo/Redo commands, which are dead anyway — issue). Selection-only changes
+  `historyUndo/Redo` (Undo/Redo commands; plans/keyboard-keys.md makes them live). Selection-only changes
   on the mirror (`selectionchange`, e.g. Gboard's spacebar cursor slide) → `select`.
 - **Key routing** (one function, `routeKey(e)`, replaces today's early-returns):
   1. `hostKey(e)` — src/ext/keys.mjs (landed). Not forwarded, not prevented.
@@ -240,7 +240,7 @@ not prevent.
 
 - Selection handles / long-press select on touch; the engine's own context menu.
 - Undo/redo (`registerUndoStep` empty), Ctrl+arrow word ops, Shift+Home/End, PageUp/Down in the
-  key map — issues/editing-key-gaps.md.
+  key map — plans/keyboard-keys.md.
 - Spellcheck inside the engine (`TextCheckerClient` stubs; the host's spellcheck on the mirror is
   turned off — it would underline invisible text and its context menu is unreachable).
 - macOS press-and-hold accent popups on physical keys: they need the keydown unprevented, which

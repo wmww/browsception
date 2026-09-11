@@ -89,4 +89,4 @@ Steps:
 ## Out of scope, found alongside
 
 Arrow keys, PageUp/Down and Home/End never scroll any page, while Space does. This is
-unrelated to overscroll-behavior. See issues/keyboard-scroll-keys.md.
+unrelated to overscroll-behavior. See plans/keyboard-keys.md.

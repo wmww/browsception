@@ -176,7 +176,7 @@ boot-size, grow, shrink, and post-resize input.
   is forwarded **and** prevented, except the paste keys (`hostPasteKey`: Ctrl/Cmd+V, Shift+Insert),
   which are forwarded but left unprevented so the host fires its paste event. The engine's key
   map (`BibPageClients.h` `commandForKeyDown`) decides what a combo *means*; the viewer never
-  does. Known gaps (undo/redo, word ops, Shift+Home/End, PageUp/Down): issues/editing-key-gaps.md.
+  does. Known gaps (undo/redo, word ops, Shift+Home/End, PageUp/Down, keyboard scrolling): plans/keyboard-keys.md.
   plans/text-input.md adds the IME-key case to the same routing.
 - **Text input / IME / OSK — designed, not built**: plans/text-input.md. The Wayland
   text-input dance one hop up: the engine reports editor state (editable, surrounding text +

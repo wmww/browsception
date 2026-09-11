@@ -169,3 +169,18 @@ result appended here (keep the question, add `**Answer (date):**`).
     works in both. Chromium's Linux NSS cert DB is per-$HOME, not per-profile, so real CA
     import would leak outside disposable profiles anyway. Keep the planned one
     real-TLS-trust test for tier 2.
+21. **Clipboard host facts** (plans/clipboard.md step 0): on a focused non-editable canvas in an
+    extension page, do Ctrl+C/X/V fire `copy`/`cut`/`paste` with readable `clipboardData` and no
+    prompt — Chrome expected yes for all three regardless of selection, Firefox unverified for
+    copy/cut with a collapsed selection and paste on a non-editable target (fallback: a
+    readonly hidden textarea sink); does `navigator.clipboard.write` succeed from transient
+    activation without `clipboardWrite` on Firefox; do headless Chrome/Firefox clipboards
+    round-trip through one page (tier-2 feasibility). Unanswered.
+22. **IME / on-screen-keyboard host facts** (plans/text-input.md § Probes): does an unprevented
+    dead-key/IME keydown compose into a 1-px `opacity:0` textarea on Linux ibus, Firefox and
+    macOS (record the event traces as tier-0 fixtures); does `textarea.focus()` ~50 ms after
+    the tap raise the OSK on Firefox Android and a Windows/ChromeOS touch host (Chrome:
+    transient activation; Gecko: 1 s `IsHandlingUserInput` grace — fallback is engine-published
+    editable rects for synchronous focus); do `inputmode`/`enterkeyhint`/`autocapitalize` on the
+    mirror drive the OSK; is `interactive-widget=resizes-content` honoured by Firefox Android.
+    Unanswered.

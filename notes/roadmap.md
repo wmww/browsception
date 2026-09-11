@@ -5,8 +5,10 @@ plans/mvp.md plus loose ends carried out of Phases 1–2.
 
 ## Fast-follows (rough order)
 
-1. Clipboard (copy/paste text), find bar (engine findString), file upload, downloads.
-2. IME/composition via hidden-input-at-caret (rendering-input.md) — the big input investment.
+1. Clipboard (plans/clipboard.md), find bar (engine findString), file upload, downloads.
+2. Text input: IME/composition, on-screen keyboards, the host editable proxy
+   (plans/text-input.md) — the big input investment. Touch hosts first need
+   issues/touch-input.md.
 3. Popups/window.open → new viewer tabs; dialogs (alert/confirm/prompt/auth) as viewer modals.
 4. Audio via AudioWorklet ring buffer.
 5. Session restore, history, list import/export polish.

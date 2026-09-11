@@ -317,9 +317,11 @@ Open issues in issues/ (guest-JS wedge, rcap dynamic budget, host-present ceilin
 framebuffers, CLoop `join` returned a non-string, Firefox tier-2 crash-reload scenario, host
 access revocation silently un-sandboxes). Plans in plans/, in intended order: wire-header
 fidelity (settles the DNR rule shape the WebSocket rules reuse), WebSocket bridge (largest;
-nothing waits on it), clipboard (independent coupled engine+JS change: in-engine pasteboard
-store, paste-event-fed reads, gesture-gated host writes, no new permission — starts with two
-host-platform probes). Next work: [roadmap.md](roadmap.md).
+nothing waits on it), clipboard (in-engine pasteboard store; the verbs are the host's
+ClipboardEvents turned into `bib_edit` ops, no key map, no new permission — starts with host
+probes), text-input (the host editable proxy: engine editor state → hidden mirror textarea →
+IME/OSK/composition → caret-relative edit ops; shares `bib_edit` with clipboard, either order;
+its touch stage waits on issues/touch-input.md). Next work: [roadmap.md](roadmap.md).
 
 ## Key decisions
 

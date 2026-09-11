@@ -33,9 +33,9 @@ covers all of it.
 The engine owns an in-memory **pasteboard store** (typed items: strings for text/plain,
 text/html, text/uri-list; bytes for images; a change count). The host is the only thing that
 talks to the real clipboard, in exactly two moments that browsers already gate for us:
-**paste** — the user's Ctrl+V/Shift+Insert on the focused canvas fires a host `paste` event
-whose `clipboardData` we pack into the store *before* forwarding the key, so WebKit's
-`Editor::paste` and the guest's `paste` event see fresh content; **copy** — every store
+**paste** — whatever key the host browser binds to paste fires a host `paste` event on the
+focused canvas; its `clipboardData` reaches the store *before* the key reaches the engine, so
+WebKit's `Editor::paste` and the guest's `paste` event see fresh content; **copy** — every store
 mutation the engine makes (Ctrl+C, `cut`, `execCommand('copy')`, a `copy` handler's
 `setData`, `navigator.clipboard.writeText`) is coalesced into one `bibChrome("clipboard")`
 signal, and the viewer writes it to the host clipboard with the async Clipboard API, itself
@@ -136,18 +136,33 @@ worktrees.md § WebKit-tree changes (edit under the main checkout's tree, re-exp
   `_bib_clipboard_set`; chrome kind `"clipboard"`: copy each `ptr/len` out of the heap into one
   transferable buffer, free them, post `{t:'chrome', kind, json, buf}` (rewrite `ptr/len` to
   `off/len`). **`engine-link.mjs`**: `clipboardSet(json, bytes)`; `onChrome(kind, json, buf)`.
-- **New `src/ext/clipboard.mjs`** (pure, tier-0 testable): `isEditingCombo(e)` /
-  `isPasteCombo(e)` (Ctrl/Meta+{c,x,v,a,z,y}, Shift+Insert, Ctrl+Insert, Shift+Delete),
-  `packDataTransfer(dt) → {json, bytes}` (text/plain, text/html, text/uri-list; `dt.files`
-  images as bytes; size cap ~32 MB total, images dropped first), `toClipboardItems(json, buf)`
-  → `[ClipboardItem]` (+ plain-text fallback string).
-- **`viewer.mjs` input routing** — replace the blanket Ctrl/Meta bail-out with a table:
-  host-owned (unchanged: F5, Alt+arrows, and every Ctrl/Meta combo not listed) / editing
-  combos → forward + `preventDefault` (Ctrl+A must not select the viewer page) / **paste
-  combos → deferred**: do not forward on keydown; the host `paste` event (default action of
-  that key, same task, fires after keydown listeners) calls `link.clipboardSet(pack(e.clipboardData))`
-  then forwards the stored keydown; a `setTimeout(0)` fallback forwards the key with an
-  **empty** store set first if no paste event came (paste unknown content = paste nothing).
+- **New `src/ext/clipboard.mjs`** (pure, tier-0 testable): `packDataTransfer(dt) → {json, bytes}`
+  (text/plain, text/html, text/uri-list; `dt.files` images as bytes; size cap ~32 MB total,
+  images dropped first), `toClipboardItems(json, buf)` → `[ClipboardItem]` (+ plain-text
+  fallback string), and the two key predicates below.
+- **`viewer.mjs` key routing** — the viewer holds no clipboard keybindings. It answers two
+  questions per keydown, each a small predicate with a stated reason:
+  1. *Does the host browser own this key?* (`hostKey`, a **deny list**, today's inverted
+     whitelist): F5, Alt+←/→, Ctrl/Cmd+{L,T,W,N,R,Tab,digits,Shift+T}, F12/Ctrl+Shift+{I,J,C}.
+     Not forwarded, not prevented. **Everything else is forwarded** — the nested page must
+     receive what a normal page receives (Docs/Gmail need Ctrl+B/K/Enter, not just C/V), and
+     the Ctrl/Meta bail-out was solving the wrong problem. The engine's key map (step 1)
+     decides what a combo *means*; the viewer never does.
+  2. *Do we rely on this key's host default action?* (`hostDefaultCarriesClipboard`): yes for
+     the keys the host binds to paste — Ctrl/Cmd+V with any Shift, Shift+Insert. Every
+     forwarded key is `preventDefault`ed (Ctrl+A must not select the viewer page, Ctrl+S must
+     not open Save) **except** these, because a prevented keydown cancels the host's paste
+     command and with it the `paste` event that carries the clipboard. This is the one place
+     host keybinding knowledge lives, and it is inherent to reading the clipboard through the
+     browser's gesture-gated event rather than taking `clipboardRead` (VS Code web and Figma
+     make the same trade; Mac hosts send Meta, which is why the predicate is host-side).
+  Ordering without a state machine: keys in set 2 are forwarded from a macrotask
+  (`setTimeout(0)`) posted at keydown. The `paste` event is part of that key's default action
+  in the same task, so its `link.clipboardSet(pack(e.clipboardData))` is always posted to the
+  worker before the key; if the host fires no paste event for that key, the key simply arrives
+  and the engine pastes what the store holds. No "did paste come?" bookkeeping, no fallback
+  path. (Chrome schedules input tasks ahead of timers, so a mouse event landing within that
+  ~0–1 ms could be processed first — human-scale impossible, and harmless if it happened.)
   Keyup is unaffected. `paste` listener: `preventDefault`, attached to the key-sink element.
 - **`onChrome('clipboard')`**: write only if `performance.now() - lastCanvasInputAt < 5000`
   (mirrors transient activation; Chrome's auto-grant would otherwise let an owned engine write
@@ -164,7 +179,8 @@ worktrees.md § WebKit-tree changes (edit under the main checkout's tree, re-exp
   checksum of `getData('text/plain')`, `types` contains `text/html`, `files[0].type ===
   'image/png'` (+ size bucket), `navigator.clipboard.readText()` rejected with NotAllowedError,
   `navigator.clipboard.writeText` resolved (from a click handler), `execCommand('copy')` result.
-- **Tier-0** `clipboard.test.mjs`: combo predicates over synthetic event objects;
+- **Tier-0** `clipboard.test.mjs`: `hostKey` / `hostDefaultCarriesClipboard` over synthetic
+  event objects (incl. Meta on Mac, Shift variants, a plain letter → forwarded + prevented);
   `packDataTransfer` over a fake DataTransfer (types, files, cap); `toClipboardItems` round trip.
   ABI mirror test stays green.
 - **Tier-2 Chrome scenario "clipboard"** (real keys via puppeteer; on Linux Blink itself maps
@@ -195,8 +211,10 @@ worktrees.md § WebKit-tree changes (edit under the main checkout's tree, re-exp
   "`clipboard`: write the host clipboard — viewer gates on a ≤5 s-old canvas input; reads
   never originate from the engine (paste event only)"; the `bib_clipboard_set` direction is a
   host→engine input like keys, note it under sandbox→host sinks only if reviewers ask.
-- rendering-input.md § Clipboard: replace the MVP bullet with this design (key routing table,
-  deferred paste, coalesced writes, what stays denied). extension-platform.md § Permissions
+- rendering-input.md § Clipboard: replace the MVP bullet with this design (deny-list key
+  routing + the one paste-key exemption and why, macrotask ordering, coalesced writes, what
+  stays denied); § Keyboard: the "pass through browser-level combos" bullet becomes the deny
+  list. extension-platform.md § Permissions
   draft: drop `clipboardRead`/`clipboardWrite` (or record why `clipboardWrite` had to come
   back). roadmap.md fast-follow 1: strike clipboard. testing.md fixture list + scenario numbers.
   open-questions #14 answers. engine-internals.md: one line that the async clipboard's generic

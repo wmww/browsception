@@ -168,8 +168,25 @@ int bib_key(int type, const char* key, const char* code, const char* text,
 /* Page focus/blur (FocusController activation). v1 engines may no-op. */
 void bib_set_focus(int focused);
 
+/* Editing ops (host → engine). json {"op": str, ...}; bytes/len an optional
+ * payload the op's JSON indexes into (ownership → engine, JS allocates via
+ * bib_wasm_alloc; NULL/0 when none). Unknown ops are ignored. Ops:
+ *   {"op":"copy"} / {"op":"cut"}   run the editor's Copy/Cut command (the
+ *        guest's copy/cut event first); what lands on the pasteboard comes
+ *        back as a bibChrome "clipboard" signal. The engine key map runs the
+ *        same commands for Ctrl/Cmd+C/X, Ctrl+Insert, Shift+Delete.
+ *   {"op":"paste", "plain": bool, "items":[...]}  replace the engine
+ *        pasteboard with the host clipboard (no "clipboard" echo), then run
+ *        Paste / PasteAsPlainText: the guest's paste event sees the items and
+ *        can preventDefault the insertion. Items: {"type","text"} or
+ *        {"type","name","off","len"} naming a range of `bytes` (images).
+ *        The ONLY way host clipboard data enters the engine: the host sends
+ *        it from its own paste event (a user gesture), never on its own.
+ * Reserved (plans/text-input.md): composition, commit, delete, select. */
+void bib_edit(const char* json, char* bytes, int len);
+
 /* Reserved for fast-follow (declared so names are stable, may be absent in
- * v1 builds): composition/IME events, touch. */
+ * v1 builds): touch. */
 
 /* ========================================================================
  * Networking — the fetch bridge (both directions)
@@ -306,7 +323,14 @@ void bib_crash(void);
  *                failures reach the shim twice — once here, once from the
  *                shim's own fetch — deliberately: the two paths cover each
  *                other's blind spots and the host renders the last one.
- *          reserved (fast-follows): "open", "download", "dialog", "caret"
+ *          "clipboard" {"items":[{"type","text"} | {"type","name","ptr","len"}]}
+                the engine pasteboard changed from inside (Copy/Cut, a guest
+                copy handler's setData, execCommand('copy'),
+                navigator.clipboard writes): at most one per bib_tick, the
+                store's whole content. Binary items are engine-malloc'd — JS
+                copies ptr/len out and frees each. The host writes it to the
+                real clipboard only under a fresh user activation.
+          reserved (fast-follows): "open", "download", "dialog", "caret"
  * bibQueryResult(queryId, jsonPtr)              [host]  bib_query answer
  * bibPersist(jsonPtr)                           [host]  storage snapshot to
  *          persist (until storage moves fully to engine-side OPFS)

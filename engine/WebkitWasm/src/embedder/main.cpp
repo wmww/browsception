@@ -19,6 +19,7 @@
 #include "BibIDBServer.h"
 #include "BibMediaPlayer.h" // g_mediaEnabled boot flag
 #include "BibBackForward.h"
+#include "BibClipboard.h"
 #include "BibPageClients.h"
 #include "BibSocketProvider.h"
 #include "BibStorage.h"
@@ -969,6 +970,10 @@ EMSCRIPTEN_KEEPALIVE void bib_tick()
     BIB::g_damagePhase = "runloop";
     WTF::RunLoop::cycle();
     BIB::g_damagePhase = "idle";
+    // One host clipboard write per tick, however many store writes the
+    // input since the last tick made (a copy handler's setData is a clear +
+    // one write per type).
+    BIB::flushClipboardSignal();
     const double _perfT1 = g_perfLog ? bibNowMs() : 0;
     // Drive WebCore's "update the rendering" steps. This port has no
     // DisplayRefreshMonitor, so nothing else ever runs them — guest
@@ -1982,6 +1987,39 @@ static void bibRunKey(void* p)
     delete t;
 }
 
+// Editing ops from the host (ABI bib_edit). json: {"op", …}; bytes: an
+// optional payload the op's JSON indexes into (ownership → engine). Ops:
+// "copy" / "cut" / "paste" (BibClipboard.h). Unknown ops are ignored.
+struct BibEditTask { char* json; char* bytes; int len; };
+static void bibRunEdit(void*);
+EMSCRIPTEN_KEEPALIVE void bib_edit(const char* json, char* bytes, int len)
+{
+    if (!bibOnEngineThread()) {
+        auto* task = new BibEditTask { strdup(json ? json : ""), bytes, len };
+        if (!bibProxyToEngine(bibRunEdit, task)) {
+            free(task->json);
+            free(task->bytes);
+            delete task;
+        }
+        return;
+    }
+    std::span<const uint8_t> payload;
+    if (bytes && len > 0)
+        payload = { reinterpret_cast<const uint8_t*>(bytes), static_cast<size_t>(len) };
+    auto value = JSON::Value::parseJSON(String::fromUTF8(json ? json : ""));
+    auto msg = value ? value->asObject() : nullptr;
+    if (g_engine && msg)
+        BIB::runClipboardOp(*g_engine->page, msg->getString("op"_s), *msg, payload);
+    free(bytes);
+}
+static void bibRunEdit(void* p)
+{
+    auto* t = static_cast<BibEditTask*>(p);
+    bib_edit(t->json, t->bytes, t->len);
+    free(t->json);
+    delete t;
+}
+
 } // extern "C"
 
 int main()
@@ -2196,6 +2234,12 @@ int main()
     // Lazy-hydration/scheduler libraries feature-detect it; a missing
     // global silently strands their deferred work.
     page->settings().setRequestIdleCallbackEnabled(true);
+    // navigator.clipboard: FALSE at the raw-WebCore layer (same family).
+    // JavaScriptCanAccessClipboard / DOMPasteAllowed / DOMPasteAccessRequests
+    // stay false on purpose: writes need a gesture, DOM-initiated reads are
+    // denied — only a real paste (bib_edit) hands the guest the clipboard.
+    page->settings().setAsyncClipboardAPIEnabled(true);
+    BIB::installClipboardObserver();
     // Raw-WebCore MemoryCache default is 8MB total — one modern page evicts
     // everything, so every in-engine navigation refetched all subresources
     // over the bridge. Still in-memory; sized like a small browser profile.

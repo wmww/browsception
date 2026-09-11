@@ -8,9 +8,10 @@
 // invariants, 12 crash/recovery, 13 startup budget, 14 resize, 15 guest
 // WebSocket, 16 engine-side load failure, 17 view transitions absent, 19
 // positional-input coalescing, 20 sticky-chrome scroll, 22 guest wasm shim +
-// media stubs (18 HiDPI has its own file — dpr is a browser-launch property;
-// 21 present coherence was retired with the shared-heap present: the worker
-// copies the band out synchronously, so nothing can race it).
+// media stubs, 25 clipboard (18 HiDPI has its own file — dpr is a
+// browser-launch property; 21 present coherence was retired with the
+// shared-heap present: the worker copies the band out synchronously, so
+// nothing can race it).
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -54,7 +55,7 @@ const BOOT_TIMEOUT = 120000;
 // Suite posture: dev-style blacklist covering every fixture domain, so a
 // sandboxed viewer's domain always HAS sandbox disposition — required since
 // 2.4's boundary policy natives nested navigations to unlisted domains.
-const FIXTURE_BLACKLIST = ['grid.bstest', 'input.bstest', 'app.bstest', 'other.bstest', 'hostile.bstest', 'scroll.bstest', 'scroll-sticky.bstest', 'plain-http.bstest'];
+const FIXTURE_BLACKLIST = ['grid.bstest', 'input.bstest', 'app.bstest', 'other.bstest', 'hostile.bstest', 'scroll.bstest', 'scroll-sticky.bstest', 'plain-http.bstest', 'clipboard.bstest'];
 
 async function configure(patch, ready) {
   const cfg = await session.context.newPage();
@@ -332,6 +333,146 @@ test('input: input.bstest full battery through the viewer canvas', { timeout: 30
   await until(page, 100, 350, is([209, 209, 209]), 60000, 'type checksum');
   await page.mouse.click(...at(320, 350)); // #nav link
   await until(page, 400, 300, is([102, 51, 153]), 120000, 'link navigation');
+  await page.close();
+});
+
+// --- Scenario 25: clipboard ------------------------------------------------
+// Copy/cut/paste between the host clipboard and the guest, all through real
+// keys on the canvas (on Linux, Blink maps CDP-injected Ctrl+C/V to its
+// clipboard commands, so the host's paste event and headless clipboard are
+// real): engine → host is the bibChrome "clipboard" signal written with the
+// async Clipboard API, host → engine is the paste event's clipboardData
+// (notes/rendering-input.md § Clipboard). No test-side clipboard access
+// except for seeding an image. Zones: test/fixtures/pages/clipboard.html.
+const sumRGB = (s) => {
+  let c = 0;
+  for (const ch of s) c = (c + ch.charCodeAt(0)) % 256;
+  return [c, c, c];
+};
+const ZONE = (i) => [35 + 60 * i, 335];
+const GREEN = [0, 255, 0];
+const RED = [255, 0, 0];
+
+async function openClipboardFixture(bootViewerFn) {
+  const page = await bootViewerFn('https://clipboard.bstest/');
+  await until(page, ...ZONE(10), is(GREEN), 120000, 'clipboard fixture load (clipapi zone)');
+  const box = await (await page.$('#screen')).boundingBox();
+  const at = (x, y) => [box.x + x, box.y + y];
+  // Every engine → host write resolves once; wait for it before pasting.
+  const writes = () => page.evaluate(() => __bs.clipboardWrites);
+  const copied = async (before, what) =>
+    pollUntil(async () => (await writes()) > before, `host clipboard write after ${what}`);
+  return { page, at, writes, copied };
+}
+
+test('clipboard: copy/cut/paste round trips through the host clipboard', { timeout: 300000 }, async () => {
+  const { page, at, writes, copied } = await openClipboardFixture(bootViewer);
+  const zone = (i, rgb, what) => until(page, ...ZONE(i), is(rgb), 60000, what);
+  const copy = async (key, what) => {
+    const before = await writes();
+    await page.keyboard.press(key);
+    await copied(before, what);
+  };
+
+  // 1. plain word: dblclick, Ctrl+C, paste into the field.
+  await page.mouse.dblclick(...at(40, 17));
+  await copy('Control+C', 'Ctrl+C on "alpha"');
+  await page.mouse.click(...at(110, 137));
+  await page.keyboard.press('Control+V');
+  await zone(0, sumRGB('alpha'), 'field after paste');
+  await zone(4, sumRGB('alpha'), 'guest paste event text');
+
+  // 2. rich: the bold word keeps its bold through text/html; Ctrl+Shift+V
+  //    pastes it plain.
+  await page.mouse.dblclick(...at(40, 51));
+  await copy('Control+C', 'Ctrl+C on bold "bravo"');
+  await page.mouse.click(...at(110, 205));
+  await page.keyboard.press('Control+V');
+  await zone(2, GREEN, '#rich holds a bold element');
+  await zone(5, GREEN, 'paste event types include text/html');
+  await page.mouse.click(...at(330, 205));
+  await page.keyboard.press('Control+Shift+V');
+  await zone(3, sumRGB('bravo'), '#rich2 plain paste (no bold)');
+
+  // 3. navigator.clipboard.writeText from a guest click handler.
+  let before = await writes();
+  await page.mouse.click(...at(60, 270));
+  await zone(8, GREEN, 'writeText resolved');
+  await copied(before, 'guest writeText');
+  await page.mouse.click(...at(110, 137));
+  await page.keyboard.press('Control+A');
+  await page.keyboard.press('Control+V');
+  await zone(0, sumRGB('charlie'), 'field after pasting the writeText text');
+
+  // 4. cut: the field empties, and the cut text comes back on paste.
+  await page.keyboard.press('Control+A');
+  await page.keyboard.type('delta', { delay: 50 });
+  await zone(0, sumRGB('delta'), 'typed');
+  await page.keyboard.press('Control+A');
+  await copy('Control+X', 'Ctrl+X');
+  await zone(0, [0, 0, 0], 'field empty after cut');
+  await page.keyboard.press('Control+V');
+  await zone(0, sumRGB('delta'), 'cut text pasted back');
+
+  // 5. a guest copy handler's setData, and execCommand('copy') from a click.
+  await page.mouse.dblclick(...at(40, 85));
+  await copy('Control+C', 'Ctrl+C in the custom-copy word');
+  await page.mouse.click(...at(110, 137));
+  await page.keyboard.press('Control+A');
+  await page.keyboard.press('Control+V');
+  await zone(0, sumRGB('custom-data'), 'copy handler setData reached the host clipboard');
+  before = await writes();
+  await page.mouse.click(...at(170, 270));
+  await zone(9, GREEN, 'execCommand(copy) returned true');
+  await copied(before, 'execCommand(copy)');
+  await page.mouse.click(...at(110, 137));
+  await page.keyboard.press('Control+A');
+  await page.keyboard.press('Control+V');
+  await zone(0, sumRGB('bravo'), 'execCommand copy pasted');
+
+  // 6. DOM-initiated reads stay denied; a preventDefault()ing paste target
+  //    still sees the data but receives nothing.
+  await page.mouse.click(...at(280, 270));
+  await zone(7, [255, 0, 255], 'readText rejected with NotAllowedError');
+  await page.mouse.click(...at(330, 137));
+  await page.keyboard.press('Shift+Insert');
+  await zone(4, sumRGB('bravo'), 'paste event on #nopaste saw the text');
+  assert.deepEqual(await probe(page, ...ZONE(1)), [128, 128, 128], '#nopaste stayed empty');
+
+  // 7. key-less verbs (Edit menu, OSK toolbar): host paste/copy events with
+  //    no key behind them.
+  await page.mouse.click(...at(110, 137));
+  await page.keyboard.press('Control+A');
+  await page.evaluate(() => {
+    const dt = new DataTransfer();
+    dt.setData('text/plain', 'echo');
+    document.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt }));
+  });
+  await zone(0, sumRGB('echo'), 'key-less paste event');
+  await page.mouse.dblclick(...at(40, 17));
+  before = await writes();
+  await page.evaluate(() => document.dispatchEvent(new ClipboardEvent('copy')));
+  await copied(before, 'key-less copy event');
+  await page.mouse.click(...at(110, 137));
+  await page.keyboard.press('Control+A');
+  await page.keyboard.press('Control+V');
+  await zone(0, sumRGB('alpha'), 'key-less copy pasted');
+
+  // 8. an image on the host clipboard arrives as clipboardData.files.
+  //    Seeded from the viewer page itself: Chrome auto-grants clipboard-write
+  //    to a focused page, and evaluate carries a user gesture.
+  await page.bringToFront();
+  await page.evaluate(async () => {
+    const c = new OffscreenCanvas(8, 8);
+    const g = c.getContext('2d');
+    g.fillStyle = '#ff0000';
+    g.fillRect(0, 0, 8, 8);
+    const png = await c.convertToBlob({ type: 'image/png' });
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
+  });
+  await page.mouse.click(...at(110, 205));
+  await page.keyboard.press('Control+V');
+  await zone(6, GREEN, 'paste event files[0] is the image/png');
   await page.close();
 });
 

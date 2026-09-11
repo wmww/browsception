@@ -5,7 +5,8 @@ plans/mvp.md plus loose ends carried out of Phases 1–2.
 
 ## Fast-follows (rough order)
 
-1. Clipboard (plans/clipboard.md), find bar (engine findString), file upload, downloads.
+1. ~~Clipboard~~ landed 2026-09-10 (rendering-input.md § Clipboard). Find bar (engine
+   findString), file upload, downloads.
 2. Text input: IME/composition, on-screen keyboards, the host editable proxy
    (plans/text-input.md) — the big input investment. Touch hosts first need
    plans/touch-input.md (viewer-only: pointer events, drag-to-scroll, fling).

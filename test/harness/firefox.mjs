@@ -139,6 +139,22 @@ async function connect(url, timeoutMs = 20000) {
   }
 }
 
+// KeyboardEvent inits for page.press()/type() (nsITextInputProcessor wants
+// key, code and keyCode spelled out).
+const NAMED_KEYS = {
+  Shift: ['ShiftLeft', 16], Control: ['ControlLeft', 17], Alt: ['AltLeft', 18], Meta: ['MetaLeft', 91],
+  Enter: ['Enter', 13], Tab: ['Tab', 9], Backspace: ['Backspace', 8], Escape: ['Escape', 27],
+  Insert: ['Insert', 45], Delete: ['Delete', 46], Home: ['Home', 36], End: ['End', 35],
+  ArrowLeft: ['ArrowLeft', 37], ArrowUp: ['ArrowUp', 38], ArrowRight: ['ArrowRight', 39], ArrowDown: ['ArrowDown', 40],
+};
+function tipKey(key) {
+  if (NAMED_KEYS[key]) return { key, code: NAMED_KEYS[key][0], keyCode: NAMED_KEYS[key][1] };
+  const up = key.toUpperCase();
+  if (/^[A-Z]$/.test(up)) return { key, code: `Key${up}`, keyCode: up.charCodeAt(0) };
+  if (/^[0-9]$/.test(key)) return { key, code: `Digit${key}`, keyCode: key.charCodeAt(0) };
+  return { key, code: '', keyCode: 0 };
+}
+
 // Deserialize the subset of BiDi RemoteValues we produce (we always return
 // JSON strings from evaluate, so this is mostly for error surfaces).
 function unwrap(rv) {
@@ -246,6 +262,30 @@ export async function launchFirefox(opts = {}) {
     extensionBaseUrl = await discoverExtensionBase(profile, extensionId, bidi);
   }
 
+  // Key chords from the chrome window (see page.press). Each chord: keys
+  // down in order, up in reverse.
+  let chromeContext = null;
+  async function chromeKeys(chords) {
+    chromeContext ??= (await bidi.send('browsingContext.getTree', { 'moz:scope': 'chrome' })).contexts[0].context;
+    const r = await bidi.send('script.callFunction', {
+      functionDeclaration: `(s) => {
+        const tip = Cc['@mozilla.org/text-input-processor;1'].createInstance(Ci.nsITextInputProcessor);
+        if (!tip.beginInputTransactionForTests(window)) return 'no input transaction';
+        for (const chord of JSON.parse(s)) {
+          for (const k of chord) tip.keydown(new KeyboardEvent('', k));
+          for (const k of chord.slice().reverse()) tip.keyup(new KeyboardEvent('', k));
+        }
+        return 'ok';
+      }`,
+      arguments: [{ type: 'string', value: JSON.stringify(chords) }],
+      target: { context: chromeContext },
+      awaitPromise: false,
+      resultOwnership: 'none',
+    });
+    if (r.type === 'exception' || r.result?.value !== 'ok')
+      throw new Error(`chromeKeys: ${r.exceptionDetails?.text ?? r.result?.value}`);
+  }
+
   async function newPage() {
     const { context } = await bidi.send('browsingContext.create', { type: 'tab' });
     const lines = consoleByContext.get(context) ?? consoleByContext.set(context, []).get(context);
@@ -288,6 +328,21 @@ export async function launchFirefox(opts = {}) {
         }
         const v = unwrap(r.result);
         return typeof v === 'string' ? JSON.parse(v) : v;
+      },
+      /**
+       * Real (trusted, activation-carrying) keys: 'Control+Shift+V', 'a',
+       * 'Enter'. Modifiers go down in order and up in reverse. BiDi's own
+       * input.performActions refuses moz-extension pages ("privileged
+       * scope"), so the keys come from an nsITextInputProcessor in the
+       * browser's chrome window, which routes them to the focused tab like
+       * native input — this tab must be the selected one.
+       */
+      async press(combo) {
+        await chromeKeys([combo.split('+').map(tipKey)]);
+      },
+      /** Types `text`, one key per character. */
+      async type(text) {
+        await chromeKeys([...text].map((c) => [tipKey(c)]));
       },
       async waitForFunction(fnSrc, { timeout = 10000, interval = 100 } = {}) {
         const deadline = Date.now() + timeout;

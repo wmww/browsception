@@ -33,6 +33,11 @@ Fixture pages are assertion-friendly by construction:
 - `scroll.bstest` — 4000 x 120 px text sections, each with a colour-coded left border encoding
   its index, so `__bs.probe(4, 4)` decodes the engine's scroll offset (perf probes;
   notes/perf-measurement.md).
+- `clipboard.bstest` — words to select, fields/contenteditables to paste into, buttons for
+  `writeText`/`execCommand('copy')`/`readText`, and one 50×50 zone per observable (field
+  checksums, bold-survived, what the guest paste event saw, API outcomes). Zone legend and
+  coordinates in the page's header comment; `selectWord(id)`/`focusField(id)` hooks for hosts
+  without mouse input.
 - `hostile.bstest` — tries everything it shouldn't: fetch to `localhost`/RFC1918/bad ports,
   `file:` links, window.open spam, oversized responses. Exists so guard tests are one navigation.
   Its `#filelink` and the `/redir-file` route (302 → `file:///etc/passwd`) are driven by the
@@ -94,7 +99,12 @@ Tier-2 scenario 12 asserts both halves (crashed UI *and* a named stack).
   start inside a sandboxed agent shell: run it unsandboxed. Its `page` API is deliberately Playwright-shaped
   (`goto`/`evaluate(fn, jsonArg)`/`waitForFunction(exprString)`/`url()`), but `evaluate` round-trips
   through JSON and console capture needs `page.hookConsole()` on extension pages
-  (extension-platform.md § Firefox). `launchFirefox({headless: false})` run under a sourced
+  (extension-platform.md § Firefox). **Real input**: BiDi `input.performActions` refuses
+  moz-extension pages ("privileged scope"), so `page.press(combo)`/`page.type(text)` drive an
+  `nsITextInputProcessor` in the browser's chrome window (`--remote-allow-system-access`
+  already allows chrome-scope scripts): trusted keys with user activation, routed to the selected
+  tab like native input. No mouse equivalent yet (`windowUtils.sendMouseEvent` is gone) — tests
+  select/focus through guest hooks instead. `launchFirefox({headless: false})` run under a sourced
   guibox env gives a real window with the extension installed (about:addons screenshots).
 - **Agent GUI sessions**: the gui-testing skill's `guibox` — headless sway compositor, real
   windowed Chromium, `grim` screenshots, `wdotool` input. For anything CDP can't reach or fakes:
@@ -233,13 +243,26 @@ whole machine, end to end:
     the design premise), the app.bstest execute battery (bridge, cookie round-trip via
     onHeadersReceived capture, pushState mirror, redirect chain, and scenario 8's wire-fidelity
     assertions — `intl.accept_languages` stands in for `--accept-lang`), blacklist/whitelist reconcile,
-    native handoff, scheme gates, crash → reload. Same source tree as Chrome; only the manifest
-    differs. Plus two stub-engine bridge cases for what only Firefox's network stack produces
+    native handoff, scheme gates, crash → reload, and scenario 25's Firefox half (a paste event
+    on the non-editable canvas and async writes without `clipboardWrite` are Firefox's risks):
+    text round trip, key-less copy, denied `readText`, `preventDefault()`ing target — no key-less
+    paste (Firefox empties a synthetic ClipboardEvent's `clipboardData`). Same source tree as
+    Chrome; only the manifest differs. Plus two stub-engine bridge cases for what only Firefox's network stack produces
     (tier 1 runs on Chrome): repeated `Set-Cookie` arriving as one newline-joined value, and an
     HSTS upgrade (`/hsts` seeds it over a genuinely trusted connection) reaching the engine as a
     307 hop rather than a network failure or a 200 under the http URL. Both were google.com
     failures the day the port landed; a live-site check is
     `viewer.html?url=http://google.com/` in a harness profile with the port forcing cleared.
+
+25. **Clipboard** (`clipboard.bstest`, ~5 s): real keys on the canvas through the headless
+    clipboard, no test-side clipboard access (on Linux Blink maps CDP-injected Ctrl+C/V to its
+    clipboard commands, so the host's paste event is real). Word copy → field paste; bold word →
+    contenteditable keeps bold (text/html), Ctrl+Shift+V pastes plain; guest `writeText` from a
+    click; cut empties the field and pastes back; a guest copy handler's `setData`;
+    `execCommand('copy')` from a click; `readText` denied (NotAllowedError); a
+    `preventDefault()`ing paste target sees the data but stays empty; key-less (Edit-menu shaped)
+    paste and copy events; an image on the host clipboard arriving as `clipboardData.files`.
+    Each engine → host write is awaited via `__bs.clipboardWrites` before the paste.
 
 That's ~30 scenarios total. Growth policy: a new test requires a new *class* of failure it would
 catch (or a regression that escaped); prefer extending an existing scenario's probes over adding

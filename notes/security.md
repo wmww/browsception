@@ -39,6 +39,7 @@ add a row here (working agreement).
 | `bibNetAck` | Flow-control signal only (ints) |
 | `bibFrame` | Paint arbitrary pixels inside its canvas (UI spoofing within the frame — accepted, see below) |
 | `bibChrome` | Set viewer-displayed title/URL/progress/cursor/hover/favicon strings — spoofing surface: viewer must render these as text/DOM only, never interpret; favicon bytes get sniffed/re-encoded before use |
+| `bibChrome` `clipboard` | Write the host clipboard (text/plain, text/html, image/png) — the viewer writes only within 5 s of a trusted input on the canvas and while `navigator.userActivation` is active, so an owned engine can overwrite the clipboard right after the user touches its page, never from a timer. Reads never originate from the engine: host clipboard data enters only through `bib_edit` "paste", sent from the host's own paste event (a user gesture) |
 | `bibQueryResult` | Answer queries the shim itself asked; dev builds only for `eval` |
 | `bibPersist` | Write to its own namespaced storage snapshot (quota-capped) |
 | `bibReady` | Boot signal (no args) |

@@ -30,7 +30,8 @@ export class EngineLink {
    *     onReady?: () => void, onLoaded?: () => void, onBootFailed?: (message: string) => void,
    *     onFrame?: (f: {buf: ArrayBuffer, fbW: number, fbH: number, stride: number,
    *                    x: number, y: number, w: number, h: number}) => void,
-   *     onChrome?: (kind: string, json: string) => void, onPersist?: (json: string) => void,
+   *     onChrome?: (kind: string, json: string, buf?: ArrayBuffer) => void,
+   *     onPersist?: (json: string) => void,
    *     onReadback?: (data: Uint8Array|null, w: number, h: number) => void,
    *     onAbort?: (reason: string) => void, onLog?: (err: boolean, text: string) => void,
    *     onCall?: (fn: string, args: unknown[]) => void,
@@ -75,6 +76,24 @@ export class EngineLink {
     this.#calls++;
     this.#hooks.onCall?.(fn, args);
     this.#post({ t: 'call', fn, args });
+    return true;
+  }
+
+  /**
+   * bib_edit: an editing op (ABI) plus an optional byte payload its JSON
+   * indexes into (transferred).
+   * @param {object} op @param {Uint8Array} [bytes]
+   */
+  edit(op, bytes) {
+    if (this.#dead) return false;
+    this.#calls++;
+    this.#hooks.onCall?.('bib_edit', [op]);
+    let buf = null;
+    if (bytes?.byteLength) {
+      const whole = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength;
+      buf = whole ? bytes.buffer : bytes.slice().buffer;
+    }
+    this.#post({ t: 'edit', json: JSON.stringify(op), buf }, buf ? [buf] : []);
     return true;
   }
 
@@ -134,7 +153,7 @@ export class EngineLink {
         }
         break;
       case 'chrome':
-        h.onChrome?.(m.kind, m.json);
+        h.onChrome?.(m.kind, m.json, m.buf);
         break;
       case 'persist':
         h.onPersist?.(m.json);

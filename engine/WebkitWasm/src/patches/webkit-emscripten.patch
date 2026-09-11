@@ -845,17 +845,32 @@ index 00000000000..a448e8a75e8
 +}
 +
 +} // namespace WebCore
+diff --git a/Source/WebCore/dom/DataTransfer.h b/Source/WebCore/dom/DataTransfer.h
+index d798a1982a6..2d8888c895c 100644
+--- a/Source/WebCore/dom/DataTransfer.h
++++ b/Source/WebCore/dom/DataTransfer.h
+@@ -123,7 +123,10 @@ private:
+ 
+     bool allowsFileAccess() const
+     {
+-#if PLATFORM(COCOA)
++#if PLATFORM(COCOA) || defined(__EMSCRIPTEN__)
++        // PORT=Emscripten: the pasteboard holds only bytes the host handed
++        // over from its own paste event — never file paths, the leak
++        // webkit.org/b/271957 is about.
+         return !forDrag() || forFileDrag();
+ #else
+         // Check https://webkit.org/b/271957 before allowing file access for your port.
 diff --git a/Source/WebCore/editing/emscripten/EditorEmscripten.cpp b/Source/WebCore/editing/emscripten/EditorEmscripten.cpp
 new file mode 100644
-index 00000000000..731d4ca29be
+index 00000000000..45e3676ef7c
 --- /dev/null
 +++ b/Source/WebCore/editing/emscripten/EditorEmscripten.cpp
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,84 @@
 +/*
 + * PORT=Emscripten Editor pasteboard glue, cribbed from
-+ * editing/libwpe/EditorLibWPE.cpp. The pasteboard stub returns no data, so
-+ * the fragment path is dead code at runtime — kept structurally identical so
-+ * a real clipboard bridge later only has to fix PasteboardEmscripten.
++ * editing/libwpe/EditorLibWPE.cpp, over the in-memory store
++ * (platform/emscripten/PasteboardEmscripten.h).
 + */
 +
 +#include "config.h"
@@ -882,15 +897,17 @@ index 00000000000..731d4ca29be
 +
 +    if (types.contains("text/html"_s) && frame.document()) {
 +        String markup = pasteboard.readString("text/html"_s);
++        // No ParserContentPolicy::AllowScriptingContent: host clipboard HTML
++        // loses scripts, event-handler attributes and javascript: URLs.
 +        return createFragmentFromMarkup(*frame.document(), markup, emptyString(), { });
 +    }
 +
 +    if (!allowPlainText)
 +        return nullptr;
 +
-+    if (types.contains("text/plain;charset=utf-8"_s)) {
++    if (types.contains("text/plain"_s)) {
 +        chosePlainText = true;
-+        return createFragmentFromText(range, pasteboard.readString("text/plain;charset=utf-8"_s));
++        return createFragmentFromText(range, pasteboard.readString("text/plain"_s));
 +    }
 +
 +    return nullptr;
@@ -1245,8 +1262,32 @@ index 93720ea1fca..50987ba1edb 100644
      static NeverDestroyed<String> platformName = [] {
          struct utsname osname;
          return uname(&osname) >= 0 ? makeString(unsafeSpan(osname.sysname), " "_s, unsafeSpan(osname.machine)) : emptyString();
+diff --git a/Source/WebCore/platform/Pasteboard.cpp b/Source/WebCore/platform/Pasteboard.cpp
+index e839a0adcd0..4ff64cf88fc 100644
+--- a/Source/WebCore/platform/Pasteboard.cpp
++++ b/Source/WebCore/platform/Pasteboard.cpp
+@@ -61,6 +61,10 @@ Vector<String> Pasteboard::readAllStrings(const String& type)
+ 
+ #endif
+ 
++// PORT=Emscripten answers these from its in-memory store
++// (platform/emscripten/PasteboardEmscripten.cpp).
++#if !defined(__EMSCRIPTEN__)
++
+ std::optional<Vector<PasteboardItemInfo>> Pasteboard::allPasteboardItemInfo() const
+ {
+ #if PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE)
+@@ -102,6 +106,8 @@ URL Pasteboard::readURL(size_t index, String& title)
+     return { };
+ }
+ 
++#endif // !defined(__EMSCRIPTEN__)
++
+ #if !PLATFORM(MAC)
+ 
+ bool Pasteboard::canWriteTrustworthyWebURLsPboardType()
 diff --git a/Source/WebCore/platform/Pasteboard.h b/Source/WebCore/platform/Pasteboard.h
-index 11cef75ac77..07c2bf511fa 100644
+index 11cef75ac77..e77f9426d61 100644
 --- a/Source/WebCore/platform/Pasteboard.h
 +++ b/Source/WebCore/platform/Pasteboard.h
 @@ -107,7 +107,7 @@ struct PasteboardWebContent {
@@ -1258,6 +1299,15 @@ index 11cef75ac77..07c2bf511fa 100644
      String text;
      String markup;
  #endif
+@@ -298,7 +298,7 @@ public:
+     const PasteboardCustomData& readCustomData();
+ #endif
+ 
+-#if PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE)
++#if PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE) || defined(__EMSCRIPTEN__)
+     int64_t changeCount() const;
+ #else
+     int64_t changeCount() const { return 0; }
 diff --git a/Source/WebCore/platform/ScrollAnimator.cpp b/Source/WebCore/platform/ScrollAnimator.cpp
 index 618fea80228..2a1399a5cc6 100644
 --- a/Source/WebCore/platform/ScrollAnimator.cpp
@@ -1394,24 +1444,129 @@ index 00000000000..632053bdffa
 +} // namespace WebCore
 diff --git a/Source/WebCore/platform/emscripten/PasteboardEmscripten.cpp b/Source/WebCore/platform/emscripten/PasteboardEmscripten.cpp
 new file mode 100644
-index 00000000000..e2f6c761dc8
+index 00000000000..54d5e64ca50
 --- /dev/null
 +++ b/Source/WebCore/platform/emscripten/PasteboardEmscripten.cpp
-@@ -0,0 +1,131 @@
+@@ -0,0 +1,379 @@
 +/*
-+ * PORT=Emscripten pasteboard, cribbed from
-+ * platform/libwpe/PasteboardLibWPE.cpp with the PlatformStrategies plumbing
-+ * removed: the single-process embedder installs no pasteboard strategy, so
-+ * every read returns empty and every write is dropped. A real clipboard
-+ * bridge (navigator.clipboard on the host page) is a later phase.
++ * PORT=Emscripten pasteboard over the in-memory store
++ * (PasteboardEmscripten.h). The port runs WebKit's LEGACY pasteboard path
++ * (customPasteboardDataEnabled() is false): DataTransfer reads are
++ * typesForLegacyUnsafeBindings() + readString(type), a copy handler's
++ * setData commits as clear() + one writeString per type, Editor::copy
++ * arrives as write(PasteboardWebContent) (writePlainText inside text
++ * controls), and the async Clipboard API as writeCustomData + the generic
++ * index readers at the bottom of this file (Pasteboard.cpp leaves them to
++ * us).
 + */
 +
 +#include "config.h"
 +#include "Pasteboard.h"
++#include "PasteboardEmscripten.h"
 +
 +#include "NotImplemented.h"
++#include "PasteboardCustomData.h"
++#include "PasteboardItemInfo.h"
++#include <wtf/NeverDestroyed.h>
 +
 +namespace WebCore {
++
++// --- store -------------------------------------------------------------------
++
++EmscriptenPasteboardStore& EmscriptenPasteboardStore::singleton()
++{
++    static NeverDestroyed<EmscriptenPasteboardStore> store;
++    return store;
++}
++
++String EmscriptenPasteboardStore::normalizeType(const String& type)
++{
++    auto lower = type.trim(isASCIIWhitespace).convertToASCIILowercase();
++    auto semicolon = lower.find(';');
++    return semicolon == notFound ? lower : lower.left(semicolon).trim(isASCIIWhitespace);
++}
++
++const EmscriptenPasteboardStore::Entry* EmscriptenPasteboardStore::find(const String& type) const
++{
++    auto normalized = normalizeType(type);
++    for (auto& entry : m_entries) {
++        if (entry.type == normalized)
++            return &entry;
++    }
++    return nullptr;
++}
++
++bool EmscriptenPasteboardStore::hasBytes() const
++{
++    return m_entries.containsIf([](auto& entry) { return !!entry.bytes; });
++}
++
++void EmscriptenPasteboardStore::didMutate()
++{
++    ++m_changeCount;
++    if (writeObserver)
++        writeObserver();
++}
++
++void EmscriptenPasteboardStore::clear()
++{
++    m_entries.clear();
++    m_origin = { };
++    didMutate();
++}
++
++void EmscriptenPasteboardStore::clear(const String& type)
++{
++    auto normalized = normalizeType(type);
++    m_entries.removeAllMatching([&](auto& entry) { return entry.type == normalized; });
++    didMutate();
++}
++
++void EmscriptenPasteboardStore::writeString(const String& type, const String& text)
++{
++    auto normalized = normalizeType(type);
++    if (normalized.isEmpty())
++        return;
++    m_entries.removeAllMatching([&](auto& entry) { return entry.type == normalized; });
++    m_entries.append({ normalized, text, nullptr, { } });
++    didMutate();
++}
++
++void EmscriptenPasteboardStore::writeBytes(const String& type, Ref<SharedBuffer>&& bytes, const String& name)
++{
++    auto normalized = normalizeType(type);
++    if (normalized.isEmpty())
++        return;
++    m_entries.removeAllMatching([&](auto& entry) { return entry.type == normalized; });
++    m_entries.append({ normalized, { }, WTF::move(bytes), name });
++    didMutate();
++}
++
++void EmscriptenPasteboardStore::replaceFromHost(Vector<Entry>&& entries)
++{
++    m_entries.clear();
++    for (auto& entry : entries) {
++        entry.type = normalizeType(entry.type);
++        if (!entry.type.isEmpty() && !find(entry.type))
++            m_entries.append(WTF::move(entry));
++    }
++    m_origin = { };
++    ++m_changeCount;
++}
++
++static EmscriptenPasteboardStore& store()
++{
++    return EmscriptenPasteboardStore::singleton();
++}
++
++// Consumers may extractData() the buffer they are handed (ClipboardImageReader
++// does), so every read hands out a copy.
++static Ref<SharedBuffer> copyOf(const SharedBuffer& buffer)
++{
++    return SharedBuffer::create(buffer.span());
++}
++
++// --- Pasteboard ----------------------------------------------------------------
 +
 +std::unique_ptr<Pasteboard> Pasteboard::createForCopyAndPaste(std::unique_ptr<PasteboardContext>&& context)
 +{
@@ -1423,66 +1578,104 @@ index 00000000000..e2f6c761dc8
 +{
 +}
 +
++int64_t Pasteboard::changeCount() const
++{
++    return store().changeCount();
++}
++
 +bool Pasteboard::hasData()
 +{
-+    return false;
++    return !store().entries().isEmpty();
 +}
 +
 +Vector<String> Pasteboard::typesSafeForBindings(const String&)
 +{
-+    notImplemented();
++    notImplemented(); // custom pasteboard data path only
 +    return { };
 +}
 +
 +Vector<String> Pasteboard::typesForLegacyUnsafeBindings()
 +{
-+    return { };
++    // String types only: DataTransfer appends "Files" itself when
++    // fileContentState() says there are bytes.
++    Vector<String> types;
++    for (auto& entry : store().entries()) {
++        if (!entry.bytes)
++            types.append(entry.type);
++    }
++    return types;
 +}
 +
 +String Pasteboard::readOrigin()
 +{
-+    notImplemented();
-+    return { };
++    return store().origin();
 +}
 +
-+String Pasteboard::readString(const String&)
++String Pasteboard::readString(const String& type)
 +{
-+    return { };
++    auto* entry = store().find(type);
++    return entry && !entry->bytes ? entry->text : String();
 +}
 +
 +String Pasteboard::readStringInCustomData(const String&)
 +{
-+    notImplemented();
++    notImplemented(); // custom pasteboard data path only
 +    return { };
 +}
 +
-+void Pasteboard::writeString(const String&, const String&)
++void Pasteboard::writeString(const String& type, const String& data)
 +{
++    store().writeString(type, data);
 +}
 +
 +void Pasteboard::clear()
 +{
++    store().clear();
 +}
 +
-+void Pasteboard::clear(const String&)
++void Pasteboard::clear(const String& type)
 +{
++    store().clear(type);
 +}
 +
-+void Pasteboard::read(PasteboardPlainText&, PlainTextURLReadingPolicy, std::optional<size_t>)
++void Pasteboard::read(PasteboardPlainText& text, PlainTextURLReadingPolicy policy, std::optional<size_t> itemIndex)
 +{
++    if (itemIndex && *itemIndex)
++        return;
++    if (auto* entry = store().find("text/plain"_s); entry && !entry->bytes) {
++        text.text = entry->text;
++        return;
++    }
++    if (policy == PlainTextURLReadingPolicy::AllowURL) {
++        String title;
++        text.text = readURL(0, title).string();
++    }
 +}
 +
 +void Pasteboard::read(PasteboardWebContentReader&, WebContentReadingPolicy, std::optional<size_t>)
 +{
++    // WebContentReader's readHTML/readImage are COCOA/GTK/WPE-only, so rich
++    // paste goes through EditorEmscripten's fragment path instead and the
++    // async API's getType('text/html') stays unsupported (plans/clipboard.md
++    // § Not in v1).
 +    notImplemented();
 +}
 +
-+void Pasteboard::read(PasteboardFileReader&, std::optional<size_t>)
++void Pasteboard::read(PasteboardFileReader& reader, std::optional<size_t> itemIndex)
 +{
++    if (itemIndex && *itemIndex)
++        return;
++    for (auto& entry : store().entries()) {
++        if (entry.bytes && reader.shouldReadBuffer(entry.type))
++            reader.readBuffer(entry.name, entry.type, copyOf(*entry.bytes));
++    }
 +}
 +
-+void Pasteboard::write(const PasteboardURL&)
++void Pasteboard::write(const PasteboardURL& pasteboardURL)
 +{
++    store().clear();
++    store().writeString("text/uri-list"_s, pasteboardURL.url.string());
++    store().writeString("text/plain"_s, pasteboardURL.url.string());
 +}
 +
 +void Pasteboard::writeTrustworthyWebURLsPboardType(const PasteboardURL&)
@@ -1490,21 +1683,35 @@ index 00000000000..e2f6c761dc8
 +    notImplemented();
 +}
 +
-+void Pasteboard::write(const PasteboardImage&)
++void Pasteboard::write(const PasteboardImage& pasteboardImage)
 +{
++    // Only Editor::copyImage reaches this (needs a context menu we don't
++    // have yet); wired so it works when one lands.
++    store().clear();
++    if (pasteboardImage.resourceData && !pasteboardImage.resourceMIMEType.isEmpty())
++        store().writeBytes(pasteboardImage.resourceMIMEType, *pasteboardImage.resourceData, pasteboardImage.suggestedName);
++    if (!pasteboardImage.url.url.isEmpty())
++        store().writeString("text/uri-list"_s, pasteboardImage.url.url.string());
 +}
 +
-+void Pasteboard::write(const PasteboardBuffer&)
++void Pasteboard::write(const PasteboardBuffer& pasteboardBuffer)
 +{
++    store().clear();
++    if (pasteboardBuffer.data)
++        store().writeBytes(pasteboardBuffer.type, *pasteboardBuffer.data, { });
 +}
 +
-+void Pasteboard::write(const PasteboardWebContent&)
++void Pasteboard::write(const PasteboardWebContent& content)
 +{
++    store().clear();
++    store().writeString("text/plain"_s, content.text);
++    if (!content.markup.isEmpty())
++        store().writeString("text/html"_s, content.markup);
 +}
 +
 +Pasteboard::FileContentState Pasteboard::fileContentState()
 +{
-+    return FileContentState::NoFileOrImageData;
++    return store().hasBytes() ? FileContentState::InMemoryImage : FileContentState::NoFileOrImageData;
 +}
 +
 +bool Pasteboard::canSmartReplace()
@@ -1512,21 +1719,184 @@ index 00000000000..e2f6c761dc8
 +    return false;
 +}
 +
-+void Pasteboard::writeMarkup(const String&)
++void Pasteboard::writeMarkup(const String& markup)
 +{
++    store().clear();
++    store().writeString("text/html"_s, markup);
 +}
 +
-+void Pasteboard::writePlainText(const String&, SmartReplaceOption)
++void Pasteboard::writePlainText(const String& text, SmartReplaceOption)
 +{
++    store().clear();
++    store().writeString("text/plain"_s, text);
 +}
 +
-+void Pasteboard::writeCustomData(const Vector<PasteboardCustomData>&)
++void Pasteboard::writeCustomData(const Vector<PasteboardCustomData>& items)
 +{
++    // Clipboard.writeText/write. A single-item store: every item's platform
++    // representations merge, the first of each type wins.
++    store().clear();
++    for (auto& item : items) {
++        item.forEachPlatformStringOrBuffer([&](auto& type, auto& data) {
++            if (store().find(type))
++                return;
++            if (std::holds_alternative<String>(data))
++                store().writeString(type, std::get<String>(data));
++            else
++                store().writeBytes(type, std::get<Ref<SharedBuffer>>(data).copyRef(), { });
++        });
++    }
++    if (!items.isEmpty())
++        store().setOrigin(items.first().origin());
 +}
 +
 +void Pasteboard::write(const Color&)
 +{
 +}
++
++// --- generic index readers (async Clipboard API) -----------------------------
++// Pasteboard.cpp's versions go through a PasteboardStrategy (nullopt = access
++// denied); ours answer from the store. An empty clipboard is an empty
++// vector, never nullopt.
++
++static bool isWebSafeType(const String& type)
++{
++    return Pasteboard::isSafeTypeForDOMToReadAndWrite(type) || type == "image/png"_s;
++}
++
++std::optional<PasteboardItemInfo> Pasteboard::pasteboardItemInfo(size_t index) const
++{
++    auto& entries = store().entries();
++    if (index || entries.isEmpty())
++        return std::nullopt;
++    PasteboardItemInfo info;
++    for (auto& entry : entries) {
++        info.platformTypesByFidelity.append(entry.type);
++        if (isWebSafeType(entry.type))
++            info.webSafeTypesByFidelity.append(entry.type);
++        if (entry.bytes) {
++            info.isNonTextType = true;
++            if (info.suggestedFileName.isEmpty())
++                info.suggestedFileName = entry.name;
++        }
++    }
++    return info;
++}
++
++std::optional<Vector<PasteboardItemInfo>> Pasteboard::allPasteboardItemInfo() const
++{
++    Vector<PasteboardItemInfo> infos;
++    if (auto info = pasteboardItemInfo(0))
++        infos.append(WTF::move(*info));
++    return infos;
++}
++
++String Pasteboard::readString(size_t index, const String& type)
++{
++    return index ? String() : readString(type);
++}
++
++RefPtr<SharedBuffer> Pasteboard::readBuffer(std::optional<size_t> index, const String& type)
++{
++    if (index && *index)
++        return nullptr;
++    auto* entry = store().find(type);
++    if (!entry)
++        return nullptr;
++    if (entry->bytes)
++        return copyOf(*entry->bytes);
++    auto utf8 = entry->text.utf8();
++    return SharedBuffer::create(byteCast<uint8_t>(utf8.span()));
++}
++
++URL Pasteboard::readURL(size_t index, String& title)
++{
++    title = { };
++    if (index)
++        return { };
++    auto* entry = store().find("text/uri-list"_s);
++    if (!entry || entry->bytes)
++        return { };
++    // RFC 2483: first non-comment line.
++    for (auto line : StringView(entry->text).split('\n')) {
++        auto trimmed = line.trim(isASCIIWhitespace<char16_t>);
++        if (!trimmed.isEmpty() && !trimmed.startsWith('#'))
++            return URL { trimmed.toString() };
++    }
++    return { };
++}
++
++} // namespace WebCore
+diff --git a/Source/WebCore/platform/emscripten/PasteboardEmscripten.h b/Source/WebCore/platform/emscripten/PasteboardEmscripten.h
+new file mode 100644
+index 00000000000..92c7d67fc5e
+--- /dev/null
++++ b/Source/WebCore/platform/emscripten/PasteboardEmscripten.h
+@@ -0,0 +1,66 @@
++/*
++ * PORT=Emscripten pasteboard store: the engine's one clipboard, in memory.
++ *
++ * The port has no platform clipboard. Every Pasteboard (copy/paste,
++ * DataTransfer, async Clipboard API) reads and writes this singleton; the
++ * embedder bridges it to the host browser's clipboard at the two moments the
++ * host allows (browsception plans/clipboard.md): WebCore-side writes notify
++ * `writeObserver` so the embedder can hand them to the host, and a host paste
++ * lands via `replaceFromHost`, which does not notify.
++ *
++ * One item with several representations (text/plain, text/html,
++ * text/uri-list as strings; image types as bytes), like a single-item
++ * system clipboard.
++ */
++
++#pragma once
++
++#include "SharedBuffer.h"
++#include <wtf/Function.h>
++#include <wtf/Vector.h>
++#include <wtf/text/WTFString.h>
++
++namespace WebCore {
++
++class EmscriptenPasteboardStore {
++public:
++    struct Entry {
++        String type;
++        String text; // string representations
++        RefPtr<SharedBuffer> bytes; // binary representations (images)
++        String name; // suggested file name for bytes
++    };
++
++    WEBCORE_EXPORT static EmscriptenPasteboardStore& singleton();
++
++    const Vector<Entry>& entries() const { return m_entries; }
++    const Entry* find(const String& type) const;
++    bool hasBytes() const;
++    int64_t changeCount() const { return m_changeCount; }
++    const String& origin() const { return m_origin; }
++
++    // WebCore-side mutations: bump changeCount and notify the observer.
++    void clear();
++    void clear(const String& type);
++    void writeString(const String& type, const String& text);
++    void writeBytes(const String& type, Ref<SharedBuffer>&&, const String& name);
++    void setOrigin(const String& origin) { m_origin = origin; }
++
++    // Host-side replacement (a paste): bumps changeCount, never notifies.
++    WEBCORE_EXPORT void replaceFromHost(Vector<Entry>&&);
++
++    // Called once per WebCore-side mutation; the embedder coalesces.
++    Function<void()> writeObserver;
++
++    // "text/plain;charset=utf-8" → "text/plain"; lowercased, trimmed.
++    static String normalizeType(const String&);
++
++private:
++    void didMutate();
++
++    Vector<Entry> m_entries;
++    int64_t m_changeCount { 0 };
++    String m_origin;
++};
 +
 +} // namespace WebCore
 diff --git a/Source/WebCore/platform/emscripten/PlatformKeyboardEventEmscripten.cpp b/Source/WebCore/platform/emscripten/PlatformKeyboardEventEmscripten.cpp

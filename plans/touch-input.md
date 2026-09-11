@@ -71,8 +71,9 @@ demands real `TouchEvent`s (§ Not in v1).
    `hasTouch: true` context and `page.touchscreen.tap`): on `scroll.bstest`, a 300 px upward
    drag → `__bs.probe(4,4)` decodes ≈ 300 px of scroll; a fast release → offset keeps growing
    for a few frames then stops; a tap on `input.bstest`'s click zone flips it. Firefox: BiDi
-   `input.performActions` with a `touch` pointer source, if the helpers clipboard.md adds
-   support it; otherwise manual.
+   `input.performActions` refuses extension pages (testing.md § Launch recipes); a
+   chrome-window synthesis like the harness's `page.press` would be needed for touch —
+   otherwise manual.
 4. Manual smoke on Firefox Android (`web-ext run -t firefox-android`): Wikipedia — scroll,
    fling, tap a link, tap the URL bar.
 5. Notes: rendering-input.md § Pointer/§ Touch rewritten to the recognizer (touch = mouse +

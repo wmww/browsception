@@ -27,6 +27,7 @@ export const EXPORTS = [
   'bib_wheel',
   'bib_key',
   'bib_set_focus',
+  'bib_edit',
   'bib_net_response',
   'bib_net_data',
   'bib_net_done',
@@ -76,7 +77,7 @@ export const NET_ERR = {
 export const NET_WINDOW_BYTES = 4 * 1024 * 1024;
 
 // bibChrome signal kinds (v1; reserved fast-follows excluded).
-export const CHROME_KINDS = ['title', 'url', 'progress', 'cursor', 'hover', 'favicon', 'loadfailed'];
+export const CHROME_KINDS = ['title', 'url', 'progress', 'cursor', 'hover', 'favicon', 'loadfailed', 'clipboard'];
 
 // bibChrome "url" nav kinds: what the navigation did to the engine's
 // back/forward list. The viewer mirrors it into real tab history.

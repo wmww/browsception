@@ -451,6 +451,21 @@ private:
     static const char* commandForKeyDown(const WebCore::PlatformKeyboardEvent& event)
     {
         auto& key = event.key();
+        // Clipboard verbs, Ctrl or Cmd (Mac hosts send Meta), matched on the
+        // virtual key code like other ports so non-Latin layouts work. No
+        // paste binding: the host's paste event is the only source of
+        // clipboard data (bib_edit "paste"), so Ctrl+V does nothing here.
+        const int vk = event.windowsVirtualKeyCode();
+        if ((event.controlKey() || event.metaKey()) && !event.altKey() && !event.shiftKey()) {
+            if (vk == 'C' || vk == 0x2D /* Insert */)
+                return "Copy";
+            if (vk == 'X')
+                return "Cut";
+            if (vk == 'A')
+                return "SelectAll";
+        }
+        if (event.shiftKey() && !event.controlKey() && !event.metaKey() && !event.altKey() && key == "Delete"_s)
+            return "Cut";
         if (key == "Backspace"_s)
             return "DeleteBackward";
         if (key == "Delete"_s)

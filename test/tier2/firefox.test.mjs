@@ -16,7 +16,7 @@ import { packExt } from '../../scripts/pack-ext.mjs';
 
 const skip = existsSync(FIREFOX_BIN) ? false : `no Firefox at ${FIREFOX_BIN} (BS_FIREFOX)`;
 const BOOT_TIMEOUT = 120000;
-const FIXTURE_BLACKLIST = ['grid.bstest', 'input.bstest', 'app.bstest', 'other.bstest', 'hostile.bstest'];
+const FIXTURE_BLACKLIST = ['grid.bstest', 'input.bstest', 'app.bstest', 'other.bstest', 'hostile.bstest', 'clipboard.bstest'];
 const HOST_LANGS = ['de-DE', 'de'];
 
 let fixtures, ff, VIEWER_BASE;
@@ -241,6 +241,60 @@ async function stubPage() {
   return page;
 }
 const request = (page, req) => page.evaluate((r) => __bs.request(r), req);
+
+// Scenario 25's Firefox half (the Chrome one is scenarios.test.mjs): the
+// platform risks — a paste event on a non-editable canvas, async clipboard
+// writes without clipboardWrite — are Firefox's. Keys are real
+// (page.press); there is no mouse on extension pages under BiDi, so the
+// guest selects and focuses through the fixture's hooks. No key-less paste
+// here: Firefox empties a synthetic ClipboardEvent's clipboardData.
+test('firefox: clipboard — copy/paste round trip, denied reads, key-less copy', { skip, timeout: 300000 }, async () => {
+  const page = await bootViewer('https://clipboard.bstest/');
+  const ZONE = (i) => [35 + 60 * i, 335];
+  const sumRGB = (str) => {
+    let c = 0;
+    for (const ch of str) c = (c + ch.charCodeAt(0)) % 256;
+    return [c, c, c];
+  };
+  const zone = (i, rgb, what) => until(page, ...ZONE(i), rgb, 60000, what);
+  const guest = (js) => page.evaluate((code) => __bs.eval(code), js);
+  const writes = () => page.evaluate(() => __bs.clipboardWrites);
+  const copied = async (before, what) => pollUntil(async () => (await writes()) > before, `host clipboard write after ${what}`);
+  await zone(10, [0, 255, 0], 'clipboard fixture load (clipapi zone)');
+  await page.evaluate(() => document.getElementById('screen').focus());
+
+  // Ctrl+C on a guest selection → host clipboard → Ctrl+V into a field.
+  await guest("selectWord('w1')");
+  let before = await writes();
+  await page.press('Control+c');
+  await copied(before, 'Ctrl+C');
+  await guest("focusField('field')");
+  await page.press('Control+v');
+  await zone(0, sumRGB('alpha'), 'field after paste');
+  await zone(4, sumRGB('alpha'), 'guest paste event text');
+
+  // A key-less copy event (Edit menu / OSK toolbar); the host write still
+  // needs a fresh activation.
+  await guest("selectWord('w2')");
+  await page.press('Shift');
+  before = await writes();
+  await page.evaluate(() => document.dispatchEvent(new ClipboardEvent('copy')));
+  await copied(before, 'key-less copy event');
+  await guest("focusField('field')");
+  await page.press('Control+a');
+  await page.press('Control+v');
+  await zone(0, sumRGB('bravo'), 'key-less copy pasted');
+
+  // DOM-initiated reads stay denied; a preventDefault()ing target sees the
+  // data but receives nothing.
+  await guest("document.getElementById('rt').click()");
+  await zone(7, [255, 0, 255], 'readText rejected with NotAllowedError');
+  await guest("focusField('nopaste')");
+  await page.press('Control+v');
+  await zone(4, sumRGB('bravo'), 'paste event on #nopaste saw the text');
+  assert.deepEqual(await probe(page, ...ZONE(1)), [128, 128, 128], '#nopaste stayed empty');
+  await page.close();
+});
 
 test('firefox: repeated Set-Cookie reaches the engine one header per cookie', { skip, timeout: 120000 }, async () => {
   const page = await stubPage();

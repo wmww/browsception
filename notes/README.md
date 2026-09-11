@@ -69,8 +69,8 @@ lives in [roadmap.md](roadmap.md). Phase summaries:
   gate: scripts/smoke-mvp.mjs real-site pass — sandboxed example.com/wikipedia, whitelist→native
   sweep (experiment-log.md 2026-08-10).
 
-Tests: `npm test` = tiers 0–1, pure headless, per-commit. `npm run test:tier2` = 29 Chrome
-scenarios (incl. 6 HiDPI at dpr 2/1.5) + a 9-scenario Firefox subset (`test/tier2/firefox.test.mjs`,
+Tests: `npm test` = tiers 0–1, pure headless, per-commit. `npm run test:tier2` = 30 Chrome
+scenarios (incl. 6 HiDPI at dpr 2/1.5) + a 10-scenario Firefox subset (`test/tier2/firefox.test.mjs`,
 system Firefox over BiDi) against the staged engine artifact (~2 min; restage with
 scripts/stage-engine.mjs after engine rebuilds — it also stages the extension's host-root assets;
 src/engine/, src/vendor/ and the two injection payloads are gitignored). Engine iteration is
@@ -321,15 +321,26 @@ the host's list and `navigator.platform` `Linux x86_64`. GitHub's issues page wo
 (its `/_graphql` 422'd on the host's `none`). `Pragma`/`Cache-Control: no-cache` from
 `cache:'no-store'` are stamped below DNR — residual (networking.md § Design, experiment-log).
 
+*Clipboard* (2026-09-10) — copy/cut/paste between the host clipboard and guest pages, no new
+permission on either browser. The engine's WebKit pasteboard (a no-op stub until now) is an
+in-memory store; engine-side writes (Ctrl/Cmd+C/X through the engine key map, guest copy
+handlers, `execCommand('copy')`, `navigator.clipboard.write*`) come back as one
+`bibChrome("clipboard")` per tick and are written with the async Clipboard API under a fresh
+user input; host data enters only through the host's own paste event (`bib_edit` "paste",
+images included). The viewer now forwards Ctrl/Cmd combos (it dropped all of them) behind a
+host-key deny list, `src/ext/keys.mjs`. Probes first (open-questions #21): Firefox fires the
+paste event at the body, and BiDi can't send input to extension pages — the Firefox harness now
+synthesizes trusted keys from the chrome window. rendering-input.md § Clipboard; tier-2
+scenario 25 on both browsers.
+
 Open issues in issues/ (guest-JS wedge, rcap dynamic budget, host-present ceiling at large
 framebuffers, CLoop `join` returned a non-string, Firefox tier-2 crash-reload scenario, host
-access revocation silently un-sandboxes). Plans in plans/, in intended order: WebSocket bridge
-(largest; nothing waits on it), clipboard (in-engine pasteboard store; copy/cut via the engine key
-map and host copy/cut events, paste via the host's paste event only, no new permission — starts
-with host probes), touch-input (viewer-only pointer-event recognizer: tap → click, drag → wheel,
-fling; no ABI change), text-input (the host editable proxy: engine editor state → hidden mirror
-textarea → IME/OSK/composition → caret-relative edit ops; shares `bib_edit` with clipboard,
-either order; its touch stage waits on touch-input). Next work: [roadmap.md](roadmap.md).
+access revocation silently un-sandboxes, editing-key gaps). Plans in plans/, in intended order:
+WebSocket bridge (largest; nothing waits on it), touch-input (viewer-only pointer-event
+recognizer: tap → click, drag → wheel, fling; no ABI change), text-input (the host editable
+proxy: engine editor state → hidden mirror textarea → IME/OSK/composition → caret-relative edit
+ops over the existing `bib_edit`; its touch stage waits on touch-input). Next work:
+[roadmap.md](roadmap.md).
 
 ## Key decisions
 

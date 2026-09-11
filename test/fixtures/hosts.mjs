@@ -7,6 +7,6 @@
 export const FIXTURE_HOSTS = [
   'grid.bstest', 'input.bstest', 'app.bstest', 'scroll.bstest', 'scroll-sticky.bstest',
   'hostile.bstest', 'final.bstest', 'plain-http.bstest', 'site-a.bstest', 'site-b.bstest',
-  'other.bstest', 'x.bstest',
+  'other.bstest', 'x.bstest', 'clipboard.bstest',
 ];
 export const FIXTURE_SANS = ['DNS:bstest', 'DNS:*.bstest', ...FIXTURE_HOSTS.map((h) => `DNS:${h}`)].join(',');

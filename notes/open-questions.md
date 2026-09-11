@@ -175,7 +175,19 @@ result appended here (keep the question, add `**Answer (date):**`).
     hidden textarea sink; copy/cut go through the engine key map and need no probe); does
     `navigator.clipboard.write` succeed from transient
     activation without `clipboardWrite` on Firefox; do headless Chrome/Firefox clipboards
-    round-trip through one page (tier-2 feasibility). Unanswered.
+    round-trip through one page (tier-2 feasibility).
+    **Answer (2026-09-10, Chrome 152 / Firefox 155, headless, extension page, real keys):**
+    all yes, no permission, no prompt. Ctrl+V on a focused `<canvas tabindex=0>` fires `paste`
+    with readable `text/plain`/`text/html` (Chrome: also `files` for an image) — Chrome targets
+    the canvas, **Firefox the body**, so the listeners sit on `document`. `clipboard.write()` of
+    a `ClipboardItem{text/plain, text/html}` 40 ms after a keydown succeeds on both; Firefox
+    rejects it with NotAllowedError without activation, Chrome allows it (auto-granted
+    clipboard-write) — hence the viewer's own ≤5 s input gate. Both headless clipboards
+    round-trip. Shift+Insert fired no paste under the Firefox harness's synthesized keys
+    (native key bindings aren't consulted for them) — unverified with real keys. Harness
+    finding: BiDi `input.performActions` refuses moz-extension pages ("privileged scope");
+    trusted keys come from an `nsITextInputProcessor` in the chrome window instead
+    (testing.md § Launch recipes).
 22. **IME / on-screen-keyboard host facts** (plans/text-input.md § Probes): does an unprevented
     dead-key/IME keydown compose into a 1-px `opacity:0` textarea on Linux ibus, Firefox and
     macOS (record the event traces as tier-0 fixtures); does `textarea.focus()` ~50 ms after

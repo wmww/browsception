@@ -23,7 +23,7 @@ editor commands. Everything that is not "one physical key = one character" is mi
   and no way to scroll the field above an OSK.
 
 This is roadmap fast-follow 2 ("IME/composition via hidden-input-at-caret") generalized, and it
-is the frame the clipboard plan should sit in instead of key bindings.
+is the frame the clipboard (landed 2026-09-10, notes/rendering-input.md § Clipboard) sits in.
 
 ## The shape: the Wayland text-input dance, one hop up
 
@@ -44,7 +44,7 @@ the compositor's input method; the host browser (and through it the OS IME / OSK
 | `commit_string(text)` | `{op:"commit", text}` → `Editor::confirmComposition(text)` (inserts when there is no composition) |
 | `delete_surrounding_text(before, after)` | `{op:"delete", before, after}` (caret-relative, chars) → `WebPage::deleteSurrounding` crib |
 | — (IM cannot move the cursor) | `{op:"select", start, end, base}` window-relative, dropped when `base` ≠ the engine's last emitted `seq` |
-| — | `{op:"copy"|"cut"}` / `{op:"paste", items, plain}` (clipboard.md owns these) |
+| — | `{op:"copy"|"cut"}` / `{op:"paste", items, plain}` (landed with the clipboard) |
 
 The host side of the dance is what every canvas-rendered editor does (VS Code's
 `TextAreaInput`, Figma, Google Docs since 2021): a hidden real `<textarea>` — the **mirror** —
@@ -98,7 +98,7 @@ not prevent.
   `commit` → `confirmComposition(text)`; `delete` → the `WebPage::deleteSurrounding` recipe
   (before) + a forward variant (after), both via `resolveCharacterRange` on the editable root;
   `select` → `resolveCharacterRange(root, {window + start, end - start})` → `setSelection`,
-  skipped when `base != lastEmittedSeq`; `copy`/`cut`/`paste` → clipboard.md. Every op bumps
+  skipped when `base != lastEmittedSeq`; `copy`/`cut`/`paste` exist (`BibClipboard.h`). Every op bumps
   `seq` and dirties the state. Ops with no editable focused (composition after focus moved) are
   dropped, not errors.
 - **IME-handled keys** need nothing engine-side: the viewer forwards them as they arrive
@@ -118,7 +118,8 @@ not prevent.
   Gecko's `IsHandlingUserInput` grace (1 s) — probe (b) checks both hosts. Both sinks live in
   the canvas box; `bib_set_focus` moves from the canvas's focus/blur to the box's
   `focusin`/`focusout`, ignoring a `focusout` whose `relatedTarget` is inside the box — so the
-  hop is invisible to the guest. Key and clipboard listeners sit on the box too (clipboard.md).
+  hop is invisible to the guest. The clipboard listeners are on `document`, gated on the canvas
+  being `activeElement` (viewer.mjs `sinkFocused`) — widen that gate to "either sink".
 - **Mirror** — `<textarea id=sink>` inside the canvas box, `position:absolute`, 1 × line-height,
   `opacity:0`, `resize:none`, `autocomplete=off`, `tabindex=-1`, moved to `caret` (device →
   CSS px by the live backing/CSS ratio, clamped into the canvas rect — an owned engine may not
@@ -136,17 +137,16 @@ not prevent.
   the new one, strip common prefix/suffix relative to the old selection, emit
   `delete{before,after}` + `commit{text}` (or `composition{text,…}` while composing). Diffing
   is what survives every IME and OSK; `beforeinput.inputType` is consulted only to *ignore*
-  `insertFromPaste`/`insertFromDrop` (the paste event owns those — clipboard.md) and
+  `insertFromPaste`/`insertFromDrop` (the paste event owns those) and
   `historyUndo/Redo` (Undo/Redo commands, which are dead anyway — issue). Selection-only changes
   on the mirror (`selectionchange`, e.g. Gboard's spacebar cursor slide) → `select`.
 - **Key routing** (one function, `routeKey(e)`, replaces today's early-returns):
-  1. `hostKey(e)` — the host owns it: F5, Alt+←/→, Ctrl/Cmd+{L,T,W,N,R,Tab,digits,Shift+T},
-     F12/Ctrl+Shift+{I,J,C}. Not forwarded, not prevented.
+  1. `hostKey(e)` — src/ext/keys.mjs (landed). Not forwarded, not prevented.
   2. `imeKey(e)` — `e.isComposing || e.keyCode === 229 || e.key === 'Process' || e.key === 'Dead'`.
      Forwarded as-is, no CHAR, **not prevented** (the host must run its composition on the
      mirror).
-  3. `hostPasteKey(e)` — clipboard.md's two-line list. Forwarded, not prevented.
-  4. Everything else: forwarded (+ CHAR as today), prevented.
+  3. `hostPasteKey(e)` — keys.mjs. Forwarded, not prevented.
+  4. Everything else: forwarded (+ CHAR per `keyText`), prevented.
 - **OSK geometry** — append `interactive-widget=resizes-content` to the viewport meta
   touch-input.md adds, so an OSK shrinks the *layout* viewport (Chrome ≥ 108 defaults to resizing only the visual
   viewport, which would leave the canvas half covered and fire no `ResizeObserver`). The existing
@@ -205,9 +205,11 @@ not prevent.
   7. resize: shrink the window height by 300 px with `#field` focused near the bottom → the
      engine viewport shrinks and the caret rect stays inside the canvas (the OSK case without an
      OSK).
-- **Firefox tier-2**: BiDi has key/pointer actions but no IME composition; run 4 and 5 there
-  (needs the `page.keys/click` helpers clipboard.md adds). Composition on Firefox is covered by
-  probe (a)'s trace in tier-0.
+- **Firefox tier-2**: run 4 and 5 there. BiDi input refuses extension pages; the harness's
+  `page.press/type` synthesize trusted keys from the chrome window (testing.md § Launch recipes),
+  and there is no mouse — focus fields through fixture hooks. The same `nsITextInputProcessor`
+  can drive composition (`setPendingCompositionString`/`flushPendingComposition`/
+  `commitComposition`), so composition may be testable on Firefox after all.
 - **Manual**: Firefox Android on a phone (gui-testing has no touch): Wikipedia search box with
   Gboard — suggestions, swipe, backspace, Go; a GitHub comment; a password login.
 
@@ -226,11 +228,9 @@ not prevent.
 ## Order and dependencies
 
 1. **Stage A — desktop composition** (engine state + ops + mirror + routing; Chrome/Firefox
-   desktop). Independent of clipboard.md except for sharing `bib_edit` — whichever lands first
-   adds the export and the other extends the op set. Fixes dead keys and desktop IMEs, which are
-   broken for every non-US-ASCII typist today.
-2. **Stage B — clipboard verbs** land in clipboard.md's own steps (its ClipboardEvent listeners
-   attach to "the current sink", so they need nothing from here).
+   desktop). `bib_edit` exists (clipboard ops); this extends the op set and the key routing.
+   Fixes dead keys and desktop IMEs, which are broken for every non-US-ASCII typist today.
+2. ~~Stage B — clipboard verbs~~ landed 2026-09-10.
 3. **Stage C — touch hosts**: probes (b)–(d), the `interactive-widget` viewport addition, the
    Firefox Android smoke. Prerequisite: plans/touch-input.md (pointer events, drag-to-scroll,
    fling) — today a phone gets synthesized taps and no scrolling, so it cannot reach a field to
@@ -240,7 +240,7 @@ not prevent.
 
 - Selection handles / long-press select on touch; the engine's own context menu.
 - Undo/redo (`registerUndoStep` empty), Ctrl+arrow word ops, Shift+Home/End, PageUp/Down in the
-  key map — the editing-key-gaps issue clipboard.md files.
+  key map — issues/editing-key-gaps.md.
 - Spellcheck inside the engine (`TextCheckerClient` stubs; the host's spellcheck on the mirror is
   turned off — it would underline invisible text and its context menu is unreachable).
 - macOS press-and-hold accent popups on physical keys: they need the keydown unprevented, which

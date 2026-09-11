@@ -85,6 +85,16 @@ re-bite on rebases or bound future features.
   won't start drops `DocumentLoader::loadMainResource` into `maybeLoadEmpty()` — WebKit2 survives
   this because its UI shows *something*; a canvas embedder shows the last page forever. Our patch
   dispatches a provisional-load failure at both sites (networking.md); re-check on every rebase.
+- **The clipboard is platform code in three places outside `PasteboardEmscripten.cpp`**
+  (rendering-input.md § Clipboard). `Pasteboard.cpp`'s generic index readers
+  (`allPasteboardItemInfo`/`readString(index)`/`readBuffer`/`readURL`) go through a
+  `PasteboardStrategy` and return `nullopt` = "access denied" elsewhere — the patch compiles them
+  out under `__EMSCRIPTEN__` and the port answers from its store; `Pasteboard.h`'s
+  `changeCount()` is inline `0` off COCOA/GTK/WPE (the async `Clipboard::read()` would reuse a
+  stale session forever) — guard extended; `DataTransfer::allowsFileAccess()` is false off
+  Cocoa (webkit.org/b/271957), so `clipboardData.files` was always empty — enabled for the port.
+  All three re-bite on a rebase. The async API is `AsyncClipboardAPIEnabled` (default-false
+  family, below).
 - **No `DisplayRefreshMonitor` in a custom port** → guest rAF never fires and "update the
   rendering" never runs unless the embedder calls `Page::updateRendering()` +
   `finalizeRenderingUpdate({})` per host frame.
@@ -94,7 +104,8 @@ re-bite on rebases or bound future features.
 - **WebCore-direct embedders get the `WebCore:` default column of UnifiedWebPreferences.yaml**,
   not WebKit2 defaults. Default-FALSE booby traps: `loadsImagesAutomatically`,
   `LocalStorageEnabled`/`SessionStorageEnabled` (IDL-gated → ReferenceError, kills SPA boots),
-  `RequestIdleCallbackEnabled`, `CanvasUsesAcceleratedDrawing`.
+  `RequestIdleCallbackEnabled`, `CanvasUsesAcceleratedDrawing`, `AsyncClipboardAPIEnabled`
+  (no `navigator.clipboard`).
 - **Reachable-from-content thread landmines**: `IDBBackingStore` ctor/dtor, `~AsyncFileStream`,
   `callOnIDBSerializationThreadAndWait` all RELEASE_ASSERT-or-`Thread::create` off-main. And
   `SynchronizedFixedQueue` (ImageFrameWorkQueue, size 8) blocking-enqueues: with no consumer

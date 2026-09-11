@@ -157,6 +157,7 @@ function handle(req, res, scheme) {
     'hostile.bstest': 'hostile.html',
     'scroll.bstest': 'scroll.html',
     'scroll-sticky.bstest': 'scroll-sticky.html',
+    'clipboard.bstest': 'clipboard.html',
   }[host];
   try {
     if (path === '/' && fixture) return send(res, 200, page(fixture));

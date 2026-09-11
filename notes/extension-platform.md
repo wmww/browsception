@@ -151,8 +151,10 @@ pins the exact set, so adding one is a visible diff.
 
 Warnings each browser shows: distribution.md § Permission warnings. Features that WOULD add
 permissions: host-cookie import (`cookies`), native download shelf (`downloads` — avoidable: a
-blob link on the viewer page), clipboard read (`clipboardRead`; write needs none on extension
-pages). Optional/per-site host permissions would be a product change (roadmap.md risk row).
+blob link on the viewer page), DOM-initiated clipboard reads (`clipboardRead`; the shipped
+clipboard needs no permission on either browser — writes ride transient activation, reads the
+paste event; open-questions #21). Optional/per-site host permissions would be a product change
+(roadmap.md risk row).
 
 **Host access is user-revocable after install** on both browsers (Firefox MV3 shows
 `<all_urls>` as an "Optional" toggle; Chrome's "Site access" menu). Revoked, DNR redirects stop

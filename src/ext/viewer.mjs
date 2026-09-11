@@ -15,6 +15,8 @@ import { RedirectCapture } from '../shim/redirect-capture.mjs';
 import { createStubEngine } from '../shim/engine-stub.mjs';
 import { EngineLink } from './engine-link.mjs';
 import { createPresenter } from './blit.mjs';
+import { packDataTransfer, toClipboardRecord } from './clipboard.mjs';
+import { hostKey, hostPasteKey, keyText } from './keys.mjs';
 import { shouldSandbox } from './dnr-rules.mjs';
 import { sliceTarget, viewerParams, viewerURLFor } from './viewer-url.mjs';
 import { getState, onStateChanged } from './state.mjs';
@@ -175,6 +177,9 @@ async function bootEngine() {
       length: 0,
     },
     metrics: { bootMs: null, engineFetchMs: null },
+    // Host clipboard writes that resolved (bibChrome "clipboard"); tests wait
+    // on it between a copy and a paste.
+    clipboardWrites: 0,
     // The worker link (dev/diagnostics). Export calls: __bs.link.call('bib_x', ...).
     get link() {
       return link;
@@ -410,12 +415,15 @@ async function bootEngine() {
     link.call('bib_wheel', ...pendingWheel);
     pendingWheel = null;
   };
-  // Host-owned input: never forwarded, never preventDefault()ed, so the
-  // browser's own history controls still work over the canvas. Ctrl/Cmd
-  // combos (devtools, tab keys, Ctrl+R) are handled at the call sites.
-  const hostKey = (e) =>
-    e.key === 'F5' || (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight'));
+  // Host-owned buttons: never forwarded, never preventDefault()ed, so the
+  // browser's own history controls still work over the canvas. (Keys:
+  // keys.mjs.)
   const hostButton = (e) => e.button === 3 || e.button === 4; // mouse back/forward
+  // Last trusted input on the canvas — the clipboard write gate (below).
+  let lastInputAt = -Infinity;
+  const noteInput = (e) => {
+    if (e.isTrusted) lastInputAt = performance.now();
+  };
 
   function wireInput() {
     canvas.addEventListener('mousemove', (e) => {
@@ -423,6 +431,7 @@ async function bootEngine() {
     });
     canvas.addEventListener('mousedown', (e) => {
       if (bs.dead || hostButton(e)) return;
+      noteInput(e);
       canvas.focus();
       e.preventDefault();
       flushPendingMove();
@@ -461,25 +470,83 @@ async function bootEngine() {
       bs.dead
         ? 0
         : link.call('bib_key', type, e.key, e.code, text, e.keyCode | 0, e.repeat ? 1 : 0, mods(e));
+    // Key routing (keys.mjs): host keys stay with the browser; everything
+    // else is forwarded and prevented, except the paste keys, which must
+    // stay unprevented so the host fires the paste event below. The
+    // keydown reaches the engine before that event, so the guest sees
+    // keydown then paste, as in a real browser.
+    let plainPaste = false; // ClipboardEvent carries no modifiers
     canvas.addEventListener('keydown', (e) => {
-      // Ctrl/Cmd combos stay with the HOST browser (devtools, tab keys), as
-      // do its history shortcuts (Alt+arrows, F5).
-      if (e.ctrlKey || e.metaKey || hostKey(e)) return;
-      e.preventDefault();
+      if (hostKey(e)) return;
+      noteInput(e);
+      const pasteKey = hostPasteKey(e);
+      plainPaste = pasteKey && e.shiftKey && e.key !== 'Insert'; // Ctrl+Shift+V
+      if (!pasteKey) e.preventDefault();
       sendKey(0, e, '');
-      if (e.key.length === 1) sendKey(2, e, e.key);
-      else if (e.key === 'Enter') sendKey(2, e, '\r');
-      else if (e.key === 'Tab') sendKey(2, e, '\t');
+      const text = keyText(e);
+      if (text) sendKey(2, e, text);
     });
     canvas.addEventListener('keyup', (e) => {
-      if (e.ctrlKey || e.metaKey || hostKey(e)) return;
+      if (hostKey(e)) return;
       sendKey(1, e, '');
+    });
+
+    // Clipboard verbs from the host (notes/rendering-input.md § Clipboard).
+    // On `document`: Firefox targets clipboard events at the body when a
+    // non-editable element has focus. Only while the canvas is the sink —
+    // the URL bar keeps its native copy/paste. copy/cut only arrive from
+    // non-key sources (Edit menu, OSK toolbar): their keys are prevented
+    // above and run the engine's own key map instead.
+    const sinkFocused = () => document.activeElement === canvas;
+    for (const op of ['copy', 'cut']) {
+      document.addEventListener(op, (e) => {
+        if (bs.dead || !sinkFocused()) return;
+        e.preventDefault();
+        noteInput(e);
+        link.edit({ op });
+      });
+    }
+    document.addEventListener('paste', (e) => {
+      if (bs.dead || !sinkFocused()) return;
+      e.preventDefault();
+      noteInput(e);
+      const plain = plainPaste;
+      plainPaste = false;
+      if (!e.clipboardData) return;
+      packDataTransfer(e.clipboardData).then(({ items, bytes }) => {
+        if (!bs.dead) link.edit({ op: 'paste', plain, items }, bytes);
+      });
     });
     const setFocus = (v) => {
       if (!bs.dead) link.call('bib_set_focus', v);
     };
     canvas.addEventListener('focus', () => setFocus(1));
     canvas.addEventListener('blur', () => setFocus(0));
+  }
+
+  // --- host clipboard writes (bibChrome "clipboard") ----------------------
+  // The engine's pasteboard changed from inside (Copy/Cut, a guest copy
+  // handler, navigator.clipboard.write…); put it on the real clipboard. Only
+  // within the transient-activation window of a real input on the canvas:
+  // Chrome would otherwise let an owned engine write the clipboard from a
+  // timer (it auto-grants clipboard-write to a focused page), and Firefox
+  // enforces the same 5 s rule itself (security.md).
+  const CLIPBOARD_WRITE_WINDOW_MS = 5000;
+  let clipboardWarned = false;
+  function writeHostClipboard(json, buf) {
+    if (performance.now() - lastInputAt > CLIPBOARD_WRITE_WINDOW_MS) return;
+    if (navigator.userActivation && !navigator.userActivation.isActive) return;
+    const { record, plain } = toClipboardRecord(json, buf);
+    if (!record) return;
+    const warn = (err) => {
+      if (clipboardWarned) return;
+      clipboardWarned = true;
+      console.warn('viewer: clipboard write failed', err);
+    };
+    navigator.clipboard
+      .write([new ClipboardItem(record)])
+      .catch((err) => (plain ? navigator.clipboard.writeText(plain) : Promise.reject(err)))
+      .then(() => bs.clipboardWrites++, warn);
   }
 
   // --- rAF tick loop (cadence only; engine pushes frames back) -------------
@@ -619,7 +686,9 @@ async function bootEngine() {
       for (const resolve of waiters) resolve(frame);
     },
     // Chrome signals — kind/json arrive as JS strings (ABI).
-    onChrome(kind, json) {
+    onChrome(kind, json, buf) {
+      // Possibly megabytes of text: parsed once, by clipboard.mjs.
+      if (kind === 'clipboard') return writeHostClipboard(json, buf);
       let data = {};
       try {
         data = JSON.parse(json);

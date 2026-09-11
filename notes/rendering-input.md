@@ -168,13 +168,16 @@ boot-size, grow, shrink, and post-resize input.
   14400 px/s: 0.5 → 12 fps, tail 4.5 s → 0.3 s. **1.4 Mpx** was never backlogged, so it shows the
   cost, not the frame rate: at 3600 px/s busy 49% → 32%, blit 209 → 42 ms/s, fps ~59 either way.
   Scroll distance is conserved exactly (probe `efficiency` 1.0) in both.
-- **Keyboard**: `keydown/keyup` with code/key/modifiers forwarded (+ a CHAR event for printable
-  keys); today every Ctrl/Meta combo is dropped, which is wrong for editing. Planned routing
-  (plans/clipboard.md, plans/text-input.md): a **deny list** of host-owned keys (F5, Alt+←/→,
-  Ctrl/Cmd+L/T/W/N/R/Tab/digits, devtools) is neither forwarded nor prevented; everything else
-  is forwarded and prevented, except IME-handled keys and the host's paste keys, which are
-  forwarded but left unprevented so the host runs its composition / fires its paste event.
-  The engine's key map decides what a combo *means*; the viewer never does.
+- **Keyboard** (`src/ext/keys.mjs`): `keydown/keyup` with code/key/modifiers forwarded, plus
+  a CHAR event carrying the inserted text (`keyText`: none for Ctrl/Cmd combos — Ctrl+C is not
+  a "c" — except AltGr, which Windows reports as Ctrl+Alt). Routing: a **deny list** of
+  host-owned keys (`hostKey`: F5/F6/F11/F12, Alt+←/→, Ctrl/Cmd+L/T/W/N/R/Q/Tab/PageUp/PageDown/
+  digits/zoom, devtools, a few Shift chords) is neither forwarded nor prevented; everything else
+  is forwarded **and** prevented, except the paste keys (`hostPasteKey`: Ctrl/Cmd+V, Shift+Insert),
+  which are forwarded but left unprevented so the host fires its paste event. The engine's key
+  map (`BibPageClients.h` `commandForKeyDown`) decides what a combo *means*; the viewer never
+  does. Known gaps (undo/redo, word ops, Shift+Home/End, PageUp/Down): issues/editing-key-gaps.md.
+  plans/text-input.md adds the IME-key case to the same routing.
 - **Text input / IME / OSK — designed, not built**: plans/text-input.md. The Wayland
   text-input dance one hop up: the engine reports editor state (editable, surrounding text +
   selection, content type, caret rect) per tick; the viewer keeps a hidden `<textarea>` mirror in
@@ -210,13 +213,47 @@ boot-size, grow, shrink, and post-resize input.
 - **File upload**: engine requests file picker → viewer opens real `<input type=file>` (needs the
   user gesture we already have from the click) → File bytes copied into engine, engine fakes the
   FileList. MVP: single files, no directories.
-- **Clipboard** (designed, not built — plans/clipboard.md): in-engine pasteboard store. Copy
-  and cut are engine editor commands, reached from the engine key map (Ctrl/Cmd+C/X, prevented
-  on the host) and from the host's `copy`/`cut` events (menus, OSK buttons); paste is the host's
-  `paste` **event** only, since `clipboardData` is the one permission-free way in — so the paste
-  keys are the one forwarded-but-unprevented combo. Store changes come back as
-  `bibChrome("clipboard")` for a user-activation-gated async-Clipboard write. No
-  `clipboardRead` (DOM-initiated reads stay denied).
+- **Clipboard** (2026-09-10). The engine owns an in-memory **pasteboard store**
+  (`platform/emscripten/PasteboardEmscripten.{h,cpp}` in the WebKit patch: one item, typed
+  representations — strings for text/plain, text/html, text/uri-list; bytes for images; a
+  change count). Every WebCore clipboard path is platform-neutral and runs over it: Editor
+  copy/cut/paste, the guest's `copy`/`cut`/`paste` events and `clipboardData` (WebKit's legacy
+  pasteboard path), `execCommand('copy')`, `navigator.clipboard` (`AsyncClipboardAPIEnabled` on;
+  the generic index readers routed to the store). The host touches the real clipboard only at
+  the two moments browsers already gate:
+  - **engine → host**: any WebCore-side store write marks it dirty; `bib_tick` emits one
+    `bibChrome("clipboard")` per dirty tick (a copy handler's setData is clear + one write per
+    type), and the viewer writes it with `navigator.clipboard.write` (plain `writeText`
+    fallback) — only within 5 s of a trusted input on the canvas and while
+    `navigator.userActivation` is active. Chrome would otherwise let an owned engine write the
+    clipboard from a timer (it auto-grants clipboard-write); Firefox enforces it anyway.
+  - **host → engine**: the host's `paste` event is the **only** source, because
+    `clipboardData` is the one permission-free, prompt-free read. That is why the paste keys are
+    the one forwarded-but-unprevented combo (a prevented keydown cancels the host's paste
+    command). The viewer packs `clipboardData` (`src/ext/clipboard.mjs`: strings sync inside the
+    handler, file bytes awaited, 32 MB cap) into `bib_edit {op:"paste"}`, which replaces the
+    store (no echo back) and runs Paste / PasteAsPlainText (Ctrl+Shift+V) — the guest's paste
+    event fires first and can `preventDefault`.
+  - **Copy/cut** are engine editor commands: the key map (Ctrl/Cmd+C/X, Ctrl+Insert,
+    Shift+Delete; Ctrl/Cmd+A = SelectAll) and `bib_edit {op:"copy"|"cut"}` from the host's
+    copy/cut events, which only come from non-key sources (Edit menu, OSK toolbar). The engine
+    has no paste key binding.
+  - Listeners sit on `document` gated on the canvas being `activeElement`: Firefox targets
+    clipboard events at the body when a non-editable element is focused, and the URL bar keeps
+    its native copy/paste.
+  - Pasted HTML is parsed without scripting content (EditorEmscripten: scripts, event-handler
+    attributes and `javascript:` URLs dropped). `DataTransfer.files` is enabled for the port
+    (`allowsFileAccess`, off upstream on non-Cocoa for a file-*path* leak we can't have: the
+    store never holds paths).
+  - **Not supported**: DOM-initiated reads (`navigator.clipboard.readText/read()`,
+    `execCommand('paste')`) outside a paste gesture are denied (NotAllowedError, what a site sees
+    when the user declines) — supporting them needs `clipboardRead` plus a host mirror of the
+    clipboard pushed into the store (requestDOMPasteAccess must answer synchronously). Rich HTML
+    through the async API (`getType('text/html')`) and image-fragment insertion on paste into
+    contenteditable need a `WebContentReader` platform half (~80 lines from
+    `editing/glib/WebContentReaderGLib.cpp`); sites use the paste event + `files`, which work.
+    Context-menu copy (waits on a viewer context menu; `write(PasteboardImage)` is wired), Linux
+    primary selection, drag-and-drop.
 - **Popups / window.open / target=_blank**: engine policy delegate → viewer opens a new
   `viewer.html?url=…` tab via `chrome.tabs.create`. Popup blocking = engine's own logic + a
   viewer-side allowlist. `window.opener` relationships across viewer tabs: unsupported initially

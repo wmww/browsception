@@ -67,6 +67,32 @@ function bibFrame(ptr, fbW, fbH, strideBytes, x, y, w, h) {
   return true;
 }
 
+// bibChrome: kind/json arrive as strings. "clipboard" items may carry
+// engine-malloc'd bytes (ptr/len): copy them into one transferable buffer,
+// free them, and hand main off/len into it instead.
+function bibChrome(kind, json) {
+  if (kind !== 'clipboard') return post({ t: 'chrome', kind, json });
+  let data;
+  try {
+    data = JSON.parse(json);
+  } catch {
+    return;
+  }
+  const items = Array.isArray(data.items) ? data.items : [];
+  const total = items.reduce((n, it) => n + (it.ptr ? it.len : 0), 0);
+  const buf = new ArrayBuffer(total);
+  let off = 0;
+  for (const it of items) {
+    if (!it.ptr) continue;
+    new Uint8Array(buf, off, it.len).set(H().subarray(it.ptr, it.ptr + it.len));
+    Module._bib_wasm_free(it.ptr);
+    delete it.ptr;
+    it.off = off;
+    off += it.len;
+  }
+  post({ t: 'chrome', kind, json: JSON.stringify({ items }), buf }, [buf]);
+}
+
 function frameReturned(buf) {
   if (buf && buf.byteLength) frameBuf = buf;
   if (!dead) Module._bib_present_done();
@@ -114,7 +140,7 @@ function boot({ engineUrl, config }) {
     onEngineReady: () => post({ t: 'ready' }),
     bibFrame,
     bibReadbackReady: (data, w, h) => post({ t: 'readback', data, w, h }, data ? [data.buffer] : []),
-    bibChrome: (kind, json) => post({ t: 'chrome', kind, json }),
+    bibChrome,
     bibPersist: (json) => post({ t: 'persist', json }),
     bibNetBegin,
     bibNetCancel: (id) => post({ t: 'net-cancel', id }),
@@ -140,6 +166,19 @@ function callExport(fn, args) {
   if (args.some((a) => typeof a === 'string'))
     Module.ccall(fn, null, args.map((a) => (typeof a === 'string' ? 'string' : 'number')), args);
   else f(...args);
+}
+
+// bib_edit(json, bytes, len): the payload is copied into the heap here,
+// ownership → engine.
+function edit({ json, buf }) {
+  let ptr = 0;
+  let len = 0;
+  if (buf && buf.byteLength) {
+    len = buf.byteLength;
+    ptr = Module._bib_wasm_alloc(len);
+    H().set(new Uint8Array(buf), ptr);
+  }
+  Module.ccall('bib_edit', null, ['string', 'number', 'number'], [json, ptr, len]);
 }
 
 function netIn(m) {
@@ -178,6 +217,9 @@ self.onmessage = (e) => {
         break;
       case 'net':
         netIn(m);
+        break;
+      case 'edit':
+        edit(m);
         break;
       case 'frame-return':
         frameReturned(m.buf);

@@ -1,0 +1,118 @@
+<!doctype html>
+<!-- clipboard.bstest — clipboard fixture (tier-2 "clipboard" scenarios).
+     Everything observable paints a 50x50 zone; probe the centre
+     (35 + 60*i, 335). sum(s) = rgb(c,c,c), c = sum of charCodes % 256.
+       0 field     sum(#field.value)
+       1 nopaste   sum(#nopaste.value) — its paste handler preventDefault()s
+       2 richbold  #00ff00 if #rich holds a bold element, else #808080
+       3 rich2     sum(#rich2 text), #ff0000 if it holds a bold element
+       4 pastetext sum(getData('text/plain')) of the last paste event
+       5 pastehtml #00ff00 if that event's types had text/html, else #ff0000
+       6 pastefile #00ff00 if its files[0] is a non-empty image/png, else #ff0000
+       7 readtext  #ff00ff NotAllowedError, #00ff00 resolved, #ff0000 other
+       8 writetext #00ff00 resolved, #ff0000 rejected       (button #wt)
+       9 execcopy  #00ff00 execCommand('copy') true, else #ff0000 (button #ec)
+      10 clipapi   #00ff00 if navigator.clipboard + ClipboardItem exist
+     Zones start #808080 unless noted. Words to select (dblclick; one block
+     each so word selection stops at the word): #w1 "alpha" (40,17), #w2
+     bold "bravo" (40,51), #w3 "custom" (40,85) — copying inside #w3 puts
+     "custom-data" on the clipboard via a copy handler. Fields: #field
+     (110,137), #nopaste (330,137), #rich (110,205), #rich2 (330,205).
+     Buttons: #wt (60,270) writeText('charlie'), #ec (170,270) selects #w2 +
+     execCommand('copy'), #rt (280,270) readText(). Hooks for hosts without
+     mouse input: selectWord(id), focusField(id). -->
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>BSTEST-CLIPBOARD</title>
+  <style>
+    html, body { margin: 0; background: #ffffff; font: 28px monospace; }
+    .abs { position: absolute; }
+    #words { left: 10px; top: 0; line-height: 34px; }
+    input.abs { top: 120px; width: 200px; height: 34px; font-size: 20px; box-sizing: border-box; }
+    .rich { top: 170px; width: 200px; height: 70px; border: 1px solid #000; font-size: 20px; box-sizing: border-box; }
+    button.abs { top: 250px; width: 100px; height: 40px; font-size: 14px; border: 0; background: #ccccff; }
+    .zone { position: absolute; top: 310px; width: 50px; height: 50px; background: #808080; }
+  </style>
+</head>
+<body>
+  <div class="abs" id="words">
+    <div id="w1">alpha</div>
+    <div><b id="w2">bravo</b></div>
+    <div id="w3">custom</div>
+  </div>
+  <input class="abs" id="field" style="left:10px">
+  <input class="abs" id="nopaste" style="left:230px">
+  <div class="abs rich" id="rich" contenteditable style="left:10px"></div>
+  <div class="abs rich" id="rich2" contenteditable style="left:230px"></div>
+  <button class="abs" id="wt" style="left:10px">writeText</button>
+  <button class="abs" id="ec" style="left:120px">execCopy</button>
+  <button class="abs" id="rt" style="left:230px">readText</button>
+  <div id="zones"></div>
+  <p class="abs" style="top:380px;font-size:14px">BSTEST-CLIPBOARD-SENTINEL</p>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const NAMES = ['field', 'nopaste', 'richbold', 'rich2', 'pastetext', 'pastehtml', 'pastefile', 'readtext', 'writetext', 'execcopy', 'clipapi'];
+    const zone = {};
+    NAMES.forEach((n, i) => {
+      const z = document.createElement('div');
+      z.className = 'zone';
+      z.style.left = `${10 + 60 * i}px`;
+      $('zones').append(z);
+      zone[n] = (color) => (z.style.background = color);
+    });
+    const sum = (s) => {
+      let c = 0;
+      for (const ch of s) c = (c + ch.charCodeAt(0)) % 256;
+      return `rgb(${c}, ${c}, ${c})`;
+    };
+    const GREEN = '#00ff00', RED = '#ff0000', MAGENTA = '#ff00ff';
+    const hasBold = (el) => [...el.querySelectorAll('*')].some((n) => Number(getComputedStyle(n).fontWeight) >= 700);
+
+    $('field').addEventListener('input', () => zone.field(sum($('field').value)));
+    $('nopaste').addEventListener('input', () => zone.nopaste(sum($('nopaste').value)));
+    $('nopaste').addEventListener('paste', (e) => e.preventDefault());
+    $('rich').addEventListener('input', () => zone.richbold(hasBold($('rich')) ? GREEN : '#808080'));
+    $('rich2').addEventListener('input', () => zone.rich2(hasBold($('rich2')) ? RED : sum($('rich2').textContent)));
+
+    document.addEventListener('paste', (e) => {
+      const dt = e.clipboardData;
+      zone.pastetext(sum(dt.getData('text/plain')));
+      zone.pastehtml([...dt.types].includes('text/html') ? GREEN : RED);
+      const f = dt.files[0];
+      zone.pastefile(f && f.type === 'image/png' && f.size > 0 ? GREEN : RED);
+    });
+    document.addEventListener('copy', (e) => {
+      const sel = getSelection();
+      if (!sel.rangeCount || !$('w3').contains(sel.getRangeAt(0).commonAncestorContainer)) return;
+      e.clipboardData.setData('text/plain', 'custom-data');
+      e.preventDefault();
+    });
+
+    $('wt').addEventListener('click', () =>
+      navigator.clipboard.writeText('charlie').then(() => zone.writetext(GREEN), () => zone.writetext(RED)));
+    $('ec').addEventListener('click', () => {
+      selectWord('w2');
+      zone.execcopy(document.execCommand('copy') ? GREEN : RED);
+    });
+    $('rt').addEventListener('click', () =>
+      navigator.clipboard.readText().then(
+        () => zone.readtext(GREEN),
+        (err) => zone.readtext(err?.name === 'NotAllowedError' ? MAGENTA : RED)));
+    zone.clipapi(navigator.clipboard && typeof ClipboardItem === 'function' ? GREEN : RED);
+
+    function selectWord(id) {
+      const r = document.createRange();
+      r.selectNodeContents($(id));
+      getSelection().removeAllRanges();
+      getSelection().addRange(r);
+    }
+    // Blur first: focus() on the already-focused element is a no-op and
+    // would leave the document selection wherever selectWord put it.
+    function focusField(id) {
+      document.activeElement?.blur();
+      $(id).focus();
+    }
+  </script>
+</body>
+</html>

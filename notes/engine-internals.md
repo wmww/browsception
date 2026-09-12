@@ -119,6 +119,32 @@ re-bite on rebases or bound future features.
   *painting* only, and the embedder scales the Skia canvas by dpr itself. Feeding framebuffer
   device px straight into an event is silently correct at dpr 1 and wrong by exactly dpr
   everywhere else — convert with `bibLogicalPoint` at the ABI edge, never later.
+- **`overscroll-behavior` on the root blocked the page from scrolling at all** (fixed
+  2026-09-11; two hunks in `EventHandler.cpp`). `html { overscroll-behavior: contain|none }` is
+  how sites turn off bounce and pull-to-refresh (tumblr.com ships it), and a synchronous port
+  hits **two** blocks that an async-scrolling port never reaches — both apply the *root's* value
+  to the step *into* the viewport, which is not a propagation at all:
+  1. `handleWheelEventInternal` ran the frame view's propagation filter BEFORE the view scrolled
+     itself, so the delta was zeroed / the bail-out taken first. Upstream's bug, fixed in
+     314170@main; we backport it (scroll first, filter the leftover).
+  2. `handleWheelEventInAppropriateEnclosingBox` (the DOM default handler, which *is* reached
+     because `m_currentWheelEventAllowsScrolling` is true for us) walks the containing-block
+     chain, and the document element's box always has a `RenderLayerScrollableArea`
+     (`RenderBox::requiresLayerWithScrollableArea`: "FIXME: This is wrong") whose
+     `overscrollBehavior*` reads the root style. It can never scroll, so the walk fell straight
+     into `shouldBlockScrollPropagation` → `setDefaultHandled()` → `handleWheelEventInternal`
+     returned before the fixed code above. Still unfixed upstream (the sync-scroll
+     implementation, webkit.org/b/222968, treats the root like any other scroller); our hunk
+     skips the block for `isDocumentElementRenderer()`. The frame view carries that same style,
+     so chaining out of a subframe is still blocked at the right level.
+  **Both hunks are required and neither does anything alone** (A/B-built both ways) — each
+  block bails before the other runs. Why no shipping port hits either: `ENABLE_ASYNC_SCROLLING`
+  is 0 for us (no compositor → no scrolling tree, whose own root-overscroll logic is correct),
+  so every wheel asks for `SynchronousScrolling`; and `ENABLE_WHEEL_EVENT_LATCHING` is Mac-only,
+  where `defaultWheelEventHandler` returns early once the latched scroller is the frame view
+  ("FrameView scrolling is handled via processWheelEventForScrolling()") and so never walks the
+  containing-block chain at all. Expect more of this class: our default path is everyone else's
+  fallback. Tier-2 scenario 26 pins both directions.
 - **Scroll damage semantics**: `ScrollView::scrollContents` calls invalidateRootView(full rect)
   on every scroll *before* `ChromeClient::scroll` — it means "push backing store", not damage.
   **Fixed/sticky elements do NOT force the slow path in this port**: `useSlowRepaints` only

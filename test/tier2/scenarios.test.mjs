@@ -8,7 +8,7 @@
 // invariants, 12 crash/recovery, 13 startup budget, 14 resize, 15 guest
 // WebSocket, 16 engine-side load failure, 17 view transitions absent, 19
 // positional-input coalescing, 20 sticky-chrome scroll, 22 guest wasm shim +
-// media stubs, 25 clipboard (18 HiDPI has its own file — dpr is a
+// media stubs, 25 clipboard, 26 overscroll-behavior (18 HiDPI has its own file — dpr is a
 // browser-launch property; 21 present coherence was retired with the
 // shared-heap present: the worker copies the band out synchronously, so
 // nothing can race it).
@@ -505,6 +505,58 @@ test('input coalescing: a wheel burst keeps its distance and lands before a clic
   await evalProbe(page, 'window.__click', new RegExp(`^${TOTAL},`), 20);
   await evalProbe(page, 'scrollY', new RegExp(`^${TOTAL}\\b`), 20); // console adds a " (:1)" suffix
   await until(page, 4, 4, is([TOTAL / 120, 0, 128]), 60000, 'frame shows the summed offset');
+  await page.close();
+});
+
+// --- Scenario 26: overscroll-behavior on the root ---------------------------
+// `html { overscroll-behavior: contain|none }` — how a page turns off bounce
+// and pull-to-refresh, and what tumblr.com ships — used to make the whole page
+// unscrollable by wheel: EventHandler::handleWheelEventInternal ran the frame
+// view's PROPAGATION filter *before* the view scrolled itself, so the root's
+// non-auto value zeroed the main frame's own delta (or bailed out entirely).
+// Other ports rarely reach that code — async scrolling handles the main frame
+// in the scrolling tree — but ours is always SynchronousScrolling, so every
+// such site was dead. Fixed by backporting upstream 314170@main: scroll first,
+// block propagation only for what is left over.
+for (const ob of ['contain', 'none']) {
+  test(`overscroll-behavior: root ${ob} still wheel-scrolls the page`, { timeout: 300000 }, async () => {
+    const page = await bootViewer(`https://scroll.bstest/?ob=${ob}`);
+    const box = await (await page.$('#screen')).boundingBox();
+    await until(page, 4, 4, is([0, 0, 128]), 120000, 'scroll fixture at top');
+
+    const N = 3, PER = 100, TOTAL = N * PER;
+    await page.mouse.move(box.x + 100, box.y + 300);
+    for (let i = 0; i < N; i++) await page.mouse.wheel(0, PER);
+
+    await evalProbe(page, 'scrollY', new RegExp(`^${TOTAL}\\b`), 20);
+    // Same decoding as scenario 18: x=4 is the 120px section's left border.
+    await until(page, 4, 4, is([(TOTAL + 4) / 120 | 0, 0, 128]), 60000, 'frame shows the scrolled offset');
+    await page.close();
+  });
+}
+
+// The other half of the same rule: a contained SUBFRAME must scroll itself and
+// then refuse to chain the leftover to its parent (upstream's
+// overscroll-behavior-with-wheel-listener-iframe.html). Pre-fix it did neither
+// — it never scrolled at all — so this also pins which of the two behaviours
+// the filter is for.
+test('overscroll-behavior: a contained subframe scrolls but never chains to the parent', { timeout: 300000 }, async () => {
+  const page = await bootViewer('https://scroll.bstest/?frame=1');
+  const box = await (await page.$('#screen')).boundingBox();
+  await until(page, 4, 4, is([0, 0, 128]), 120000, 'main frame at top');
+  // The 300x300 subframe sits at main 200..500 x 0..300, so its own section
+  // border probe is at x=204 — [0,0,128] there means it has painted.
+  await until(page, 204, 4, is([0, 0, 128]), 120000, 'subframe painted');
+
+  // 1500px into a subframe that can only take 900 (10 sections - 300px view):
+  // 600px of leftover that must go nowhere.
+  await page.mouse.move(box.x + 350, box.y + 150);
+  for (let i = 0; i < 15; i++) await page.mouse.wheel(0, 100);
+
+  await evalProbe(page, 'frames[0].scrollY', /^900\b/, 20);
+  await evalProbe(page, 'scrollY', /^0\b/, 20);
+  await until(page, 204, 4, is([7, 0, 128]), 60000, 'subframe shows its own end'); // (900+4)/120
+  assert.ok(is([0, 0, 128])(await probe(page, 4, 4)), 'main frame never moved');
   await page.close();
 });
 

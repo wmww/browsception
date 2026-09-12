@@ -813,3 +813,42 @@ Uncapped, the page the budget throttles to ~27/s runs at 60 with headroom; fixed
 delivers 21.5 because the 33 ms interval is compared against ~16.7 ms ticks (2 or 3 ticks).
 **Decision**: issues/rcap-dynamic-budget.md rewritten around these numbers; the "5.2×
 MotionMark" premise dropped (unreproducible, contradicts the 30/s floor). Not scheduled.
+
+## 2026-09-11 — Wheel dead on `overscroll-behavior` pages (plans/overscroll-wheel-scroll.md)
+
+**Hypothesis** (from the plan): tumblr.com and every `html { overscroll-behavior: contain|none }`
+page is unscrollable by wheel because `handleWheelEventInternal` runs the frame view's
+propagation filter before the view scrolls itself; backporting upstream 314170@main fixes it.
+
+**Ran**: new tier-2 scenario 26 first, against the shipped engine — three failures
+(`scrollY` 0 after 3x100 with `ob=contain` and `ob=none`; a contained subframe at 0 too).
+Backported the hunk, rebuilt, restaged: **all three still failed, unchanged**.
+
+**Second cause** (found by reading the rest of the sync path): the DOM default handler runs for
+us (`m_currentWheelEventAllowsScrolling` is true — Mac only gets here with a non-passive wheel
+listener), and `handleWheelEventInAppropriateEnclosingBox` walks the containing-block chain to
+the document element, whose box *always* carries a `RenderLayerScrollableArea`
+(`RenderBox::requiresLayerWithScrollableArea`, marked "FIXME: This is wrong"). That area reports
+the root's `contain`, can never scroll, and so fell straight into `shouldBlockScrollPropagation`
+→ `setDefaultHandled()` → `handleWheelEventInternal` returned true before ever reaching the
+freshly backported code. Upstream's sync-scroll implementation (webkit.org/b/222968) has no
+root special case; ours skips the block for `isDocumentElementRenderer()`.
+
+**After** (both hunks): scenario 26 green; `?ob=contain`/`?ob=none` scroll the summed 300 px,
+the contained subframe takes its 900 px and chains none of the 600 px leftover to the parent.
+Tier-0 75, tier-1 36, tier-2 43/43 (Chrome + HiDPI + Firefox subset). Real sites: tumblr.com
+(root+body `contain`, 5711 px document) wheels 5x200 → `scrollY` exactly 1000. Regression probe
+for the feature itself (not a committed test): a pinned `overflow:auto;
+overscroll-behavior:contain` box still chains nothing to the page, and flipping it to `auto`
+chains all 1000 px.
+
+**A/B — is the backport load-bearing?** Yes: neither hunk alone changes any behaviour. Built
+the doc-element hunk WITHOUT the backport (20260912-003944): the same 3/3 failures, byte for
+byte the same symptoms as the unpatched engine. `overscroll-behavior: contain|none` sets both
+axes, so the frame view's pre-scroll `shouldBlockScrollPropagation` returns true unconditionally
+and bails before `processWheelEventForScrolling`. The measurement matters because the backport
+alone also fixed nothing, which is what made the second cause easy to miss.
+
+**Decision**: shipped both hunks; the backport is marked upstream-owned in engine-build.md
+§ Divergences (drop on a rebase past 314170@main), the document-element hunk is ours and worth
+reporting upstream. Plan deleted.

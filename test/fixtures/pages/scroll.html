@@ -7,10 +7,20 @@
   section { height: 120px; box-sizing: border-box; padding: 6px 12px; overflow: hidden;
             border-left: 10px solid #000; }
   p { margin: 0 0 3px 0; }
+  /* ?frame=1: a 300x300 same-origin subframe, its own root overscroll-behavior
+     contained, over the main frame's sections (which keep probing at x=4). */
+  iframe { position: absolute; left: 200px; top: 0; width: 300px; height: 300px; border: 0; }
 </style></head>
 <body><div id="w"></div>
 <script>
-  const N = 4000, H = 120;
+  // ?ob=<value> sets the ROOT element's overscroll-behavior (the value the main
+  // frame's wheel path reads); ?inner=1 is the subframe document (short, so a
+  // burst overscrolls past its end); ?frame=1 embeds it. The server ignores the
+  // query — every variant is the same page.
+  const q = new URLSearchParams(location.search);
+  const inner = q.has('inner');
+  if (q.has('ob')) document.documentElement.style.overscrollBehavior = q.get('ob');
+  const N = inner ? 10 : 4000, H = 120;
   const words = ('lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor '
     + 'incididunt ut labore et dolore magna aliqua enim ad minim veniam quis nostrud').split(' ');
   let html = '';
@@ -25,6 +35,11 @@
     html += '<section style="border-left-color:' + c + '">' + text + '</section>';
   }
   document.getElementById('w').innerHTML = html;
+  if (q.has('frame')) {
+    const f = document.createElement('iframe');
+    f.src = '/?inner=1&ob=contain';
+    document.body.appendChild(f);
+  }
   document.title = 'scroll fixture ' + N * H;
 </script>
 </body></html>

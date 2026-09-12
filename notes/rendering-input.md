@@ -71,6 +71,14 @@ boot-size, grow, shrink, and post-resize input.
 - **Scrolling lives inside the engine** — wheel/touch deltas are forwarded as input; the host page
   never scrolls. Smooth scrolling, overscroll, scrollbars: all engine-drawn. This is the only way
   it stays coherent (fixed elements, iframes, JS scroll handlers).
+- **The wheel path is synchronous** (`bibApplyWheel` asks for
+  `WheelEventProcessingSteps::SynchronousScrolling` — there is no scrolling tree), which is the
+  code upstream exercises least. It cost us every site with
+  `html { overscroll-behavior: contain|none }` — the common "no bounce, no pull-to-refresh"
+  rule, tumblr.com included: the page could not be wheel-scrolled at all, while `scrollTo()`,
+  Space and inner overflow scrollers worked. Two WebCore hunks fixed it (2026-09-11,
+  engine-internals.md § WebKit-internals gotchas); rule of thumb when "scrolling works except
+  by wheel", look at the root element's computed `overscroll-behavior` first.
 - **Fast-scroll blit works at any dpr** (2026-08-11; was dpr==1-only → full-viewport repaint per
   scroll ≈ 1fps on HiDPI). `bibScrollBlit` shifts in device px, snapping to whole pixels with a
   carried sub-pixel residual (bounded ±0.5, never accumulates); damage stays logical with

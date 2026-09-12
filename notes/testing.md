@@ -32,7 +32,10 @@ Fixture pages are assertion-friendly by construction:
   history.pushState, a redirect chain, Set-Cookie + cookie echo page.
 - `scroll.bstest` — 4000 x 120 px text sections, each with a colour-coded left border encoding
   its index, so `__bs.probe(4, 4)` decodes the engine's scroll offset (perf probes;
-  notes/perf-measurement.md).
+  notes/perf-measurement.md). Query knobs (the server ignores the query, the page reads it):
+  `?ob=<value>` sets the root's `overscroll-behavior`, `?inner=1` is the short subframe variant
+  and `?frame=1` embeds it at 200..500 x 0..300 with root `contain`, so its own border probe is
+  at x=204 (scenario 26).
 - `clipboard.bstest` — words to select, fields/contenteditables to paste into, buttons for
   `writeText`/`execCommand('copy')`/`readText`, and one 50×50 zone per observable (field
   checksums, bold-survived, what the guest paste event saw, API outcomes). Zone legend and
@@ -263,6 +266,14 @@ whole machine, end to end:
     `preventDefault()`ing paste target sees the data but stays empty; key-less (Edit-menu shaped)
     paste and copy events; an image on the host clipboard arriving as `clipboardData.files`.
     Each engine → host write is awaited via `__bs.clipboardWrites` before the paste.
+
+26. **overscroll-behavior** (`scroll.bstest?ob=…`, `?frame=1`): `html { overscroll-behavior:
+    contain }` and `none` must still let the wheel scroll the page (3x100 → the summed offset,
+    read both as guest `scrollY` and as the section-border pixel probe), and a contained
+    subframe must scroll itself to its end while the 600px of leftover chains nowhere. Guards
+    the two sync-path wheel hunks — every such site was unscrollable by wheel until 2026-09-11
+    (engine-internals.md). The fixture takes `?ob=`/`?frame=`/`?inner=` on the same page; the
+    server ignores the query.
 
 That's ~30 scenarios total. Growth policy: a new test requires a new *class* of failure it would
 catch (or a regression that escaped); prefer extending an existing scenario's probes over adding

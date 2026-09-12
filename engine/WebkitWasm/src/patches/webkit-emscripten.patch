@@ -1245,6 +1245,58 @@ index 34cce582179..bdc65e41198 100644
  }
  
  void WorkerThreadableLoader::cancel()
+diff --git a/Source/WebCore/page/EventHandler.cpp b/Source/WebCore/page/EventHandler.cpp
+index d418cec7d56..ec61ac42e45 100644
+--- a/Source/WebCore/page/EventHandler.cpp
++++ b/Source/WebCore/page/EventHandler.cpp
+@@ -3602,18 +3602,18 @@ HandleUserInputEventResult EventHandler::handleWheelEventInternal(const Platform
+         allowScrolling = m_frame->page()->scrollLatchingController().latchingAllowsScrollingInFrame(protectedFrame(), scrollableArea);
+ #endif
+     auto adjustedWheelEvent = event;
+-    auto filteredDelta = adjustedWheelEvent.delta();
+-    filteredDelta = view->deltaForPropagation(filteredDelta);
+-    if (view->shouldBlockScrollPropagation(filteredDelta))
+-        return true;
+-
+     if (allowScrolling) {
+         // FIXME: processWheelEventForScrolling() is only called for FrameView scrolling, not overflow scrolling, which is confusing.
+-        adjustedWheelEvent = adjustedWheelEvent.copyWithDeltaAndVelocity(filteredDelta, adjustedWheelEvent.scrollingVelocity());
+         handledEvent = processWheelEventForScrolling(adjustedWheelEvent, scrollableArea, handling);
+         processWheelEventForScrollSnap(adjustedWheelEvent, scrollableArea);
+     }
+ 
++    if (!handledEvent) {
++        auto filteredDelta = view->deltaForPropagation(adjustedWheelEvent.delta());
++        if (view->shouldBlockScrollPropagation(filteredDelta))
++            return true;
++    }
++
+     return handledEvent;
+ }
+ 
+@@ -3690,10 +3690,18 @@ bool EventHandler::handleWheelEventInAppropriateEnclosingBox(Node* startNode, co
+ 
+             if (scrollingWasHandled)
+                 return true;
+-            
+-            biasedDelta = boxScrollableArea->deltaForPropagation(biasedDelta);
+-            if (boxScrollableArea->shouldBlockScrollPropagation(biasedDelta))
+-                return true;
++
++            // The document element's layer always has a ScrollableArea (see
++            // RenderBox::requiresLayerWithScrollableArea) but never scrolls:
++            // the viewport is scrolled by the frame view, whose own
++            // overscroll-behavior reads this very style. Blocking here would
++            // apply the root's `contain`/`none` to the step *into* the
++            // viewport and stop the page scrolling at all.
++            if (!currentEnclosingBox->isDocumentElementRenderer()) {
++                biasedDelta = boxScrollableArea->deltaForPropagation(biasedDelta);
++                if (boxScrollableArea->shouldBlockScrollPropagation(biasedDelta))
++                    return true;
++            }
+         }
+ 
+         currentEnclosingBox = currentEnclosingBox->containingBlock();
 diff --git a/Source/WebCore/page/NavigatorBase.cpp b/Source/WebCore/page/NavigatorBase.cpp
 index 93720ea1fca..50987ba1edb 100644
 --- a/Source/WebCore/page/NavigatorBase.cpp

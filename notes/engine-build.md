@@ -101,18 +101,31 @@ not the ~90 s embedder loop. Same for `NetworkStorageSession.h`, `CertificateInf
 
 ## Divergences from upstream WebKit
 
-Single patch `src/patches/webkit-emscripten.patch`: 76 files, ~3.2k lines (shrinks whenever a
+Single patch `src/patches/webkit-emscripten.patch`: 80 files, ~3.6k lines (shrinks whenever a
 subsystem is cut — the curl transport, then the GPU path, took their hunks with them).
 Breakdown: 29 files in `Source/WebCore/platform` (the port's platform glue), 7 `Source/WTF`,
 7 `Source/JavaScriptCore`, 5 loader (three of them behavioural: the relaxed
 `Empty*Client` finals, plus the two "a refused navigation tells nobody" notifications in
-FrameLoader/DocumentLoader — networking.md), 4 workers, 3 accessibility, 2 Modules, 1 page
+FrameLoader/DocumentLoader — networking.md), 4 workers, 3 accessibility, 2 Modules, 2 page
 (`NavigatorBase::platform()` returns `Linux x86_64` under `__EMSCRIPTEN__`, matching the UA —
-wasm `uname()` yields nothing, so it was `''`), plus the
+wasm `uname()` yields nothing, so it was `''`; plus EventHandler's two wheel/overscroll hunks,
+below), plus the
 port pattern (`OptionsEmscripten.cmake`/`PlatformEmscripten.cmake` additions) and small
 editing/crypto/bindings/fileapi touches. The real port logic (embedder, net bridge, host
 page) lives in WebkitWasm's own `src/`, outside the WebKit tree. Tracks a WebKit
 **release branch** (webkitglib/2.52), consistent with our rebase-on-tags policy.
+
+**Upstream-owned hunks** (drop them when the rebase passes the named revision; everything else
+is ours to keep):
+
+| Hunk | Upstream | Drop when |
+|---|---|---|
+| `EventHandler::handleWheelEventInternal` — scroll first, block propagation only for the leftover | 314170@main (`25e43d9150`, webkit.org/b/281300) | rebasing past 314170@main |
+
+The second `EventHandler.cpp` hunk is **ours**, not a backport, and stays: in
+`handleWheelEventInAppropriateEnclosingBox` the walk skips the propagation block for the
+document element's layer scrollable area (engine-internals.md § WebKit-internals gotchas).
+Worth reporting upstream — it is a real bug for any synchronously-scrolling port.
 
 ## No-GPU link contract
 

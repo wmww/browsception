@@ -333,11 +333,22 @@ paste event at the body, and BiDi can't send input to extension pages — the Fi
 synthesizes trusted keys from the chrome window. rendering-input.md § Clipboard; tier-2
 scenario 25 on both browsers.
 
+*Wheel scrolling on `overscroll-behavior` pages* (2026-09-11) — `html { overscroll-behavior:
+contain|none }`, the standard "no bounce, no pull-to-refresh" rule (tumblr.com ships it), made a
+page completely unscrollable by wheel while `scrollTo()`, Space and inner overflow scrollers
+worked. Our wheel path is synchronous, and the sync path applies the ROOT's value twice to the
+step *into* the viewport: the frame view's propagation filter ran before the view scrolled
+itself (upstream's bug — backported 314170@main), and the DOM default handler's containing-block
+walk blocked at the document element's placeholder `RenderLayerScrollableArea` (still unfixed
+upstream — our hunk skips it). Subframe containment still blocks at the frame view, where it
+belongs. tumblr.com wheel-scrolls; tier-2 scenario 26 (engine-internals.md § WebKit-internals
+gotchas, rendering-input.md § scrolling).
+
 Open issues in issues/ (guest-JS wedge, rcap dynamic budget, CLoop `join` returned a
 non-string, host access revocation silently un-sandboxes, editing-key gaps, keyboard scroll
 keys). Plans in plans/, in intended order: firefox-harness-reload (tiny, test-only: real BiDi
-reload for the flaky crash scenario), overscroll-wheel-scroll (wheel on `overscroll-behavior`
-roots), WebSocket bridge (largest; nothing waits on it), touch-input (viewer-only pointer-event
+reload for the flaky crash scenario), WebSocket bridge (largest; nothing waits on it),
+touch-input (viewer-only pointer-event
 recognizer: tap → click, drag → wheel, fling; no ABI change), text-input (the host editable
 proxy: engine editor state → hidden mirror textarea → IME/OSK/composition → caret-relative edit
 ops over the existing `bib_edit`; its touch stage waits on touch-input). Next work:

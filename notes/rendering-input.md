@@ -16,8 +16,9 @@ Blit options, fastest first:
    `texStorage2D`, recreated on resize).
 2. **OffscreenCanvas inside the engine worker** — would drop the transfer + main-thread upload
    entirely (the worker uploads straight from its heap); resize of OffscreenCanvas is heavy →
-   debounce. The obvious next step if the large-framebuffer present ceiling
-   (issues/host-present-ceiling-large-fb.md) needs to move; the worker host makes it a local change.
+   debounce. Not needed for speed: the ~35 fps "present ceiling" at 2560x1330 was headless
+   SwiftShader only — on a real GPU the same scenarios hold 60 fps (experiment-log.md
+   2026-09-11). Would only pay if a GPU-less host mattered; the worker host makes it local.
 3. **2D canvas `putImageData`** — simplest correct fallback; CPU-bound, marginal at 1080p60. Keep
    as a debug/compat path (`?blit=2d`).
 

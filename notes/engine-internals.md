@@ -167,10 +167,12 @@ re-bite on rebases or bound future features.
 - **RunLoop quantization**: `performWork` swap semantics make mid-cycle dispatches wait a full
   cycle — a pure-rAF pump costs a display frame per `callOnMainThread` hop; use
   `RunLoop::setWakeUpCallback` for the event-driven pump (MessageChannel hop 16.5 → 0.4 ms).
-  `cycle()` in Iterate mode never blocks — safe from host callbacks. Current main.cpp still has
-  `kRcapUpdateBudget = 0.33` — the dynamic-cap shape that measured 5.2× worse than fixed
-  `rcap=30` on MotionMark (see issues/rcap-dynamic-budget.md). `bib_tick` updates rendering
-  *before* `bibPushFrameIfDirty` (finished frame waits a tick); `bib_pump*` cycle with no paint.
+  `cycle()` in Iterate mode never blocks — safe from host callbacks. main.cpp throttles the
+  rendering-update pass to `kRcapUpdateBudget = 0.33` of the thread, floored at a nominal 30/s
+  that tick quantization turns into ~27/s (fixed `rcap=30`: 21.5/s); on a rAF-heavy page with
+  headroom it halves the update rate (issues/rcap-dynamic-budget.md). `bib_tick` runs the
+  update *before* `bibPushFrameIfDirty`, so an update's damage paints in the same tick;
+  `bib_pump*` cycle with no paint (their damage waits for the next tick).
 - **Present pacing**: return frame credit **after** composite; early ack at queue depth 3 →
   bimodal near-freezes. Depth 1 needs tick-on-ack or a ~16 ms dead gap appears.
 - **Heap views**: only `Module.HEAPU8` is exported (build other views from `HEAPU8.buffer`);

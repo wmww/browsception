@@ -42,7 +42,7 @@ Never: printing, DRM, nested GPU/JIT.
 - MDN telemetry CORS preflights fail loudly in-engine (harmless; blocklist candidates).
 - Startup race is a documented hard limit, not an issue: one navigation per browser start executes
   natively for ~100 ms before the sweep (security.md § Startup race).
-- Open issues: guest-JS wedge, engine-renders-stale-input-state, rcap budget, viewer URL scheme (issues/).
+- Open issues: see issues/ (README.md § Status lists them).
 
 ## Standing risks
 

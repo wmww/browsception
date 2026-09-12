@@ -107,6 +107,8 @@ export function formatCompare(before, after, { beforeName = 'before', afterName 
     warn.push(`different window lengths (${before.config?.secs}s vs ${after.config?.secs}s)`);
   if (before.config?.viewerParams !== after.config?.viewerParams)
     warn.push(`different viewer params ("${before.config?.viewerParams ?? ''}" vs "${after.config?.viewerParams ?? ''}")`);
+  if ((before.config?.chromiumArgs ?? '') !== (after.config?.chromiumArgs ?? ''))
+    warn.push(`different chromium args ("${before.config?.chromiumArgs ?? ''}" vs "${after.config?.chromiumArgs ?? ''}")`);
 
   const ids = [...new Set([...Object.keys(before.scenarios), ...Object.keys(after.scenarios)])];
   for (const id of ids) {

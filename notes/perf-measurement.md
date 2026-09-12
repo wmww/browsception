@@ -128,7 +128,7 @@ Headline runs at 1600x900, plus a 2560x1330 pass for the scroll pair.
 |---|---|
 | `text-scroll` | plain long text, wheel at 60 px/host-frame — the **ratio denominator** |
 | `article-scroll` | sticky header + fixed TOC sidebar measuring every chapter per scroll tick + inline images + shadowed cards (the shape that made real Wikipedia slow) |
-| `text-scroll-2560`, `article-scroll-2560` | the same at a large framebuffer |
+| `text-scroll-2560`, `article-scroll-2560` | the same at a large framebuffer. **Headless SwiftShader caps these at ~30-35 fps** (13 MB texture upload + composite per frame); the real GPU holds 60 (experiment-log.md 2026-09-11). For any present-path question run with `--chromium-args '--use-angle=vulkan'` (headless, real GPU; `--compare` warns when runs differ in flags) |
 | `app-update` | vendored Preact re-rendering a 240-row table every rAF: VDOM diff, GC pressure. The workload class for the rcap question (issues/rcap-dynamic-budget.md) |
 | `input-latency` | click -> painted response, per-key latency, 10-key burst |
 | `boot-trivial`, `boot-article` | navigation -> engine ready -> load complete -> first frame -> the page's own pixels |

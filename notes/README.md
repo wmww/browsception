@@ -183,8 +183,8 @@ self-laid-out block containers whose children repaint themselves from issuing bl
 full-viewport repaints, and skips the decoration-delta repaint for boxes with no visible
 decorations — Wikipedia's per-scroll-tick layout dirtying went from 1.38 Mpx painted/frame
 (full viewport) to 0.30. Net Wikipedia scroll: **30 → 60 fps at 1600×900 (99% → ~33% busy)**;
-at 2560×1330 fps is capped ~36 by the HOST presentation path, not the engine (29-46% busy;
-issues/host-present-ceiling-large-fb.md). Mechanisms + rebase notes in engine-internals.md;
+at 2560×1330 headless SwiftShader capped the bench at ~36 fps (a real GPU holds 60 —
+experiment-log.md 2026-09-11). Mechanisms + rebase notes in engine-internals.md;
 run log in experiment-log.md. New tier-2 scenario 20 (sticky-chrome scroll fixture
 scroll-sticky.bstest).
 
@@ -333,10 +333,11 @@ paste event at the body, and BiDi can't send input to extension pages — the Fi
 synthesizes trusted keys from the chrome window. rendering-input.md § Clipboard; tier-2
 scenario 25 on both browsers.
 
-Open issues in issues/ (guest-JS wedge, rcap dynamic budget, host-present ceiling at large
-framebuffers, CLoop `join` returned a non-string, Firefox tier-2 crash-reload scenario, host
-access revocation silently un-sandboxes, editing-key gaps). Plans in plans/, in intended order:
-WebSocket bridge (largest; nothing waits on it), touch-input (viewer-only pointer-event
+Open issues in issues/ (guest-JS wedge, rcap dynamic budget, CLoop `join` returned a
+non-string, host access revocation silently un-sandboxes, editing-key gaps, keyboard scroll
+keys). Plans in plans/, in intended order: firefox-harness-reload (tiny, test-only: real BiDi
+reload for the flaky crash scenario), overscroll-wheel-scroll (wheel on `overscroll-behavior`
+roots), WebSocket bridge (largest; nothing waits on it), touch-input (viewer-only pointer-event
 recognizer: tap → click, drag → wheel, fling; no ABI change), text-input (the host editable
 proxy: engine editor state → hidden mirror textarea → IME/OSK/composition → caret-relative edit
 ops over the existing `bib_edit`; its touch stage waits on touch-input). Next work:

@@ -782,3 +782,34 @@ runs, except one run each of guest-realm (stayed on the boot page 20 s; passed a
 the next full run) and the known Firefox crash-reload flake.
 
 **Decision**: shipped; plan deleted, residuals in networking.md § Design.
+
+## 2026-09-11 — The 2560x1330 "host present ceiling" is headless SwiftShader
+
+**Hypothesis**: the ~35 fps cap on the 2560 scroll scenarios (issues/host-present-ceiling-large-fb.md,
+engine 20-40% busy) is the software GL stack the headless bench runs on, not the present path.
+
+**Setup**: `--chromium-args` added to the bench runner. Headless Chromium 152 reports
+`--use-angle=vulkan` → RADV on the Radeon 890M (`--use-gl=angle --use-angle=default` → radeonsi);
+default headless is SwiftShader. `--only text-scroll-2560,article-scroll-2560,article-scroll`,
+3 reps × 4 s, engine 6c8022a, load 2.5-4.9.
+
+| scenario | SwiftShader fps / busy% / rAF p95 | RADV fps / busy% / rAF p95 |
+|---|---|---|
+| text-scroll-2560 | 34.3 / 23 / 30.2 ms | **60.0** / 27 / 16.8 ms |
+| article-scroll-2560 | 30.5 / 36 / 33.4 ms | **60.0** / 48 / 19.3 ms |
+| article-scroll 1600 | 60.0 / 36 / 18.2 ms | 60.0 / 38 / 17.2 ms |
+
+**Result**: on a real GPU the large framebuffer holds the display rate with the engine under
+half busy; the ceiling was the 13 MB-per-frame texSubImage2D + composite on SwiftShader.
+**Decision**: issue deleted; OffscreenCanvas-in-worker (rendering-input.md option 2) is not a
+perf item. Headless bench 2560 numbers stay SwiftShader-bound — pass the flag for present-path
+questions.
+
+## 2026-09-11 — rcap: dynamic vs uncapped vs fixed on app-update
+
+`--only app-update`, viewer params none / `rcap=0` / `rcap=30`, same engine, load 4.5-6.9:
+updates/s 26.9 / **60.7** / 21.5, presented fps 26.8 / 32.4 / 21.6, busy 43 / 87 / 36%.
+Uncapped, the page the budget throttles to ~27/s runs at 60 with headroom; fixed 30/s
+delivers 21.5 because the 33 ms interval is compared against ~16.7 ms ticks (2 or 3 ticks).
+**Decision**: issues/rcap-dynamic-budget.md rewritten around these numbers; the "5.2×
+MotionMark" premise dropped (unreproducible, contradicts the 30/s floor). Not scheduled.

@@ -3,7 +3,7 @@
 //
 //   node scripts/bench/run.mjs [--ext <dir>] [--save <name>] [--compare <name>]
 //        [--only a,b] [--diagnostic] [--size WxH] [--secs N] [--reps N]
-//        [--viewer-params 'rcap=5'] [--url <URL>] [--headed]
+//        [--viewer-params 'rcap=5'] [--chromium-args '--use-angle=vulkan'] [--url <URL>] [--headed]
 //   node scripts/bench/run.mjs --list
 //   node scripts/bench/run.mjs --diff <before> <after>
 //
@@ -49,6 +49,7 @@ results dir: ${BENCH_DIR}
   --secs N             measured window per rep (default 4)
   --reps N             reps per scenario (default 3)
   --viewer-params 's'  extra viewer query params, e.g. 'rcap=5'
+  --chromium-args 's'  extra Chromium flags, e.g. '--use-angle=vulkan' (real GPU while headless)
   --url <URL>          ad-hoc scroll run against an arbitrary URL (NOT part of the suite)
   --px-per-frame N     wheel rate for --url runs (px per HOST frame, x~60 for px/s)
   --headed             show the browser`);
@@ -77,6 +78,7 @@ const SECS = Number(arg('secs', '4'));
 const REPS = Number(arg('reps', '3'));
 const SIZE = arg('size', DEFAULT_SIZE.join('x')).split('x').map(Number);
 const VIEWER_PARAMS = arg('viewer-params', '').replace(/^&|&$/g, '');
+const CHROMIUM_ARGS = arg('chromium-args', '').split(/\s+/).filter(Boolean);
 const ADHOC_URL = arg('url', null);
 const BOOT_TIMEOUT = 180000;
 
@@ -101,6 +103,7 @@ const server = await startBenchServer();
 const newSession = () => launch({
   extensionDir: EXT,
   headless: !has('headed'),
+  args: CHROMIUM_ARGS,
   needsEngine: true,
   extraResolverRules: benchResolverRule(BENCH_HTTPS_PORT),
 });
@@ -247,7 +250,7 @@ const record = {
   savedAt: new Date().toISOString(),
   config: {
     ext: EXT, secs: SECS, reps: REPS, viewport: SIZE.join('x'),
-    viewerParams: VIEWER_PARAMS, headless: !has('headed'),
+    viewerParams: VIEWER_PARAMS, chromiumArgs: CHROMIUM_ARGS.join(' '), headless: !has('headed'),
     scenarios: scenarios.map((s) => s.id),
   },
   provenance,

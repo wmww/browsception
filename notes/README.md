@@ -86,6 +86,8 @@ Load-bearing implementation facts:
   and every host-world sink is gated by its `isHttpUrl` (security.md § Sandbox→host sinks).
 - src/manifest.json is **generated** by scripts/gen-ext.mjs (CSP needs `'wasm-unsafe-eval'`).
   Nothing pins the extension id: every DNR rule, catch-all included, is installed at runtime.
+- Icons: `icon.svg` is the source; `scripts/gen-icons.mjs` renders the committed
+  `src/ext/icons/*.png` (not run by release; tier-0 test catches staleness).
 - The engine runs in a dedicated Worker (`src/ext/engine-worker.js`, classic script: it
   `importScripts` the plain-link `embedder.js`); the viewer talks to it only through
   `src/ext/engine-link.mjs` (`__bs.link.call('bib_x', …)`), and the bridge/stub speak a

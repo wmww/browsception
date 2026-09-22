@@ -21,6 +21,11 @@ export const FIREFOX_MIN_VERSION = '128.0';
 // (release.mjs warns when HEAD isn't tagged with this).
 export const VERSION = '1';
 
+// Rendered from icon.svg by scripts/gen-icons.mjs (Chrome takes no SVG).
+export const ICON_SIZES = [16, 32, 48, 128];
+export const iconPath = (size) => `ext/icons/icon-${size}.png`;
+const ICONS = Object.fromEntries(ICON_SIZES.map((s) => [s, iconPath(s)]));
+
 const COMMON = {
   manifest_version: 3,
   name: 'browsception',
@@ -33,7 +38,8 @@ const COMMON = {
   // chrome-extension:// URLs from the sweep without it.
   permissions: ['declarativeNetRequestWithHostAccess', 'webRequest', 'storage', 'tabs'],
   host_permissions: ['<all_urls>'],
-  action: { default_popup: 'ext/popup.html', default_title: 'browsception' },
+  icons: ICONS,
+  action: { default_popup: 'ext/popup.html', default_title: 'browsception', default_icon: ICONS },
   options_ui: { page: 'ext/options.html', open_in_tab: true },
   // DNR redirects can only target listed resources (spike 0.3).
   web_accessible_resources: [{ resources: ['ext/viewer.html'], matches: ['<all_urls>'] }],

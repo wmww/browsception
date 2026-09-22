@@ -4,7 +4,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromeManifest, firefoxManifest } from '../../scripts/lib/manifest.mjs';
@@ -26,4 +27,11 @@ for (const [name, manifest] of [['chrome', chromeManifest()], ['firefox', firefo
 test('src/manifest.json is regenerated (node scripts/gen-ext.mjs)', () => {
   const onDisk = JSON.parse(readFileSync(join(SRC, 'manifest.json'), 'utf8'));
   assert.deepEqual(onDisk, chromeManifest());
+});
+
+test('icons are rendered from the current icon.svg (node scripts/gen-icons.mjs)', () => {
+  for (const file of Object.values(chromeManifest().icons))
+    assert.ok(existsSync(join(SRC, file)), file);
+  const hash = createHash('sha256').update(readFileSync(join(SRC, '../icon.svg'))).digest('hex');
+  assert.equal(readFileSync(join(SRC, 'ext/icons/source.sha256'), 'utf8').trim(), hash);
 });

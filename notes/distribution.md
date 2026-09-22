@@ -15,10 +15,10 @@ keeps the rule across a browser restart).
 Versioning is settled (release.md § Versioning: integer `VERSION` in manifest.mjs, `v<N>` tags),
 and the README has the load-unpacked / temporary-add-on install steps for channel 1.
 
-Blocking the stores (not channel 1):
-
-- **No icons** — no `icons` manifest entry, no icon files. Both stores need a 128 px icon;
-  the toolbar action currently shows a placeholder.
+Icons: `icon.svg` (repo root) is the source; `node scripts/gen-icons.mjs` (rsvg-convert)
+renders the committed `src/ext/icons/icon-{16,32,48,128}.png` used by both manifests (`icons`
++ `action.default_icon`). Rerun after editing icon.svg — tier-0 manifest.test.mjs fails on a
+stale `source.sha256` stamp. The 128 px PNG doubles as the store icon.
 
 ## Channel 1: GitHub release, no review (possible today)
 
@@ -111,7 +111,7 @@ divergence; not done.
 
 ## Checklist to first public release
 
-1. Icons (`icons` in COMMON manifest, files under `src/ext/`).
+1. ~~Icons~~ (done 2026-09-22, see above).
 2. ~~`PRIVACY.md`~~ (done 2026-09-10; use its raw GitHub URL as the store's privacy-policy
    link) and a short reviewer note (`docs/store-notes.md` or in README) describing the model
    and permissions.

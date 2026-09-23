@@ -131,9 +131,8 @@ divergence; not done.
 
 1. ~~Icons~~ (done 2026-09-22, see above).
 2. ~~`PRIVACY.md`~~ (done 2026-09-10).
-3. **Reviewer note** `docs/store-notes.md`: the sandbox model, why each permission, where
-   `eval` runs, link to security.md. Feeds the Chrome justification fields and the AMO
-   notes-to-reviewer.
+3. ~~Reviewer note~~ (done 2026-09-22): store-notes.md has paste-ready listing,
+   justification, data-use and reviewer-note text for both stores.
 4. ~~Screenshots~~ (done 2026-09-22): `store/screenshot-popup.png` is the 1280×800 RGB
    (no alpha) upload: Google sandboxed + popup.
    Same PNG serves AMO.

@@ -34,7 +34,7 @@ surface for speed (no WebGPU for the nested engine, no nested-wasm-runs-natively
 | [testing.md](testing.md) | Automated test tiers (unit/bridge/full-integration), fixture+oracle design, agent iteration loop |
 | [release.md](release.md) | Release packaging: the `npm run release` step chain and its fast paths, what each browser's package contains, the deterministic zip writer; integer versioning |
 | [releasing.md](releasing.md) | **"Make a release" checklist**: preconditions, tests on both browsers, version bump, build, notes, tag/push, GitHub release, redo/rollback |
-| [distribution.md](distribution.md) | Getting packages to users: GitHub release + load-unpacked/temporary install today, AMO unlisted signing, Chrome Web Store and AMO listed requirements, what blocks each |
+| [distribution.md](distribution.md) | Getting packages to users: GitHub release + load-unpacked/temporary install today; targets are Chrome Web Store + AMO listed — requirements, the AMO source-reviewability work items, checklist |
 | [worktrees.md](worktrees.md) | Ephemeral-worktree workflow: wt-setup, building your branch's engine sources against the shared tree, WebKit-patch ownership, artifact snapshots, per-checkout ports |
 | [open-questions.md](open-questions.md) | Unverified assumptions and spikes to run (answers appended in place) |
 | [experiment-log.md](experiment-log.md) | Append-only lab notebook: dated entries (hypothesis → what ran → numbers → decision) behind the distilled notes |

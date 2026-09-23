@@ -36,7 +36,8 @@ Never: printing, DRM, nested GPU/JIT.
 - Flatten `engine/WebkitWasm/` → `engine/` — cosmetic; only with an intentional from-scratch
   rebuild (build graph has absolute paths baked in).
 - One-time verification that a truly fresh clone bootstraps: tracked sources + bootstrap.sh must
-  recreate third_party/ from nothing (believed true, unverified since the import).
+  recreate third_party/ from nothing (believed true, unverified since the import). Now part of
+  the AMO reviewer-build recipe (distribution.md § Channel 3).
 - dpr≠1 rendering untested; frame-cost measurement pending (`bib_query` "metrics").
 - Dev-harness transport has no request timeout (dev-only; extension bridge has the idle guard).
 - MDN telemetry CORS preflights fail loudly in-engine (harmless; blocklist candidates).
@@ -50,7 +51,7 @@ Never: printing, DRM, nested GPU/JIT.
 |---|---|---|
 | CLoop too slow for heavy sites | real-site browsing | Accept + document; long-term AOT research (weval-style). Switching to Gecko does NOT buy JS speed — its PBL measured slower than CLoop (engine.md) |
 | Per-instance memory blows past ~2 GB | usage measurement | WebKit cache tuning, single-tab-at-a-time mode, tab discard |
-| Store review rejects broad permissions | submission | Ship allowlist/per-site-activation build; GitHub release + load-unpacked / AMO-unlisted xpi (distribution.md). Surface already minimal: `<all_urls>` is the one Chrome install warning; "Block content" dropped 2026-09-10 (distribution.md § Permission warnings) |
+| Store review rejects broad permissions | submission | Ship allowlist/per-site-activation build; GitHub release + load-unpacked / Developer Edition xpi (distribution.md). Surface already minimal: `<all_urls>` is the one Chrome install warning; "Block content" dropped 2026-09-10 (distribution.md § Permission warnings) |
 
 ## Working agreements (from the MVP plan)
 

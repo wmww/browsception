@@ -146,7 +146,9 @@ result appended here (keep the question, add `**Answer (date):**`).
     blob will get human review. Prepare: clear listing, source availability, scoped-permission
     onboarding (per-site activation mode as the store-friendly default?). CheerpJ's MV3 postmortem
     is the cautionary tale. Channels, requirements and the checklist: distribution.md
-    (the id pin that would have broken a store install is gone — 2026-09-09).
+    (the id pin that would have broken a store install is gone — 2026-09-09). AMO listed is
+    the Firefox target (2026-09-22), so source reviewability (reviewer-environment rebuild +
+    determinism) is on the critical path, not a nice-to-have.
 18. **POST-navigation loss** (MV3 can't recover top-level POST bodies): quantify how often this
     bites real flows; possible mitigations inside the engine (most form posts originate inside the
     nested world and never hit the limitation).

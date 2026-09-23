@@ -1,7 +1,9 @@
 # Distribution
 
-How a `dist/` package (release.md) reaches users, from a GitHub release today to the stores.
-Facts below were checked 2026-09-09 against the linked policy pages; re-check before acting.
+How a `dist/` package (release.md) reaches users. Targets: **Chrome Web Store** and **AMO
+listed** (decided 2026-09-22: no unlisted/self-distributed Firefox channel). The GitHub release
+stays as the developer channel. Facts below were checked 2026-09-09 against the linked policy
+pages; re-check before acting.
 
 ## Where things stand
 
@@ -36,35 +38,19 @@ Edge/Brave/other Chromium: same load-unpacked path.
   unsigned, gone on restart. Dynamic DNR rules are installed by the event page on load.
 - Developer Edition / Nightly / ESR with `xpinstall.signatures.required = false`: permanent
   unsigned install.
-- **Unlisted signing** (below) turns the xpi into a normal double-click install in release
-  Firefox and is the one cheap step worth doing before the first GitHub release.
+- Once the AMO listing is live, the README's Firefox install line becomes the AMO link and the
+  GitHub xpi is for Developer Edition/Nightly only.
 
-## Channel 2: AMO unlisted signing (self-distributed Firefox)
-
-- Free AMO account. Submit via Developer Hub upload, `web-ext sign --channel unlisted`, or the
-  Add-on API (JWT key pair). Automated validation only before signing; typically minutes.
-  Mozilla may review manually at any later time; all add-on policies apply regardless of
-  distribution.
-- The submission asks whether the package contains generated code. The 100 MB `embedder.wasm`
-  and the vendored binaryen are generated, so answer yes and provide source: the repo URL at
-  the release tag plus README build steps satisfy the form. See "source reviewability" below
-  for what a human review would then need.
-- Self-hosted **auto-update** is available to unlisted add-ons: add
-  `browser_specific_settings.gecko.update_url` pointing at an `updates.json` (GitHub Pages or
-  raw release asset) listing each version's signed xpi URL and hash.
-- Limits: xpi ≤ 200 MB (ours 35 MB); `strict_min_version` 128 in the manifest, probed only on
-  155. CSP `'wasm-unsafe-eval'` is accepted.
-
-## Channel 3: Chrome Web Store
+## Channel 2: Chrome Web Store
 
 Effectively mandatory for non-technical Chrome users (see CRX note above).
 
 - Developer account: $5 one-time, 2FA required. Package ≤ 2 GB; ours 35 MB.
-- Listing assets: 128 px store icon, ≥1 screenshot 1280×800 (or 640×400), optional 440×280
-  promo tile, single-purpose description.
+- Listing assets: 128 px store icon (have), ≥1 screenshot 1280×800 (or 640×400), optional
+  440×280 promo tile, single-purpose description.
 - **Privacy policy URL** is required for `<all_urls>`; the dashboard's data-use disclosures
   and the manifest permissions must agree with it. Ours is easy to state: no servers, no data
-  leaves the browser, nothing collected.
+  leaves the browser, nothing collected. Use PRIVACY.md's raw GitHub URL.
 - **Permission justifications** (dashboard fields): one line per entry is in the
   extension-platform.md § Permissions table — quote it. `<all_urls>` + `webRequest` +
   DNR redirecting every main frame triggers the "may require in-depth
@@ -79,16 +65,48 @@ Effectively mandatory for non-technical Chrome users (see CRX note above).
 - Edge Add-ons store accepts the same zip (separate free account); Edge users can also install
   from the Chrome Web Store directly.
 
-## Channel 4: AMO listed
+## Channel 3: AMO listed
 
-Same submission as unlisted but with a listing and a human review before publication. The
-extra cost is **source reviewability**: Mozilla must be able to rebuild generated code from
-source with the instructions provided and diff it against the package. Default reviewer
-environment: Ubuntu 24.04, Node 24, 10 GB RAM, 6 vCPU, 35 GB disk. Our engine build is ~1.5 h,
-~12 GB of deps (fits disk; RAM for linking WebKit is doubtful), and whether it is
-byte-deterministic is unknown (open question). Prerequisites before attempting: the
-fresh-clone bootstrap verification (roadmap.md cleanups), a determinism check of two clean
-builds, and documented RAM needs. Until then, unlisted signing is the Firefox channel.
+Submit via Developer Hub upload or `web-ext sign --channel listed`; automated validation, then a
+human review before publication; Mozilla signs the xpi and hosts it, auto-update included.
+Limits: xpi ≤ 200 MB (ours 35 MB); `strict_min_version` 128 in the manifest, probed only on
+155. CSP `'wasm-unsafe-eval'` is accepted. Listing fields: name, summary, description,
+categories, screenshots (same PNGs as Chrome), license (MIT), support URL (repo issues),
+privacy policy (paste PRIVACY.md).
+
+The real cost is **source reviewability**. The submission asks whether the package contains
+generated code; the 100 MB `embedder.wasm` and the vendored binaryen are, so source must be
+uploaded as an archive with build instructions, and Mozilla must be able to **rebuild it and
+diff against the package** in their default environment: Ubuntu 24.04, Node 24, 10 GB RAM,
+6 vCPU, 35 GB disk. What we know vs. what that needs:
+
+| Requirement | Status |
+|---|---|
+| Builds from a clean clone | Believed (engine-build.md spike; `npm run release` from fresh clone). Unverified since the third_party import: `tools/bootstrap.sh` must recreate third_party/ from nothing (roadmap.md cleanups) |
+| Fits 10 GB RAM | Unknown. Compile is ~1.2 GB RSS per unified TU (6 jobs ≈ 7 GB); the WebKit link + wasm-opt on a 100 MB module is the unmeasured peak |
+| Fits reviewer time | Unknown. ~1.5 h here at 12 jobs on 24 threads; expect several hours on 6 vCPU. Must be stated in the instructions |
+| Byte-identical output | Unknown. Archives are reproducible given identical build output (release.md), but engine determinism across machines is untested; known hazard: absolute paths baked into the build graph (roadmap.md cleanups) |
+| Network during build | bootstrap.sh clones WebKit + emsdk at pinned commits and downloads cmake. Pinned fetches are normally accepted; state every URL/commit in the instructions, or vendor them into the source archive if the reviewer objects |
+
+Work items to close this (in order):
+
+1. **Reviewer build recipe**: a `Dockerfile` (Ubuntu 24.04, Node 24) that runs `npm run release`
+   from a clean clone at a tag, with job count pinned to 6. This is the build-instructions
+   artifact for the submission, and also the fresh-clone bootstrap verification.
+2. **Measure** peak RSS (`/usr/bin/time -v` or cgroup memory.peak) and wall time inside that
+   container. If the link exceeds 10 GB, find the fix (fewer link-time jobs, split
+   wasm-opt passes) — reviewers won't raise the limit.
+3. **Determinism**: two container builds at the same tag, compare `embedder.wasm` + the zip
+   hashes. Chase any diff to its source (timestamps, `__FILE__`/absolute paths, hash-map
+   iteration order in binaryen). Then compare the container build to the host build that
+   produced the release asset — that is the diff Mozilla will run.
+4. Fold the result into README § Build from source (exact versions, resource needs, expected
+   duration) and record it here.
+
+Fallback if reviewability can't be met in their environment: Mozilla's policy allows asking
+for a different reviewer setup in the notes-to-reviewer; failing that the Firefox channel is
+the GitHub xpi for Developer Edition/Nightly. (Unlisted signing — `--channel unlisted`,
+self-hosted `update_url` — would also work but is not planned.)
 
 ## Permission warnings (what users see)
 
@@ -109,16 +127,22 @@ already one line. Dropping `tabs` on Firefox only would clear its last Required 
 (it's not needed there — extension-platform.md § Permissions) at the cost of a manifest
 divergence; not done.
 
-## Checklist to first public release
+## Checklist to the stores
 
 1. ~~Icons~~ (done 2026-09-22, see above).
-2. ~~`PRIVACY.md`~~ (done 2026-09-10; use its raw GitHub URL as the store's privacy-policy
-   link) and a short reviewer note (`docs/store-notes.md` or in README) describing the model
-   and permissions.
-3. AMO account, unlisted sign the xpi, attach both packages to a GitHub release with the
-   install steps above. Optionally `update_url` + `updates.json` for Firefox auto-update.
-4. Chrome Web Store account, upload, justifications, publish. Then Edge if wanted.
-5. AMO listed only after the reproducibility prerequisites above.
+2. ~~`PRIVACY.md`~~ (done 2026-09-10).
+3. **Reviewer note** `docs/store-notes.md`: the sandbox model, why each permission, where
+   `eval` runs, link to security.md. Feeds the Chrome justification fields and the AMO
+   notes-to-reviewer.
+4. **Screenshots** ≥1 at 1280×800 (gui-testing skill; a real site in the viewer with the
+   toolbar visible).
+5. **AMO reviewability** work items 1–4 above (Dockerfile, RAM/time, determinism, README).
+   Independent of 3–4; the long pole.
+6. Tag and release v2 (releasing.md) — first packages with icons, built the way the Dockerfile
+   documents so the asset matches a reviewer rebuild.
+7. Chrome Web Store: upload, listing, justifications, publish. Edge afterwards if wanted.
+8. AMO listed: upload xpi + source archive (repo at the tag incl. Dockerfile), listing, submit.
+9. On both approvals: README install section → store links.
 
 Sources: [Chrome manifest key](https://developer.chrome.com/docs/extensions/reference/manifest/key),
 [AMO source code submission](https://extensionworkshop.com/documentation/publish/source-code-submission/),

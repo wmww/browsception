@@ -220,9 +220,10 @@ test('firefox: crash — engine abort -> crashed UI -> reload recovers', { skip,
   await page.waitForFunction('globalThis.__bs?.dead === true', { timeout: 30000 });
   assert.match(await page.evaluate(() => document.getElementById('boot').textContent), /crashed/i);
   // Reload: the old worker is terminated on pagehide (Firefox reclaims dead
-  // wasm instances lazily), and a fresh one boots.
-  await page.evaluate(() => location.reload());
-  await page.waitForFunction('globalThis.__bs?.ready === true', { timeout: BOOT_TIMEOUT });
+  // wasm instances lazily), and a fresh one boots. The marker keeps the
+  // ready-wait from matching the old document before it unloads.
+  await page.evaluate(() => { globalThis.__preReload = true; location.reload(); });
+  await page.waitForFunction('!globalThis.__preReload && globalThis.__bs?.ready === true', { timeout: BOOT_TIMEOUT });
   await until(page, 100, 100, [255, 0, 0], 120000, 'post-reload paint');
   await page.close();
 });

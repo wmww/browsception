@@ -20,6 +20,7 @@
   },
   "type": "module",
   "devDependencies": {
+    "fflate": "0.8.3",
     "playwright-core": "^1.62.1"
   },
   "dependencies": {

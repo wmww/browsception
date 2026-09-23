@@ -123,6 +123,19 @@ Chrome's "Test instructions" field and AMO's "Notes to reviewer" (paste the same
 > • The extension's pages use CSP `script-src 'self' 'wasm-unsafe-eval'`, required to
 >   instantiate the engine's wasm; no `unsafe-eval`, no remote code, no analytics.
 
+AMO only, appended to the above (the uploaded source archive is `git archive v<N>`):
+
+> Build (reproduces the xpi byte for byte; checked on Ubuntu 24.04 / Node 24 with 10 GB RAM,
+> 6 vCPU, ~1 h, ~12 GB disk):
+>     docker build -t browsception-build . && docker run --rm -v "$PWD:/src" browsception-build
+> or without Docker, on Ubuntu 24.04 with Node 24:
+>     bash scripts/build-from-source.sh --install-deps firefox
+> Output: dist/browsception-<N>-firefox.xpi. The build downloads pinned sources: WebKit
+> (git, fixed commit), Emscripten SDK 6.0.0, CMake 3.31.7, ICU, zlib, libpng, libjpeg-turbo,
+> libwebp, freetype, harfbuzz, libxml2, sqlite, openssl, brotli, libpsl, fontconfig and
+> DejaVu fonts (release tarballs, URLs in engine/WebkitWasm/tools/), plus npm packages from
+> package-lock.json.
+
 ## Review risks
 
 - In-depth review is certain (`<all_urls>` + webRequest + a DNR redirect on every main frame).

@@ -111,6 +111,9 @@ echo "=== fontconfig ==="
 # runtime config is copied AFTER the .pc, so check both (Codex review).
 if [ ! -f "$SYSROOT/lib/pkgconfig/fontconfig.pc" ] || [ ! -f "$SYSROOT/etc/fonts/fonts.conf" ]; then
   fetch https://www.freedesktop.org/software/fontconfig/release/fontconfig-2.15.0.tar.xz fontconfig.tar.xz
+  # Fresh tree: configure bakes paths in as -D flags, which make doesn't
+  # track, so a reconfigured old tree keeps stale objects.
+  rm -rf fontconfig
   unpack fontconfig.tar.xz fontconfig
   # fontconfig 2.15 ships a config.sub too old to know 'emscripten';
   # libpsl (2024) carries a current one.
@@ -119,6 +122,7 @@ if [ ! -f "$SYSROOT/lib/pkgconfig/fontconfig.pc" ] || [ ! -f "$SYSROOT/etc/fonts
    emconfigure ./configure --host=wasm32-unknown-emscripten --prefix="$SYSROOT" \
      --disable-shared --enable-static --disable-docs \
      --enable-libxml2 --sysconfdir=/etc \
+     --with-templatedir=/usr/share/fontconfig/conf.avail \
      --with-default-fonts=/usr/share/fonts \
      --with-cache-dir=/var/cache/fontconfig \
      LIBXML2_CFLAGS="-I$SYSROOT/include/libxml2" \
@@ -132,9 +136,12 @@ if [ ! -f "$SYSROOT/lib/pkgconfig/fontconfig.pc" ] || [ ! -f "$SYSROOT/etc/fonts
   # RUNTIME inside the wasm FS — a direct `make install` would write to the
   # HOST /etc. Merge the prefix part into the sysroot and keep etc/ alongside
   # it for Phase 2 runtime packaging.
+  # Same for the template dir (compiled in as FC_TEMPLATEDIR): runtime path
+  # /usr/share/fontconfig/conf.avail, kept in the sysroot's share/.
   cp -a "$DEPS/fontconfig-dest$SYSROOT/." "$SYSROOT/"
-  mkdir -p "$SYSROOT/etc"
+  mkdir -p "$SYSROOT/etc" "$SYSROOT/share/fontconfig"
   cp -a "$DEPS/fontconfig-dest/etc/." "$SYSROOT/etc/"
+  cp -a "$DEPS/fontconfig-dest/usr/share/fontconfig/." "$SYSROOT/share/fontconfig/"
 fi
 
 echo "=== DONE — sysroot contents ==="

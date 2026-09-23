@@ -45,9 +45,15 @@ cd ..
 echo "=== stage: wasm build ==="
 mkdir -p icu-wasm
 cd icu-wasm
-if [ ! -f Makefile ]; then
+# ICU_DATA_DIR: where the data archive is looked up at RUNTIME, in the wasm
+# FS (embedder.cmake embeds it there). The default is the install prefix,
+# which would bake this host's path into the engine.
+ICU_DATA_DIR="/usr/share/icu/77.1"
+if [ ! -f Makefile ] || ! grep -qs "ICU_DATA_DIR" icudefs.mk; then
+  rm -rf ./*
   # -pthread everywhere: objects linked into a pthread app must share the ABI
   CFLAGS="-O2 -pthread" CXXFLAGS="-O2 -pthread" \
+  CPPFLAGS="-DICU_DATA_DIR=\\\"$ICU_DATA_DIR\\\"" \
   emconfigure ../icu/source/configure \
     --host=wasm32-unknown-emscripten \
     --with-cross-build="$DEPS/icu-host" \

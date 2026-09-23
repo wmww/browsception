@@ -108,7 +108,8 @@ if [ ! -f "$SYSROOT/lib/libxml2.a" ]; then
   cmake_build libxml2 libxml2-build \
     -DLIBXML2_WITH_PYTHON=OFF -DLIBXML2_WITH_LZMA=OFF -DLIBXML2_WITH_ZLIB=ON \
     -DLIBXML2_WITH_ICU=ON -DLIBXML2_WITH_TESTS=OFF -DLIBXML2_WITH_PROGRAMS=OFF \
-    -DZLIB_ROOT="$SYSROOT" -DICU_ROOT="$SYSROOT"
+    -DZLIB_ROOT="$SYSROOT" -DICU_ROOT="$SYSROOT" \
+    -DCMAKE_INSTALL_SYSCONFDIR=/etc # compiled-in catalog path; installs nothing there
 fi
 
 echo "=== sqlite3 ==="

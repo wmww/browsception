@@ -79,7 +79,7 @@ PrivateHeaders/` and included by most of WebCore. Editing either costs ~876 TUs 
 not the ~90 s embedder loop. Same for `NetworkStorageSession.h`, `CertificateInfo.h`,
 `AuthenticationChallenge.h`.
 
-## Five fixes a fresh clone needs (all encoded in scripts/build-engine.sh)
+## Five fixes a fresh clone needs (in scripts/build-engine.sh; #3 in tools/build-webcore.sh)
 
 1. **brotli ordering**: bootstrap runs webcore-deps → ssl-tier, but freetype
    (webcore-deps) now `FT_REQUIRE_BROTLI=ON` while brotli is built by ssl-tier.
@@ -87,9 +87,11 @@ not the ~90 s embedder loop. Same for `NetworkStorageSession.h`, `CertificateInf
 2. **libbrotlidec.pc**: declares libbrotlicommon only in `Requires.private` → dropped by
    non-static pkg-config → fc-cache link failure in a static-only sysroot. Promote to
    `Requires:`.
-3. **DejaVu font paths**: build-webcore.sh hardcodes Debian's
-   `/usr/share/fonts/truetype/dejavu/`; pre-stage `build/embedder-fs/` from the host's
-   actual font dir (Arch: `/usr/share/fonts/TTF`).
+3. **DejaVu fonts**: were copied from the host (Debian path hardcoded) and embedded into
+   `embedder.wasm`, so the wasm depended on the distro's DejaVu build. Now
+   build-webcore.sh fetches the pinned upstream 2.37 tarball (sha256-checked) into
+   `third_party/build-deps/`; `build/embedder-fs/.fonts-sha256` stamps the staged tree, and
+   restaging drops the link outputs (`--embed-file` inputs aren't ninja dependencies).
 4. **CMake 4 incompatibility**: `WebKitMacros.cmake:311` unquoted empty `${_linked_into}`
    — only the Emscripten port leaves that property unset; CMake ≤3.x tolerated it.
    Use CMake 3.31.
@@ -97,7 +99,15 @@ not the ~90 s embedder loop. Same for `NetworkStorageSession.h`, `CertificateInf
    `gem install --user-install erb`.
 
 1–2 are upstream fresh-bootstrap bugs (their tree predates freetype-with-brotli);
-3–5 are host-environment assumptions. All worth reporting upstream.
+3–5 were host-environment assumptions. All worth reporting upstream.
+
+## Reproducibility
+
+The engine is byte-identical across hosts and checkout paths (distribution.md § Channel 3).
+Keep it so: no host files in the wasm (fetch pinned inputs instead), no absolute paths
+(`-ffile-prefix-map` covers compiled paths; compiled-in *runtime* paths must be fixed ones like
+`/usr/share/...`, never the sysroot), and no timestamps (`SOURCE_DATE_EPOCH=0`). Check a
+build with `strings embedder.wasm | grep "$PWD"` (expect nothing).
 
 ## Divergences from upstream WebKit
 

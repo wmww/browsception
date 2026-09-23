@@ -136,12 +136,17 @@ target_link_options(${target} PRIVATE
 )
 endforeach ()
 
-# ICU data archive at the same absolute path ICU compiled in as its default
-# data dir (jsc-shell trick — works in node and browser with no env setup).
+# ICU data archive at the data dir ICU compiled in (tools/build-deps/icu.sh:
+# ICU_DATA_DIR=/usr/share/icu/<version>), mirroring the sysroot's share/ —
+# works in node and browser with no env setup, and no host path lands in
+# the wasm.
+if (JSC_EMBED_ICU_DATA_FILE)
+    string(REGEX REPLACE "^.*/share/icu/" "/usr/share/icu/" BIB_ICU_DATA_EMBED_PATH "${JSC_EMBED_ICU_DATA_FILE}")
+endif ()
 foreach (target BibEmbedder BibEmbedderProxy)
 if (JSC_EMBED_ICU_DATA_FILE)
     target_link_options(${target} PRIVATE
-        "SHELL:--embed-file ${JSC_EMBED_ICU_DATA_FILE}@${JSC_EMBED_ICU_DATA_FILE}")
+        "SHELL:--embed-file ${JSC_EMBED_ICU_DATA_FILE}@${BIB_ICU_DATA_EMBED_PATH}")
 endif ()
 
 # Fonts are load-bearing: fontconfig config tree at /etc/fonts (compiled-in

@@ -11,7 +11,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # Both default to this script's own tree, so standalone use is unchanged;
 # scripts/build-engine.sh sets them when building a worktree's sources against
 # the main checkout's build tree (notes/worktrees.md).
-TREE="${BIB_TREE:-$ROOT}"
+TREE="$(cd "${BIB_TREE:-$ROOT}" && pwd -P)" # canonical: -ffile-prefix-map matches it literally
 SRC="${BIB_SRC:-$ROOT}"
 TP="$TREE/third_party"
 SYSROOT="$TP/wasm-sysroot"
@@ -24,14 +24,26 @@ cd "$TREE"
 # The sysroot's etc/fonts/conf.d entries are DESTDIR-relative symlinks that
 # are broken on the host, and emcc's file packager dereferences symlinks —
 # stage a clean tree of REAL files for --embed-file.
+# The faces come from the pinned upstream DejaVu release, never the host:
+# distros rebuild or patch DejaVu (Arch ships a git snapshot, Ubuntu splits
+# the obliques into -extra), and these bytes land in embedder.wasm, so a
+# host copy makes the build unreproducible elsewhere.
 FSROOT="$TREE/build/embedder-fs"
+DEJAVU_URL="https://github.com/dejavu-fonts/dejavu-fonts/releases/download/version_2_37/dejavu-fonts-ttf-2.37.tar.bz2"
+DEJAVU_SHA256="fa9ca4d13871dd122f61258a80d01751d603b4d3ee14095d65453b4e846e17d7"
 # Guard checks ALL artifacts, not just the TTF — a partial staging (TTF
 # present, configs missing) must re-stage, and staging that produces an
-# empty conf.d must FAIL, not print OK (Codex review).
-if [ ! -f "$FSROOT/fonts/DejaVuSans.ttf" ] \
+# empty conf.d must FAIL, not print OK (Codex review). The stamp re-stages
+# trees staged from host fonts before the pin.
+if [ "$(cat "$FSROOT/.fonts-sha256" 2>/dev/null)" != "$DEJAVU_SHA256" ] \
    || [ ! -f "$FSROOT/fonts/DejaVuSansMono.ttf" ] \
    || [ ! -f "$FSROOT/etc-fonts/fonts.conf" ] \
    || [ -z "$(ls "$FSROOT/etc-fonts/conf.d" 2>/dev/null)" ]; then
+  DEJAVU_TAR="$TP/build-deps/$(basename "$DEJAVU_URL")"
+  mkdir -p "$TP/build-deps"
+  [ -f "$DEJAVU_TAR" ] || curl -fL --retry 3 -o "$DEJAVU_TAR" "$DEJAVU_URL"
+  echo "$DEJAVU_SHA256  $DEJAVU_TAR" | sha256sum -c --quiet - \
+    || { echo "FONT STAGING FAILED: $DEJAVU_TAR checksum mismatch"; exit 1; }
   rm -rf "$FSROOT"
   mkdir -p "$FSROOT/etc-fonts/conf.d" "$FSROOT/fonts"
   cp -f "$SYSROOT/etc/fonts/fonts.conf" "$FSROOT/etc-fonts/"
@@ -42,16 +54,22 @@ if [ ! -f "$FSROOT/fonts/DejaVuSans.ttf" ] \
   # Full text-fidelity set (2026-06-10): sans alone meant fake bold/italic,
   # serif mapped to sans, and code blocks rendered proportional. ~3.7MB of
   # MEMFS for real bold/italic faces + serif + monospace.
+  FACES=()
   for face in DejaVuSans DejaVuSans-Bold DejaVuSans-Oblique DejaVuSans-BoldOblique \
               DejaVuSerif DejaVuSerif-Bold DejaVuSerif-Italic \
               DejaVuSansMono DejaVuSansMono-Bold; do
-    cp -f "/usr/share/fonts/truetype/dejavu/$face.ttf" "$FSROOT/fonts/"
+    FACES+=("dejavu-fonts-ttf-2.37/ttf/$face.ttf")
   done
+  tar -xjf "$DEJAVU_TAR" -C "$FSROOT/fonts" --strip-components=2 "${FACES[@]}"
   CONFD_COUNT=$(ls "$FSROOT/etc-fonts/conf.d" | wc -l)
   if [ "$CONFD_COUNT" -lt 1 ]; then
     echo "FONT STAGING FAILED: conf.d is empty (sysroot fontconfig broken?)"
     exit 1
   fi
+  echo "$DEJAVU_SHA256" > "$FSROOT/.fonts-sha256"
+  # --embed-file inputs are not link dependencies: drop the link outputs so
+  # ninja relinks with the new tree.
+  rm -f "$BUILD"/bin/embedder.{js,wasm} "$BUILD"/bin/proxy/embedder.{js,wasm}
   echo "FONT STAGING: OK ($CONFD_COUNT conf.d files)"
 fi
 
@@ -61,10 +79,13 @@ fi
 # src/embedder/embedder.cmake, not a compile flag. Flipping this is a full
 # recompile (~1.5-2h) for nothing.
 BIB_PTHREAD="${BIB_PTHREAD:-1}"
-WASM_FLAGS="-msimd128"
+# -ffile-prefix-map: __FILE__ and __PRETTY_FUNCTION__'s "(lambda at …)"
+# otherwise embed ~1.4k absolute paths, so the wasm depends on where the
+# tree lives. Paths become tree-relative.
+WASM_FLAGS="-msimd128 -ffile-prefix-map=$TREE/="
 BIB_PTHREAD_CMAKE=OFF
 if [ "$BIB_PTHREAD" = 1 ]; then
-  WASM_FLAGS="-msimd128 -pthread"
+  WASM_FLAGS="$WASM_FLAGS -pthread"
   BIB_PTHREAD_CMAKE=ON
 fi
 
@@ -131,6 +152,10 @@ fi
 # EXCLUDE_FROM_ALL — never built by accident).
 TARGET=BibEmbedder
 [ "${BIB_PROXY:-0}" = 1 ] && TARGET=BibEmbedderProxy
+# Pins __DATE__/__TIME__/__TIMESTAMP__ (clang honors it): JSC's bytecode
+# cache version hashes __TIMESTAMP__, the source file's mtime, which differs
+# per clone. Env isn't a ninja input: touch a TU to apply a change to it.
+export SOURCE_DATE_EPOCH=0
 ninja -C "$BUILD" -k 50 ${BIB_JOBS:+-j "$BIB_JOBS"} WebCore "$TARGET" > "$TREE/build/webcore-ninja.log" 2>&1 || {
   echo "NINJA FAILED — unique errors:"
   rg -n 'error:' "$TREE/build/webcore-ninja.log" | sort -t: -k4 -u | head -25

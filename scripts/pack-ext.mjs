@@ -30,9 +30,11 @@ const distDir = (target) => join(checkoutRoot, 'dist', target);
 // src-relative paths the target must not carry.
 const SKIP = {
   // _metadata/ is Chrome's own unpacked-load artifact (gitignored);
-  // source.sha256 is gen-icons.mjs's staleness stamp.
-  chrome: new Set(['_metadata', 'ext/background.html', 'ext/icons/source.sha256']),
-  firefox: new Set(['_metadata', 'manifest.json', 'ext/icons/source.sha256']),
+  // source.sha256 is gen-icons.mjs's staleness stamp; engine/.staged-meta.json
+  // is stage-engine's provenance record (local paths, stamps — would make the
+  // package differ per build host).
+  chrome: new Set(['_metadata', 'ext/background.html', 'ext/icons/source.sha256', 'engine/.staged-meta.json']),
+  firefox: new Set(['_metadata', 'manifest.json', 'ext/icons/source.sha256', 'engine/.staged-meta.json']),
 };
 
 function linkTree(target, from, to, rel = '') {

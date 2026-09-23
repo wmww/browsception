@@ -24,7 +24,9 @@ stable API, and manifests only need 1–4 dot-separated integers that increase. 
 `private` with no version field so nothing can drift. release.mjs prints the version + short
 SHA and **warns** (start and end, never fails) when the tree has uncommitted tracked changes or
 HEAD isn't tagged `v<VERSION>` — the archives are byte-reproducible, so a tagged clean build is
-what makes an asset verifiable.
+what makes an asset verifiable. Reproducible across hosts and checkout paths too (the AMO
+reviewer rebuild; distribution.md § Channel 3): `Dockerfile` + `scripts/build-from-source.sh`
+are the reference environment.
 
 ## Cutting a release
 

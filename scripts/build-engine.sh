@@ -44,6 +44,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CHECKOUT_ROOT="$(dirname "$SCRIPT_DIR")"
 MAIN_ROOT="$(dirname "$(git -C "$SCRIPT_DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || echo "$SCRIPT_DIR/../.git")")"
+# Canonical: the no-git fallback (a source archive) yields ".../scripts/..",
+# and every path below flows into the build — a non-canonical one defeats
+# build-webcore.sh's -ffile-prefix-map.
+MAIN_ROOT="$(cd "$MAIN_ROOT" && pwd -P)"
 HERE="$MAIN_ROOT/engine"
 mkdir -p "$HERE"
 W="$HERE/WebkitWasm"                 # shared BUILD TREE (third_party/, build/)
@@ -368,31 +372,7 @@ else
   echo "==> third_party ready — skipping bootstrap/dep stages (incremental build)"
 fi
 
-# --- 4. font staging for non-Debian hosts: build-webcore.sh hardcodes
-#        /usr/share/fonts/truetype/dejavu/. Pre-stage from wherever the
-#        DejaVu faces actually are; the script's guard then skips its copy. --
-FSROOT="$W/build/embedder-fs"
-SYSROOT="$W/third_party/wasm-sysroot"
-if [ ! -f "$FSROOT/fonts/DejaVuSans.ttf" ]; then
-  FONTDIR=""
-  for d in /usr/share/fonts/truetype/dejavu /usr/share/fonts/TTF /usr/share/fonts/dejavu; do
-    [ -f "$d/DejaVuSans.ttf" ] && FONTDIR="$d" && break
-  done
-  [ -n "$FONTDIR" ] || { echo "ERROR: DejaVu fonts not found (install ttf-dejavu)"; exit 1; }
-  mkdir -p "$FSROOT/etc-fonts/conf.d" "$FSROOT/fonts"
-  cp -f "$SYSROOT/etc/fonts/fonts.conf" "$FSROOT/etc-fonts/"
-  for link in "$SYSROOT/etc/fonts/conf.d/"*.conf; do
-    cp -f "$SYSROOT/share/fontconfig/conf.avail/$(basename "$link")" \
-      "$FSROOT/etc-fonts/conf.d/" 2>/dev/null || true
-  done
-  for face in DejaVuSans DejaVuSans-Bold DejaVuSans-Oblique DejaVuSans-BoldOblique \
-              DejaVuSerif DejaVuSerif-Bold DejaVuSerif-Italic \
-              DejaVuSansMono DejaVuSansMono-Bold; do
-    cp -f "$FONTDIR/$face.ttf" "$FSROOT/fonts/"
-  done
-fi
-
-# --- 5. pick the source path to configure with ---------------------------
+# --- 4. pick the source path to configure with ---------------------------
 # Repointing EMSCRIPTEN_EMBEDDER_CMAKE at this checkout costs a reconfigure +
 # the 5 embedder TUs + link (nothing in WebCore includes our src/). But if the
 # cached path's checkout is still around and its sources are byte-identical to
@@ -417,7 +397,7 @@ if [ "$PRE_NOW" != "$(cat "$PRE_STAMP" 2>/dev/null || true)" ]; then
   touch "$BUILD_SRC/src/embedder/main.cpp"
 fi
 
-# --- 6. build the engine ------------------------------------------------
+# --- 5. build the engine ------------------------------------------------
 BIB_PROXY="$([ "$LINK" = proxy ] && echo 1 || echo 0)" \
   BIB_JOBS="$JOBS" BIB_TREE="$W" BIB_SRC="$BUILD_SRC" bash "$SRC/tools/build-webcore.sh"
 printf '%s' "$PRE_NOW" > "$PRE_STAMP"

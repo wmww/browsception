@@ -1,8 +1,11 @@
-// Minimal zip writer — no npm dep, no `zip` binary on the build host.
+// Minimal zip writer — no `zip` binary on the build host.
 //
 // Deterministic: entries sorted, fixed 1980-01-01 DOS timestamps, fixed
 // permissions, so identical inputs give a byte-identical archive (a release
-// artifact you can diff against the last one).
+// artifact you can diff against the last one, or an AMO reviewer rebuild).
+// Deflate is fflate (pure JS, exact-pinned), not node:zlib: Node builds
+// bundle different zlibs (official: Chromium's fork; distro builds: system
+// zlib) whose output differs for the same input.
 //
 // Plain zip32, sizes known before each local header (we compress in memory).
 // Fine for our shape: a few hundred files, one 100 MB member, ~40 MB out —
@@ -11,7 +14,8 @@
 import { createWriteStream } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { once } from 'node:events';
-import { crc32, deflateRawSync } from 'node:zlib';
+import { crc32 } from 'node:zlib';
+import { deflateSync } from 'fflate';
 
 const DOS_TIME = 0, DOS_DATE = 0x0021; // 1980-01-01 00:00:00
 const UTF8_NAMES = 1 << 11;            // general-purpose flag bit 11
@@ -31,7 +35,7 @@ export async function writeZip(outPath, entries) {
 
   for (const e of [...entries].sort((a, b) => (a.name < b.name ? -1 : 1))) {
     const raw = await readFile(e.source);
-    const deflated = deflateRawSync(raw);
+    const deflated = deflateSync(raw, { level: 6 }); // raw deflate
     // Storing beats deflating on already-compressed or tiny members.
     const store = deflated.length >= raw.length;
     const body = store ? raw : deflated;

@@ -54,8 +54,17 @@ npm run release
 ```
 
 This produces loadable folders in `dist/chrome/` and `dist/firefox/` plus the release archives.
-The first run builds the engine, which takes about 1.5 hours and 12 GB on a Linux host; later
+The first run builds the engine, which takes about an hour and 12 GB on a Linux host; later
 runs reuse it. See [`notes/engine-build.md`](notes/engine-build.md) for details.
+
+The build is reproducible: a release's archives can be rebuilt byte for byte from its tag.
+The reference environment is Ubuntu 24.04 with Node 24 (at least 10 GB RAM):
+
+```sh
+docker build -t browsception-build .
+docker run --rm -v "$PWD:/src" browsception-build   # or, on the host itself:
+bash scripts/build-from-source.sh --install-deps    # apt-gets the build tools first
+```
 
 ## Credits and license
 

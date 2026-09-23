@@ -34,7 +34,7 @@ surface for speed (no WebGPU for the nested engine, no nested-wasm-runs-natively
 | [testing.md](testing.md) | Automated test tiers (unit/bridge/full-integration), fixture+oracle design, agent iteration loop |
 | [release.md](release.md) | Release packaging: the `npm run release` step chain and its fast paths, what each browser's package contains, the deterministic zip writer; integer versioning |
 | [releasing.md](releasing.md) | **"Make a release" checklist**: preconditions, tests on both browsers, version bump, build, notes, tag/push, GitHub release, redo/rollback |
-| [distribution.md](distribution.md) | Getting packages to users: GitHub release + load-unpacked/temporary install today; targets are Chrome Web Store + AMO listed — requirements, the AMO source-reviewability work items, checklist; listing assets in `store/` |
+| [distribution.md](distribution.md) | Getting packages to users: GitHub release + load-unpacked/temporary install today; targets are Chrome Web Store + AMO listed — requirements, AMO source reviewability (met: reviewer build + what made it byte-identical), checklist; listing assets in `store/` |
 | [store-notes.md](store-notes.md) | Paste-ready store submission text: listing, single purpose, permission justifications, remote-code/data-use answers, reviewer notes, review risks |
 | [worktrees.md](worktrees.md) | Ephemeral-worktree workflow: wt-setup, building your branch's engine sources against the shared tree, WebKit-patch ownership, artifact snapshots, per-checkout ports |
 | [open-questions.md](open-questions.md) | Unverified assumptions and spikes to run (answers appended in place) |
@@ -295,8 +295,14 @@ killed.
 `-firefox.xpi`. It orchestrates only: build-engine → wt-setup → stage-engine → gen-ext →
 pack-ext → zip, each already idempotent, so a re-run is ~7 s and never rebuilds the engine.
 `pack-firefox.mjs` generalized to `pack-ext.mjs <target>` (dist/chrome/ too — it drops
-Chrome's own `_metadata/`), and `scripts/lib/zip.mjs` writes reproducible archives with no npm
-dep and no `zip` binary. [release.md](release.md).
+Chrome's own `_metadata/`), and `scripts/lib/zip.mjs` writes reproducible archives with no
+`zip` binary. [release.md](release.md).
+
+*Cross-host reproducible build* (2026-09-22) — `Dockerfile` + `scripts/build-from-source.sh`
+(Ubuntu 24.04, Node 24: AMO's reviewer environment) rebuild both archives byte-identical to the
+Arch host build, from any path, in ~50 min under 10 GB/6 CPUs. Took pinned DejaVu,
+`-ffile-prefix-map`, fixed runtime paths in deps, `SOURCE_DATE_EPOCH`, and fflate instead of
+node:zlib. releasing.md now has a reproduce step. distribution.md § Channel 3.
 
 *Wire UA = engine UA* (2026-09-10) — the bridge stamped the HOST browser's `navigator.userAgent`
 on every request while guest JS read WebKit's own Safari-17-on-Linux string, and the base rule

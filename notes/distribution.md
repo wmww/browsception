@@ -78,30 +78,43 @@ The real cost is **source reviewability**. The submission asks whether the packa
 generated code; the 100 MB `embedder.wasm` and the vendored binaryen are, so source must be
 uploaded as an archive with build instructions, and Mozilla must be able to **rebuild it and
 diff against the package** in their default environment: Ubuntu 24.04, Node 24, 10 GB RAM,
-6 vCPU, 35 GB disk. What we know vs. what that needs:
+6 vCPU, 35 GB disk.
 
-| Requirement | Status |
+**Status (2026-09-22): met.** `Dockerfile` (Ubuntu 24.04 by digest + Node 24.21.0,
+sha256-checked) runs `scripts/build-from-source.sh`, which is also the no-Docker recipe
+(`--install-deps` apt-gets the host tools). Measured in podman with `--memory=10g
+--memory-swap=10g --cpus=6`, from an export of the tracked tree (no `.git`, like the upload):
+
+| Requirement | Result |
 |---|---|
-| Builds from a clean clone | Believed (engine-build.md spike; `npm run release` from fresh clone). Unverified since the third_party import: `tools/bootstrap.sh` must recreate third_party/ from nothing (roadmap.md cleanups) |
-| Fits 10 GB RAM | Unknown. Compile is ~1.2 GB RSS per unified TU (6 jobs ≈ 7 GB); the WebKit link + wasm-opt on a 100 MB module is the unmeasured peak |
-| Fits reviewer time | Unknown. ~1.5 h here at 12 jobs on 24 threads; expect several hours on 6 vCPU. Must be stated in the instructions |
-| Byte-identical output | Unknown. Archives are reproducible given identical build output (release.md), but engine determinism across machines is untested; known hazard: absolute paths baked into the build graph (roadmap.md cleanups) |
-| Network during build | bootstrap.sh clones WebKit + emsdk at pinned commits and downloads cmake. Pinned fetches are normally accepted; state every URL/commit in the instructions, or vendor them into the source archive if the reviewer objects |
+| Builds from a clean tree | Yes — clone, emsdk, deps, WebCore, link, pack; no manual step |
+| Fits 10 GB RAM | Yes, no OOM kill at BIB_JOBS=6 (cgroup `memory.peak` hits the cap, but that counts page cache) |
+| Reviewer time | 46–55 min wall, network included (WebKit blobless clone is the biggest fetch) |
+| Byte-identical output | **Yes**: `embedder.{js,wasm}` and both archives identical between the container (at `/build/bs`) and the Arch host build (at `/home/ai/browsception`) |
+| Network during build | WebKit + emsdk (git, pinned commit / SDK version), CMake 3.31.7, dep tarballs, DejaVu 2.37 (sha256-checked), npm (lockfile). Only DejaVu is checksummed; state the list in the reviewer notes |
 
-Work items to close this (in order):
+What it took (each was a real diff between two builds):
 
-1. **Reviewer build recipe**: a `Dockerfile` (Ubuntu 24.04, Node 24) that runs `npm run release`
-   from a clean clone at a tag, with job count pinned to 6. This is the build-instructions
-   artifact for the submission, and also the fresh-clone bootstrap verification.
-2. **Measure** peak RSS (`/usr/bin/time -v` or cgroup memory.peak) and wall time inside that
-   container. If the link exceeds 10 GB, find the fix (fewer link-time jobs, split
-   wasm-opt passes) — reviewers won't raise the limit.
-3. **Determinism**: two container builds at the same tag, compare `embedder.wasm` + the zip
-   hashes. Chase any diff to its source (timestamps, `__FILE__`/absolute paths, hash-map
-   iteration order in binaryen). Then compare the container build to the host build that
-   produced the release asset — that is the diff Mozilla will run.
-4. Fold the result into README § Build from source (exact versions, resource needs, expected
-   duration) and record it here.
+- **DejaVu from the host** embedded in the wasm (Arch ships a git snapshot, Ubuntu splits the
+  obliques out) → pinned upstream tarball (engine-build.md fix 3).
+- **~1.4k absolute paths** via `__FILE__` and `__PRETTY_FUNCTION__`'s `(lambda at …)` →
+  `-ffile-prefix-map=<tree>/=` in build-webcore.sh; the tree path must be canonical (the
+  no-git fallback produced `…/scripts/..`, which silently defeated the map).
+- **Sysroot paths compiled into deps** (ICU data dir, libxml2 catalog, fontconfig template
+  dir) and the ICU `--embed-file` target → fixed runtime paths under `/usr/share`, `/etc`.
+- **`__TIMESTAMP__`** in JSC's bytecode-cache version (the file's mtime, per clone) →
+  `SOURCE_DATE_EPOCH=0` for the WebCore build.
+- **Packaging**: `engine/.staged-meta.json` (local paths) was shipped → excluded; node:zlib
+  output differs between Node builds (official = Chromium zlib, Arch = system zlib) →
+  zip.mjs deflates with pinned fflate.
+
+Gaps: the engine's `source_hash` fast path doesn't cover `tools/`, so a pin change there
+needs `build-engine.sh --force`; dep changes need their sysroot marker deleted (the readiness
+probe skips bootstrap). The releasing.md reproduce step catches both. A container run
+leaves files owned by sub-uids in the tree: clean with `podman unshare rm -rf <dir>`.
+
+Remaining for the submission: the reviewer note text (store-notes.md) naming the Dockerfile,
+the command, ~1 h, and the fetch list.
 
 Fallback if reviewability can't be met in their environment: Mozilla's policy allows asking
 for a different reviewer setup in the notes-to-reviewer; failing that the Firefox channel is
@@ -136,10 +149,10 @@ divergence; not done.
 4. ~~Screenshots~~ (done 2026-09-22): `store/screenshot-popup.png` is the 1280×800 RGB
    (no alpha) upload: Google sandboxed + popup.
    Same PNG serves AMO.
-5. **AMO reviewability** work items 1–4 above (Dockerfile, RAM/time, determinism, README).
-   Independent of 3–4; the long pole.
-6. Tag and release v2 (releasing.md) — first packages with icons, built the way the Dockerfile
-   documents so the asset matches a reviewer rebuild.
+5. ~~AMO reviewability~~ (done 2026-09-22, § Channel 3 status). Still to do: add the
+   build instructions to the store-notes.md reviewer note.
+6. Tag and release v2 (releasing.md, including its reproduce step) — first packages with icons
+   and the first a reviewer rebuild matches byte for byte.
 7. Chrome Web Store: upload, listing, justifications, publish. Edge afterwards if wanted.
 8. AMO listed: upload xpi + source archive (repo at the tag incl. Dockerfile), listing, submit.
 9. On both approvals: README install section → store links.

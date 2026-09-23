@@ -80,7 +80,7 @@ function entries(dir, rel = '') {
 }
 
 // Provenance warnings, printed now and again at the end (the top scrolls away).
-const git = (...a) => spawnSync('git', a, { cwd: checkoutRoot, encoding: 'utf8' }).stdout ?? '';
+const git = (...a) => spawnSync('git', a, { cwd: checkoutRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).stdout ?? '';
 const warnings = [];
 const engineDirty = !!git('status', '--porcelain', '--untracked-files=no', '--', 'engine/').trim();
 if (git('status', '--porcelain', '--untracked-files=no').trim()) {

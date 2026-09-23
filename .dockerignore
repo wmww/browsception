@@ -1,0 +1,4 @@
+# The image only needs the build script; the tree is mounted at run time
+# (a main checkout would otherwise send ~12 GB of engine state as context).
+*
+!scripts/build-from-source.sh

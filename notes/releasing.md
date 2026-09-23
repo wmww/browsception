@@ -85,6 +85,21 @@ nothing here is worth a 1.5 h WebKit rebuild that would emit the same bytes.
 If step 3 ran before the bump commit (normal), that's fine: tests cover code, not the version
 string. If anything other than `VERSION` and docs changed since the tests ran, rerun step 3.
 
+**Reproduce** (~1 h, can run while writing notes): rebuild the commit the way an AMO reviewer
+will and compare. It also catches a stale engine: the host's snapshot fast path ignores
+`tools/` and dep changes (distribution.md § Channel 3).
+
+```sh
+R=~/browsception-repro/v<N>; mkdir -p $R && git archive HEAD | tar -x -C $R
+podman build -t browsception-build . && podman run --rm --memory=10g --memory-swap=10g \
+  --cpus=6 -v $R:/src browsception-build
+sha256sum dist/browsception-<N>-* $R/dist/browsception-<N>-*
+```
+
+Both pairs of hashes must match. If they don't, stop and ask: the fix is in the build, and
+publishing an asset a reviewer can't reproduce gets the AMO submission rejected. Clean up
+with `podman unshare rm -rf $R`.
+
 ## 5. Release notes
 
 Write them to a scratch file, for someone *using* the extension: what's new, what's fixed,

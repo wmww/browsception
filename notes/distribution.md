@@ -134,8 +134,9 @@ divergence; not done.
 3. **Reviewer note** `docs/store-notes.md`: the sandbox model, why each permission, where
    `eval` runs, link to security.md. Feeds the Chrome justification fields and the AMO
    notes-to-reviewer.
-4. **Screenshots** ≥1 at 1280×800 (gui-testing skill; a real site in the viewer with the
-   toolbar visible).
+4. ~~Screenshots~~ (done 2026-09-22): `store/screenshot-popup.png` is the 1280×800 RGB
+   (no alpha) upload: Google sandboxed + popup.
+   Same PNG serves AMO.
 5. **AMO reviewability** work items 1–4 above (Dockerfile, RAM/time, determinism, README).
    Independent of 3–4; the long pole.
 6. Tag and release v2 (releasing.md) — first packages with icons, built the way the Dockerfile

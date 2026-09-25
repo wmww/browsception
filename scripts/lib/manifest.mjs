@@ -19,7 +19,7 @@ export const FIREFOX_MIN_VERSION = '128.0';
 // semver about, and manifests accept 1–4 dot-separated integers that only
 // have to increase. Bump it, tag the commit `v<N>`, then `npm run release`
 // (release.mjs warns when HEAD isn't tagged with this).
-export const VERSION = '1';
+export const VERSION = '2';
 
 // Rendered from icon.svg by scripts/gen-icons.mjs (Chrome takes no SVG).
 export const ICON_SIZES = [16, 32, 48, 128];

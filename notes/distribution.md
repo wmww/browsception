@@ -113,9 +113,6 @@ needs `build-engine.sh --force`; dep changes need their sysroot marker deleted (
 probe skips bootstrap). The releasing.md reproduce step catches both. A container run
 leaves files owned by sub-uids in the tree: clean with `podman unshare rm -rf <dir>`.
 
-Remaining for the submission: the reviewer note text (store-notes.md) naming the Dockerfile,
-the command, ~1 h, and the fetch list.
-
 Fallback if reviewability can't be met in their environment: Mozilla's policy allows asking
 for a different reviewer setup in the notes-to-reviewer; failing that the Firefox channel is
 the GitHub xpi for Developer Edition/Nightly. (Unlisted signing — `--channel unlisted`,
@@ -149,8 +146,8 @@ divergence; not done.
 4. ~~Screenshots~~ (done 2026-09-22): `store/screenshot-popup.png` is the 1280×800 RGB
    (no alpha) upload: Google sandboxed + popup.
    Same PNG serves AMO.
-5. ~~AMO reviewability~~ (done 2026-09-22, § Channel 3 status). Still to do: add the
-   build instructions to the store-notes.md reviewer note.
+5. ~~AMO reviewability~~ (done 2026-09-22, § Channel 3 status; build instructions are in
+   the store-notes.md reviewer note).
 6. Tag and release v2 (releasing.md, including its reproduce step) — first packages with icons
    and the first a reviewer rebuild matches byte for byte.
 7. Chrome Web Store: upload, listing, justifications, publish. Edge afterwards if wanted.

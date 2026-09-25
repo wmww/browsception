@@ -43,6 +43,8 @@ surface for speed (no WebGPU for the nested engine, no nested-wasm-runs-natively
 
 ## Status
 
+**v2 released** (2026-09-25) — [releases/tag/v2](https://github.com/wmww/browsception/releases/tag/v2); first packages an AMO reviewer rebuilds byte for byte (container reproduce matched). This is the build to submit to the stores.
+
 **v1 released** (2026-09-09) — the first public packages: [releases/tag/v1](https://github.com/wmww/browsception/releases/tag/v1), Chrome zip + Firefox xpi, 33.5 MB each, both browsers from one build. Checklist in [releasing.md](releasing.md).
 
 **MVP complete** (2026-08-10, all gates passed). The MVP plan is retired; its surviving content

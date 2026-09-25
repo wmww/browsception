@@ -148,8 +148,7 @@ divergence; not done.
    Same PNG serves AMO.
 5. ~~AMO reviewability~~ (done 2026-09-22, § Channel 3 status; build instructions are in
    the store-notes.md reviewer note).
-6. Tag and release v2 (releasing.md, including its reproduce step) — first packages with icons
-   and the first a reviewer rebuild matches byte for byte.
+6. ~~Tag and release v2~~ (done 2026-09-25; zip/xpi reproduced byte for byte in podman).
 7. Chrome Web Store: upload, listing, justifications, publish. Edge afterwards if wanted.
 8. AMO listed: upload xpi + source archive (repo at the tag incl. Dockerfile), listing, submit.
 9. On both approvals: README install section → store links.

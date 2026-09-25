@@ -55,7 +55,8 @@ come back.
 
 ## 4. Bump and build
 
-1. Set `VERSION` in `scripts/lib/manifest.mjs` to `<N>` (already `<N>`: nothing to bump, not a surprise).
+1. Set `VERSION` in `scripts/lib/manifest.mjs` to `<N>` (already `<N>`: nothing to bump, not a surprise),
+   then `node scripts/gen-ext.mjs` so the tracked `src/manifest.json` carries it too (v2 missed this).
 2. If a fact in README (status, install steps) or notes/distribution.md changed with this
    release, update it now — those edits ship with the release commit.
 3. Commit: `release: v<N>`.
